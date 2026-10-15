@@ -276,3 +276,6 @@ imgproc/preview_*.png
 /warp3d/w3d
 /warp3d/w3d.so
 /cpp/warp3d/build/
+/upscale/up
+/upscale/up.so
+/cpp/upscale/build/
