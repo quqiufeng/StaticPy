@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")"
+mkdir -p build
+g++ -O2 -fPIC -shared -std=c++17 hashlib.cpp -o build/libhashlib.so -lcrypto
+echo "built cpp/hashlib/build/libhashlib.so"

@@ -241,3 +241,6 @@ imgproc/preview_*.png
 /lua_app
 /luajit/embed_lua.h
 /luajit/embed.o
+/hashlib/hash
+/hashlib/hash.so
+/cpp/hashlib/build/
