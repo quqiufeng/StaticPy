@@ -30,9 +30,11 @@ docker run --rm -v $PWD:/w -w /w staticpy bash selfcheck.sh
 
 ## 图像/视觉工具（tools/，推理）
 
-`ORT_DIR`（ONNX Runtime 目录，默认 `/data/venv/onnxruntime-linux-x64-gpu-1.26.0`）+ 模型路径
+**ORT 走系统库**（`/usr/local/lib/libonnxruntime.so.1`，ldconfig 已注册，运行时无需 `LD_LIBRARY_PATH`；编译只需头 `ORT_INC`）+ 模型路径
 （各 `cpp/*/*_capi.cpp` 内有默认，如 `/data/models/...`，可用 `BIREFNET_MODEL`/`FLORENCE2_MODEL_DIR` 覆盖）。
 构建 `bash tools/build.sh`；运行 `tools/run.sh <op> ...`。
+含：face（人脸）、birefnet（背景去除/扣图）、ocr、florence2（图像反推）、**sr（Real-ESRGAN 高清放大 4x）**。
+`ORT_CUDA=1` 可切 GPU（默认 CPU）；TensorRT provider 亦随系统 ORT 就绪。
 
 ## 产物
 

@@ -4,6 +4,7 @@
 #   tools crop    IN.png OUT.png [size]         检测最大脸→对齐裁剪
 #   tools parse   IN.png OUT.png [color|face|skin|hair]   人脸解析（分割）
 #   tools remove  IN.png OUT.png [mode] [color] 背景去除/扣图（mode0=透明RGBA）
+#   tools sr      IN.png OUT.png                高清放大 4x（Real-ESRGAN）
 #   tools ocr     IN.png                        文字识别（JSON）
 #   tools caption IN.png [task] [beams]         图像反推（Florence-2 描述）
 extern fn face_detect(path: str) -> str from "face"
@@ -12,6 +13,7 @@ extern fn face_parse(path: str, out: str, mode: str) -> int from "face"
 extern fn birefnet_remove(inp: str, outp: str, mask: str, mode: int, color: str) -> int from "birefnet"
 extern fn ocr_image_json(path: str) -> str from "ocr"
 extern fn florence2_caption(path: str, task: str, beams: int) -> str from "florence2"
+extern fn sr_upscale(inp: str, outp: str) -> int from "sr"
 
 
 def main():
@@ -45,6 +47,9 @@ def main():
         print("remove rc=" + string_of_int(rc))
     elif op == "ocr":
         print(ocr_image_json(inp))
+    elif op == "sr":
+        rc: int = sr_upscale(inp, py_list_ref(args, 3))
+        print("sr rc=" + string_of_int(rc))
     elif op == "caption":
         task: str = "<MORE_DETAILED_CAPTION>"
         beams: int = 3

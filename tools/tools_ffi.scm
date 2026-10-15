@@ -3,3 +3,4 @@
 (load-shared-object "libbirefnet.so")
 (load-shared-object "libocr.so")
 (load-shared-object "libflorence2.so")
+(load-shared-object "libsr.so")

@@ -11,6 +11,7 @@
 | `remove` | **背景去除 / 扣图**（BiRefNet） | `libbirefnet.so` | `/data/models/birefnet` |
 | `ocr` | 文字识别（PP-OCRv4） | `libocr.so` | `dist/ocr/*.onnx` |
 | `caption` | **图像反推**（Florence-2 描述） | `libflorence2.so` | `/data/models/florence2` |
+| `sr` | **高清放大 4x**（Real-ESRGAN） | `libsr.so` | `/data/models/image/realesr-general-x4v3.onnx` |
 
 ## 构建 / 运行
 

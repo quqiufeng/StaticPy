@@ -43,7 +43,7 @@ int birefnet_remove(const char* in_path, const char* out_path, const char* mask_
     try {
         std::string mp = DefaultModel();
         if (!g_model || g_model_path != mp) {
-            g_model = new bref::BgRemover(mp, true);
+            g_model = new bref::BgRemover(mp, (std::getenv("ORT_CUDA") && std::getenv("ORT_CUDA")[0] == '1'));
             g_model_path = mp;
         }
         g_model->Process(in_path, out_path, mask_path ? mask_path : "", mode, r, g, b);

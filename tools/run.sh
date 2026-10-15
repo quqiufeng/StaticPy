@@ -1,7 +1,6 @@
 #!/bin/bash
-# tools/run.sh — 设好 LD_LIBRARY_PATH 再跑 tools
+# tools/run.sh — 设好各 C 库路径再跑 tools（ORT 走系统 /usr/local/lib，无需设置）
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
-ORT_DIR="${ORT_DIR:-/data/venv/onnxruntime-linux-x64-gpu-1.26.0}"
-export LD_LIBRARY_PATH="$ROOT/cpp/face:$ROOT/cpp/birefnet:$ROOT/cpp/ocr:$ROOT/cpp/florence2:$ORT_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$ROOT/cpp/face:$ROOT/cpp/birefnet:$ROOT/cpp/ocr:$ROOT/cpp/florence2:$ROOT/cpp/sr${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$HERE/tools" "$@"

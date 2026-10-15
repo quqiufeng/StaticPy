@@ -24,7 +24,7 @@ std::string DefaultDir() {
 ocr::Ocr* Get(const std::string& dir) {
     if (!g_engine || g_dir != dir) {
         g_engine = new ocr::Ocr(dir + "/ch_PP-OCRv4_det_infer.onnx", dir + "/ch_PP-OCRv4_rec_infer.onnx",
-                                dir + "/ppocr_keys_v1.txt", true);
+                                dir + "/ppocr_keys_v1.txt", (std::getenv("ORT_CUDA") && std::getenv("ORT_CUDA")[0] == '1'));
         g_dir = dir;
     }
     return g_engine;

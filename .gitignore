@@ -279,3 +279,4 @@ imgproc/preview_*.png
 /upscale/up
 /upscale/up.so
 /cpp/upscale/build/
+/cpp/sr/libsr.so

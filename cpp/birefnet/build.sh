@@ -3,11 +3,11 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ORT_DIR="${ORT_DIR:-/data/venv/onnxruntime-linux-x64-gpu-1.26.0}"
+ORT_INC="${ORT_INC:-/data/venv/onnxruntime-linux-x64-gpu-1.20.1/include}"
 
 CXXFLAGS=(-O2 -std=c++17 -fPIC)
-INCS=(-I"$ORT_DIR/include" -I"$DIR")
-LIBS=(-L"$ORT_DIR/lib" -Wl,-rpath,"$ORT_DIR/lib" -lonnxruntime)
+INCS=(-I"$ORT_INC" -I"$DIR")
+LIBS=(-L/usr/local/lib -l:libonnxruntime.so.1)  # 系统 ORT（ldconfig 已注册，无需 rpath）
 
 echo ">>> compiling bgremove"
 g++ "${CXXFLAGS[@]}" "$DIR/bgremove.cpp" "$DIR/birefnet.cpp" "${INCS[@]}" "${LIBS[@]}" -o "$DIR/bgremove"

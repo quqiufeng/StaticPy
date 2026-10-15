@@ -36,7 +36,7 @@ const char* florence2_caption(const char* image_path, const char* task, int num_
         opt.model_dir = DefaultModelDir();
         opt.task = (task && task[0]) ? task : "<MORE_DETAILED_CAPTION>";
         opt.num_beams = num_beams > 0 ? num_beams : 3;
-        opt.use_cuda = true;
+        opt.use_cuda = (std::getenv("ORT_CUDA") && std::getenv("ORT_CUDA")[0] == '1');
         if (!g_model || g_model_dir != opt.model_dir) {
             g_model = new flo::Florence2(opt.model_dir, opt.use_cuda);
             g_model_dir = opt.model_dir;

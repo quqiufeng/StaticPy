@@ -4,6 +4,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <cstdlib>
 
 namespace {
 std::mutex g_mutex;
@@ -12,7 +13,7 @@ face::FaceEngine* g_eng = nullptr;
 std::string g_out;
 
 face::FaceEngine* Get() {
-    if (!g_eng) g_eng = new face::FaceEngine();
+    if (!g_eng) g_eng = new face::FaceEngine({}, (std::getenv("ORT_CUDA") && std::getenv("ORT_CUDA")[0] == '1'));
     return g_eng;
 }
 }  // namespace
