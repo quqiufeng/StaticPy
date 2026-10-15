@@ -16,6 +16,8 @@ extern fn florence2_caption(path: str, task: str, beams: int) -> str from "flore
 extern fn sr_upscale(inp: str, outp: str) -> int from "sr"
 extern fn cf_restore(inp: str, outp: str, w: float) -> int from "codeformer"
 extern fn cl_colorize(inp: str, outp: str) -> int from "colorize"
+extern fn pose_draw(inp: str, outp: str, thresh: float) -> int from "pose"
+extern fn det_draw(inp: str, outp: str, thresh: float) -> int from "det"
 
 
 def main():
@@ -60,6 +62,16 @@ def main():
     elif op == "color":
         rc: int = cl_colorize(inp, py_list_ref(args, 3))
         print("color rc=" + string_of_int(rc))
+    elif op == "pose":
+        th: float = 0.5
+        if n >= 5: th = string_to_float(py_list_ref(args, 4))
+        rc: int = pose_draw(inp, py_list_ref(args, 3), th)
+        print("pose persons=" + string_of_int(rc))
+    elif op == "yolo":
+        th: float = 0.4
+        if n >= 5: th = string_to_float(py_list_ref(args, 4))
+        rc: int = det_draw(inp, py_list_ref(args, 3), th)
+        print("yolo objects=" + string_of_int(rc))
     elif op == "caption":
         task: str = "<MORE_DETAILED_CAPTION>"
         beams: int = 3

@@ -6,3 +6,5 @@
 (load-shared-object "libsr.so")
 (load-shared-object "libcodeformer.so")
 (load-shared-object "libcolorize.so")
+(load-shared-object "libpose.so")
+(load-shared-object "libdet.so")

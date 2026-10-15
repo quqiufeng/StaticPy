@@ -14,6 +14,8 @@
 | `sr` | **高清放大 4x**（Real-ESRGAN） | `libsr.so` | `/data/models/image/realesr-general-x4v3.onnx` |
 | `restore` | **人脸高清修复**（CodeFormer） | `libcodeformer.so` | `/data/models/image/codeformer.onnx` |
 | `color` | **上色**（DDColor） | `libcolorize.so` | `/data/models/image/ddcolor-fp16.onnx` |
+| `pose` | **骨骼图**（COCO-17 骨架） | `libpose.so` | `/data/models/image/yolov8n-pose.onnx` |
+| `yolo` | **目标检测**（80 类） | `libdet.so` | `/data/models/image/yolov8n.onnx` |
 
 ## 构建 / 运行
 

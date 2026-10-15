@@ -282,3 +282,5 @@ imgproc/preview_*.png
 /cpp/sr/libsr.so
 /cpp/codeformer/libcodeformer.so
 /cpp/colorize/libcolorize.so
+/cpp/pose/libpose.so
+/cpp/det/libdet.so
