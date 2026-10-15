@@ -218,3 +218,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ==== StaticPy 工具链 / imgproc 构建产物 ====
+/staticpy/__pycache__/
+/imgproc/__pycache__/
+/imgproc/pil
+/imgproc/pil.so
+/imgproc/pilcli
+/imgproc/pilcli.so
+/imgproc/mirror_gif
+/imgproc/mirror_gif.so
+/concat
+/concat.so
+/cpp/imgproc/build/
+imgproc/preview_*.png
+*.o
