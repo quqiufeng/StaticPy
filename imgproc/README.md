@@ -54,10 +54,10 @@ LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/mirror_gif IN.gif OUT.gif
 
 ```bash
 # 1) 自省 Pillow API → 清单（每个名字 = 一个待迁移接口）
-/data/venv/bin/python imgproc/pil_surface.py > imgproc/pil_api.md
+python3 imgproc/pil_surface.py > imgproc/pil_api.md
 
 # 2) 差分测试：同一操作 PIL / 我们各跑一遍，逐像素比对
-/data/venv/bin/python imgproc/difftest.py -v
+python3 imgproc/difftest.py -v
 ```
 
 `difftest.py` 是"再调"的驱动：改动 C++ 后重跑，**绿了就对齐了**（当前 38/38 全绿）。

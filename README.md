@@ -86,9 +86,9 @@ bash imgproc/package.sh imgproc/pil pil        # -> dist/pil/ 与 dist/pil.tar.g
 ## 验证（自动化）
 
 ```bash
-/data/venv/bin/python imgproc/pil_surface.py > imgproc/pil_api.md   # 自省清单
-/data/venv/bin/python imgproc/frontend_coverage.py                  # 覆盖面
-/data/venv/bin/python imgproc/difftest.py -v                        # 差分测试（逐像素）
+python3 imgproc/pil_surface.py > imgproc/pil_api.md   # 自省清单
+python3 imgproc/frontend_coverage.py                  # 覆盖面
+python3 imgproc/difftest.py -v                        # 差分测试（逐像素）
 ```
 
 当前：**PIL 覆盖面 100/100**；差分测试 **100/100**（多数逐像素 max=0）。
@@ -98,4 +98,4 @@ bash imgproc/package.sh imgproc/pil pil        # -> dist/pil/ 与 dist/pil.tar.g
 
 - 构建：`g++`、`Chez Scheme`（`/opt/ChezScheme/ta6le`）、`pkg-config freetype2`
 - 运行时：`libgif.so.7`、`libwebp.so.7`、`libtiff.so.6`、`libfreetype.so.6`
-- 验证脚本：`/data/venv`（Pillow/numpy，仅用于"测量"对照）
+- 验证脚本：任一装了 Pillow/numpy 的 Python 即可（**仅用于"测量"对照，不进产物**）

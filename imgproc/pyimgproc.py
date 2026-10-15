@@ -5,7 +5,7 @@
 import ctypes as C
 import os
 
-_SO = os.environ.get("IMGPROC_SO", "/opt/static_comfyui/cpp/imgproc/build/libimgproc.so")
+_SO = os.environ.get("IMGPROC_SO", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "imgproc", "build", "libimgproc.so")))
 L = C.CDLL(_SO)
 _P = C.c_void_p
 

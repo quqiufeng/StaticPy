@@ -6,7 +6,7 @@ set -euo pipefail
 SCHEME_DIR="${CHEZ_SCHEME_DIR:-/opt/ChezScheme/ta6le}"
 SCHEME="${CHEZ_SCHEME:-$SCHEME_DIR/bin/ta6le/scheme}"
 SCHEME_BOOT_DIR="${CHEZ_BOOT_DIR:-/opt/ChezScheme/boot/ta6le}"
-RESCHEME_DIR="/opt/ReScheme"
+RESCHEME_DIR="$(cd "$(dirname "$0")" && pwd)"
 CACHE_DIR="/tmp/staticpy-cache"
 
 if [ $# -lt 1 ]; then
@@ -49,9 +49,9 @@ if [ "$IS_SCM" = "1" ]; then
     cp "$INPUT" "$CACHE_DIR/${STEM}_code.ss"
 else
     if [ "${STATICPY_WARN:-0}" = "1" ]; then
-        /data/venv/bin/python3 static_translate.py --warn "$INPUT" > "$CACHE_DIR/${STEM}_code.ss"
+        "${STATICPY_PYTHON:-python3}" static_translate.py --warn "$INPUT" > "$CACHE_DIR/${STEM}_code.ss"
     else
-        /data/venv/bin/python3 static_translate.py "$INPUT" > "$CACHE_DIR/${STEM}_code.ss"
+        "${STATICPY_PYTHON:-python3}" static_translate.py "$INPUT" > "$CACHE_DIR/${STEM}_code.ss"
     fi
 fi
 
@@ -170,9 +170,6 @@ CCODE
         "$SCHEME_DIR/lz4/lib/liblz4.a" \
         "$SCHEME_DIR/zlib/libz.a" \
         -ldl -lpthread -lm -ltinfo \
-        -L/data/venv/lib/python3.12/site-packages/torch/lib \
-        -Wl,--no-as-needed -lc10 -ltorch_cpu -ltorch -Wl,--as-needed \
-        -Wl,-rpath,/data/venv/lib/python3.12/site-packages/torch/lib \
         2>&1
 
     echo "  -> ELF cached"
@@ -192,7 +189,6 @@ ln -sf "$OUTPUT_ELF" "$OUT_DIR/$STEM"
 cp -L "$OUTPUT_SO" "$RESCHEME_DIR/$STEM.so" 2>/dev/null || true
 cp -L "$OUTPUT_ELF" "$RESCHEME_DIR/$STEM" 2>/dev/null || true
 
-TORCH_LIB_PATH=$(/data/venv/bin/python3 -c "import torch; import os; print(os.path.dirname(torch.__file__)+'/lib')" 2>/dev/null || echo "")
 
 echo "=== Build complete ==="
 echo "Output:"
@@ -200,7 +196,4 @@ echo "  $RESCHEME_DIR/$STEM       (ELF binary, standalone)"
 echo "  $RESCHEME_DIR/$STEM.so    (Chez AOT compiled Scheme)"
 echo "Run:"
 echo "  ./$STEM"
-echo "Note: If your code uses torch/openblas/cuda, ensure LD_LIBRARY_PATH includes the required .so directories."
-if [ -n "$TORCH_LIB_PATH" ]; then
-    echo "  Example: LD_LIBRARY_PATH=$TORCH_LIB_PATH:\$LD_LIBRARY_PATH ./$STEM"
-fi
+echo "Note: runtime .so (e.g. imgproc/codec libs) are resolved via LD_LIBRARY_PATH."

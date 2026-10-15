@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """pil_surface.py — 自省 Pillow 的公开 API，生成覆盖面清单（迁移用）。
 
-用法: /data/venv/bin/python imgproc/pil_surface.py > imgproc/pil_api.md
+用法: python3 imgproc/pil_surface.py > imgproc/pil_api.md
 """
 import inspect
 import importlib

@@ -27,7 +27,7 @@ Python 的自省（`inspect` / `dir()` / 签名）能**机器枚举出全部接�
 产出 `imgproc/pil_api.md`：
 
 ```bash
-/data/venv/bin/python imgproc/pil_surface.py > imgproc/pil_api.md
+python3 imgproc/pil_surface.py > imgproc/pil_api.md
 ```
 
 - `dir(mod)` 过滤 `_` 前缀 → 公开名；
@@ -55,7 +55,7 @@ Python 的自省（`inspect` / `dir()` / 签名）能**机器枚举出全部接�
 的 ctypes 绑定）跑一遍，转成 numpy 做**逐像素 diff**，报 `max/mean`：
 
 ```bash
-/data/venv/bin/python imgproc/difftest.py -v      # 全绿即对齐
+python3 imgproc/difftest.py -v      # 全绿即对齐
 ```
 
 - 用 ctypes 直连 `.so` 跑差分，比走 StaticPy ELF 快，迭代顺（生产仍走 StaticPy）。

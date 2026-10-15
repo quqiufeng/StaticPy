@@ -3,6 +3,7 @@
 语法: Python + 类型标注 (int/float/bool/list[T])
 语义: int/float = 值类型（Chez fixnum/flonum），非 PyObject*
 """
+import os
 import sys
 import re
 import json
@@ -3072,27 +3073,19 @@ def generate_extern_ffi():
     loaded_libs = set()
     for name, info in EXTERN_FUNCTIONS.items():
         lib = info["lib"]
-        # 加载库（每种库只加载一次）
-        if lib == "openblas" and lib not in loaded_libs:
-            lines.append('(load-shared-object "libopenblas.so.0")')
-        elif lib == "lapack" and lib not in loaded_libs:
-            lines.append('(load-shared-object "liblapacke.so")')
-        elif lib == "xgboost" and lib not in loaded_libs:
-            lines.append('(load-shared-object "/data/venv/lib/python3.12/site-packages/xgboost/lib/libxgboost.so")')
-        elif lib == "cublas" and lib not in loaded_libs:
-            lines.append('(load-shared-object "libcublas.so.12")')
-        elif lib == "cudnn" and lib not in loaded_libs:
-            lines.append('(load-shared-object "libcudnn.so.9")')
-        elif lib == "onnxruntime" and lib not in loaded_libs:
-            lines.append('(load-shared-object "libonnxruntime.so")')
-        elif lib == "onnx_helper" and lib not in loaded_libs:
-            lines.append('(load-shared-object "/tmp/libonnx_helper.so")')
-        elif lib == "dgemm_row" and lib not in loaded_libs:
-            lines.append('(load-shared-object "/home/quqiufeng/libdgemm_row.so")')
-        elif lib == "stock_rl" and lib not in loaded_libs:
-            lines.append('(load-shared-object "libstock_rl_helper.so")')
-        elif lib == "torch_std" and lib not in loaded_libs:
-            lines.append('(load-shared-object "libtorch_std_helper.so")')
+        # 加载库（每种库只加载一次）。仅用 soname，不写死绝对路径；
+        # 可用环境变量 STATICPY_LIB_<LIB> 覆盖，未知库默认 "lib<lib>.so"。
+        if lib not in loaded_libs:
+            _soname_map = {
+                "openblas": "libopenblas.so.0",
+                "lapack": "liblapacke.so",
+                "cublas": "libcublas.so.12",
+                "cudnn": "libcudnn.so.9",
+                "onnxruntime": "libonnxruntime.so",
+                "xgboost": "libxgboost.so",
+            }
+            soname = os.environ.get("STATICPY_LIB_" + lib.upper(), _soname_map.get(lib, "lib" + lib + ".so"))
+            lines.append('(load-shared-object "' + soname + '")')
         loaded_libs.add(lib)
         
         # 构建参数类型列表

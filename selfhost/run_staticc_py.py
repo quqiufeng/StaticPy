@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Run staticc.py under CPython by providing Python implementations of
 StaticPy builtins it uses."""
-import sys
+import sys, os
 import importlib.util
 
-spec = importlib.util.spec_from_file_location("staticc", "staticc.py")
+spec = importlib.util.spec_from_file_location("staticc", os.path.join(os.path.dirname(os.path.abspath(__file__)), "staticc.py"))
 staticc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(staticc)
 

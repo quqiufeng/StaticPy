@@ -38,7 +38,7 @@
 命令（imgproc 里已具备，换库照搬）：
 
 ```bash
-PY=/data/venv/bin/python
+PY=python3
 $PY <lib>/surface.py > <lib>/api.md          # ① 自省清单
 $PY <lib>/coverage.py                        #    覆盖面核对（映射表驱动）
 $PY <lib>/difftest.py -v                     # ③ 差分测试（逐像素）
@@ -194,7 +194,7 @@ LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/pil <op> IN OUT [args...]
 bash imgproc/build_app.sh my_app.static.py my_app
 
 # 验证
-PY=/data/venv/bin/python
+PY=python3
 $PY imgproc/pil_surface.py > imgproc/pil_api.md
 $PY imgproc/frontend_coverage.py
 $PY imgproc/difftest.py -v

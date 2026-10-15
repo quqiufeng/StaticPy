@@ -4,7 +4,7 @@
 把 PIL 顶层函数/类/方法 映射到 libimgproc 的 C ABI 名（MAP 表），
 统计已实现 / 未实现，输出覆盖率报告（markdown）。
 
-用法: /data/venv/bin/python imgproc/frontend_coverage.py
+用法: python3 imgproc/frontend_coverage.py
 """
 import inspect
 import importlib

@@ -2,7 +2,7 @@
 import os
 """difftest.py — 自动化差分测试：Pillow vs libimgproc，逐像素比对。
 
-用法: /data/venv/bin/python imgproc/difftest.py [-v]
+用法: python3 imgproc/difftest.py [-v]
 退出码非 0 表示有算子超出容差。
 """
 import sys
