@@ -15,6 +15,7 @@ extern fn ocr_image_json(path: str) -> str from "ocr"
 extern fn florence2_caption(path: str, task: str, beams: int) -> str from "florence2"
 extern fn sr_upscale(inp: str, outp: str) -> int from "sr"
 extern fn cf_restore(inp: str, outp: str, w: float) -> int from "codeformer"
+extern fn cl_colorize(inp: str, outp: str) -> int from "colorize"
 
 
 def main():
@@ -56,6 +57,9 @@ def main():
         if n >= 5: w = string_to_float(py_list_ref(args, 4))
         rc: int = cf_restore(inp, py_list_ref(args, 3), w)
         print("restore rc=" + string_of_int(rc))
+    elif op == "color":
+        rc: int = cl_colorize(inp, py_list_ref(args, 3))
+        print("color rc=" + string_of_int(rc))
     elif op == "caption":
         task: str = "<MORE_DETAILED_CAPTION>"
         beams: int = 3

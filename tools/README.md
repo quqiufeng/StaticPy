@@ -13,6 +13,7 @@
 | `caption` | **图像反推**（Florence-2 描述） | `libflorence2.so` | `/data/models/florence2` |
 | `sr` | **高清放大 4x**（Real-ESRGAN） | `libsr.so` | `/data/models/image/realesr-general-x4v3.onnx` |
 | `restore` | **人脸高清修复**（CodeFormer） | `libcodeformer.so` | `/data/models/image/codeformer.onnx` |
+| `color` | **上色**（DDColor） | `libcolorize.so` | `/data/models/image/ddcolor-fp16.onnx` |
 
 ## 构建 / 运行
 

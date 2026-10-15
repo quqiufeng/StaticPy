@@ -281,3 +281,4 @@ imgproc/preview_*.png
 /cpp/upscale/build/
 /cpp/sr/libsr.so
 /cpp/codeformer/libcodeformer.so
+/cpp/colorize/libcolorize.so

@@ -5,3 +5,4 @@
 (load-shared-object "libflorence2.so")
 (load-shared-object "libsr.so")
 (load-shared-object "libcodeformer.so")
+(load-shared-object "libcolorize.so")
