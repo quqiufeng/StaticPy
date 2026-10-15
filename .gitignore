@@ -270,3 +270,6 @@ imgproc/preview_*.png
 /font/font
 /font/font.so
 /cpp/font/build/
+/easing/ease
+/easing/ease.so
+/cpp/easing/build/
