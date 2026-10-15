@@ -34,6 +34,9 @@
 | `color` | 上色 | DDColor | 108M |
 | `pose` | **骨骼图**（COCO-17 骨架） | YOLOv8-pose | 13M |
 | `yolo` | 目标检测（80 类） | YOLOv8n | 13M |
+| `depth` | **深度图**（ControlNet） | Depth-Anything-V2-S | — |
+| `edge` | **软边缘**（ControlNet） | HED | — |
+| `line` 直线(备选) | `annotators/mlsd.onnx` | 需 4ch 输入/9ch 输出解码 |
 
 用法：`bash tools/build.sh` → `tools/run.sh <op> ...`（ORT 走系统 `/usr/local/lib`，无需 `LD_LIBRARY_PATH`）。
 
@@ -41,9 +44,6 @@
 
 | 候选工具 | 模型（`/data/models/image/…`） | 用途 |
 |---|---|---|
-| `depth` 深度图 | `depth_anything_v2_small/model.onnx` | 深度图 / ControlNet depth |
-| `edge` 边缘 | `annotators/hed.onnx` | ControlNet 软边缘 |
-| `line` 线稿 | `annotators/mlsd.onnx` | ControlNet 直线/建筑 |
 | `faceid` 人脸特征 | `w600k_r50.onnx`（ArcFace） | 人脸识别 / 比对 |
 | `facelm` 关键点/3D | `2d106det.onnx` / `1k3d68.onnx` | 五官点 / 3D 头模 |
 | `faceswap` 换脸 | `inswapper_128.onnx` | 换脸 |

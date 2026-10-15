@@ -284,3 +284,4 @@ imgproc/preview_*.png
 /cpp/colorize/libcolorize.so
 /cpp/pose/libpose.so
 /cpp/det/libdet.so
+/cpp/annot/libannot.so

@@ -8,3 +8,4 @@
 (load-shared-object "libcolorize.so")
 (load-shared-object "libpose.so")
 (load-shared-object "libdet.so")
+(load-shared-object "libannot.so")

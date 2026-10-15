@@ -5,6 +5,8 @@
 #   tools parse   IN.png OUT.png [color|face|skin|hair]   人脸解析（分割）
 #   tools remove  IN.png OUT.png [mode] [color] 背景去除/扣图（mode0=透明RGBA）
 #   tools sr      IN.png OUT.png                高清放大 4x（Real-ESRGAN）
+#   tools depth   IN.png OUT.png                深度图（ControlNet depth）
+#   tools edge    IN.png OUT.png                软边缘（ControlNet HED）
 #   tools ocr     IN.png                        文字识别（JSON）
 #   tools caption IN.png [task] [beams]         图像反推（Florence-2 描述）
 extern fn face_detect(path: str) -> str from "face"
@@ -18,6 +20,8 @@ extern fn cf_restore(inp: str, outp: str, w: float) -> int from "codeformer"
 extern fn cl_colorize(inp: str, outp: str) -> int from "colorize"
 extern fn pose_draw(inp: str, outp: str, thresh: float) -> int from "pose"
 extern fn det_draw(inp: str, outp: str, thresh: float) -> int from "det"
+extern fn an_depth(inp: str, outp: str) -> int from "annot"
+extern fn an_hed(inp: str, outp: str) -> int from "annot"
 
 
 def main():
@@ -72,6 +76,12 @@ def main():
         if n >= 5: th = string_to_float(py_list_ref(args, 4))
         rc: int = det_draw(inp, py_list_ref(args, 3), th)
         print("yolo objects=" + string_of_int(rc))
+    elif op == "depth":
+        rc: int = an_depth(inp, py_list_ref(args, 3))
+        print("depth rc=" + string_of_int(rc))
+    elif op == "edge":
+        rc: int = an_hed(inp, py_list_ref(args, 3))
+        print("edge rc=" + string_of_int(rc))
     elif op == "caption":
         task: str = "<MORE_DETAILED_CAPTION>"
         beams: int = 3

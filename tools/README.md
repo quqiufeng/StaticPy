@@ -16,6 +16,8 @@
 | `color` | **上色**（DDColor） | `libcolorize.so` | `/data/models/image/ddcolor-fp16.onnx` |
 | `pose` | **骨骼图**（COCO-17 骨架） | `libpose.so` | `/data/models/image/yolov8n-pose.onnx` |
 | `yolo` | **目标检测**（80 类） | `libdet.so` | `/data/models/image/yolov8n.onnx` |
+| `depth` | **深度图**（ControlNet depth） | `libannot.so` | `depth_anything_v2_small` |
+| `edge` | **软边缘**（ControlNet HED） | `libannot.so` | `annotators/hed.onnx` |
 
 ## 构建 / 运行
 
