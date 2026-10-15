@@ -8,6 +8,7 @@ extern fn cvo_open(a: str, b: str, k: int) -> int from "cvops"
 extern fn cvo_close(a: str, b: str, k: int) -> int from "cvops"
 extern fn cvo_threshold_otsu(a: str, b: str, inv: int) -> int from "cvops"
 extern fn cvo_sobel(a: str, b: str, dx: int, dy: int) -> int from "cvops"
+extern fn cvo_bilateral(a: str, b: str, d: int, sc: float, ss: float) -> int from "cvops"
 
 
 def main():
@@ -33,6 +34,12 @@ def main():
         if n >= 5:
             inv = string_to_int(py_list_ref(args, 4))
         rc = cvo_threshold_otsu(inp, out, inv)
+    elif op == "bilateral":
+        d: int = 9; sc: float = 75.0; ss: float = 75.0
+        if n >= 5: d = string_to_int(py_list_ref(args, 4))
+        if n >= 6: sc = string_to_float(py_list_ref(args, 5))
+        if n >= 7: ss = string_to_float(py_list_ref(args, 6))
+        rc = cvo_bilateral(inp, out, d, sc, ss)
     elif op == "sobel":
         rc = cvo_sobel(inp, out, string_to_int(py_list_ref(args, 4)), string_to_int(py_list_ref(args, 5)))
     else:

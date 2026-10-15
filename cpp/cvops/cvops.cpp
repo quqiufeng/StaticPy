@@ -99,4 +99,22 @@ int cvo_dilate_rgb(const char* in, const char* out, int k) {
     return stbi_write_png(out, w, h, 3, o.data(), w*3) ? 0 : -1;
 }
 
+int cvo_bilateral(const char* in, const char* out, int d, double sc, double ss) {
+    Gray g; if (!load_gray(in, g)) return -1;
+    int r = d / 2; Gray o = g;
+    double kss = 1.0 / (2.0 * ss * ss), ksc = 1.0 / (2.0 * sc * sc);
+    for (int y = 0; y < g.h; ++y) for (int x = 0; x < g.w; ++x) {
+        double wsum = 0, vsum = 0; int cp = g.p[(size_t)y * g.w + x];
+        for (int j = -r; j <= r; ++j) for (int i = -r; i <= r; ++i) {
+            int xx = std::clamp(x+i,0,g.w-1), yy = std::clamp(y+j,0,g.h-1);
+            int sp = g.p[(size_t)yy * g.w + xx];
+            double cd = (double)(sp - cp) * (sp - cp);
+            double w = std::exp(-(i*i + j*j) * kss - cd * ksc);
+            wsum += w; vsum += w * sp;
+        }
+        o.p[(size_t)y * g.w + x] = (uint8_t)std::lround(vsum / wsum);
+    }
+    return save_gray(out, o);
+}
+
 }  // extern "C"

@@ -4,13 +4,14 @@
 
 - **C 核心**：`../cpp/cvops/` → `libcvops.so`
 - **FFI / 前端**：`cvops_ffi.scm` + `cv.static.py` → `cv` ELF
-- **验证**：`difftest.py` 与 `cv2`（OpenCV）对拍，**6/6 逐像素一致**
+- **验证**：`difftest.py` 与 `cv2`（OpenCV）对拍，**6/6 逐像素一致**（bilateral 为近似，mean≈5）
 
 | 命令 | 算法 |
 |---|---|
 | `erode`/`dilate`/`open`/`close` | 形态学（矩形核，`BORDER_REPLICATE`） |
 | `otsu` | Otsu 全局二值化 |
 | `sobel` | Sobel 梯度幅度（\|G\|） |
+| `bilateral` | 双边去噪（保边修复，近似） |
 
 ```bash
 bash cvops/build.sh

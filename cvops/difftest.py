@@ -5,6 +5,7 @@ lib = C.CDLL(os.environ.get("CVOPS_SO", os.path.join(os.path.dirname(__file__), 
 for fn in ["cvo_erode","cvo_dilate","cvo_open","cvo_close"]: getattr(lib,fn).argtypes=[C.c_char_p,C.c_char_p,C.c_int]
 lib.cvo_threshold_otsu.argtypes=[C.c_char_p,C.c_char_p,C.c_int]
 lib.cvo_sobel.argtypes=[C.c_char_p,C.c_char_p,C.c_int,C.c_int]
+lib.cvo_bilateral.argtypes=[C.c_char_p,C.c_char_p,C.c_int,C.c_double,C.c_double]
 tmp=tempfile.mkdtemp(); g=os.path.join(tmp,"g.png")
 a=np.random.default_rng(5).integers(0,256,(48,64),dtype=np.uint8); Image.fromarray(a,"L").save(g)
 def our(fn,out,*args): getattr(lib,fn)(g.encode(),out.encode(),*args); return np.array(Image.open(out))
@@ -18,4 +19,8 @@ chk("open", our("cvo_open",tmp+"/o.png",k), cv2.morphologyEx(a,cv2.MORPH_OPEN,ke
 chk("close", our("cvo_close",tmp+"/c.png",k), cv2.morphologyEx(a,cv2.MORPH_CLOSE,ker,borderType=cv2.BORDER_REPLICATE))
 _,t=cv2.threshold(a,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU); chk("otsu", our("cvo_threshold_otsu",tmp+"/t.png",0), t)
 gx=cv2.Sobel(a,cv2.CV_32F,1,0,ksize=3,borderType=cv2.BORDER_REPLICATE); chk("sobel", our("cvo_sobel",tmp+"/s.png",1,0), np.clip(np.abs(gx),0,255).astype(np.uint8))
-print(f"\n{6-fails}/6 通过"); sys.exit(1 if fails else 0)
+b_our=np.array(Image.open(tmp+"/b.png")) if False else None
+lib.cvo_bilateral(g.encode(),(tmp+"/b.png").encode(),9,75,75)
+bd=int(np.abs(np.array(Image.open(tmp+"/b.png")).astype(int)-cv2.bilateralFilter(a,9,75,75).astype(int)).mean())
+ok=bd<=8; fails+=0 if ok else 1; print(f"{'bilateral':12}{'PASS' if ok else 'DIFF'} meanΔ={bd}(近似)")
+print(f"\n{6-fails}/6 通过(形态学/阈值/梯度精确；bilateral 近似)"); sys.exit(1 if fails else 0)

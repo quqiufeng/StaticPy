@@ -10,6 +10,7 @@ int cvo_open(const char* in, const char* out, int k);       // 开运算
 int cvo_close(const char* in, const char* out, int k);      // 闭运算
 int cvo_threshold_otsu(const char* in, const char* out, int inv);   // Otsu 二值化
 int cvo_sobel(const char* in, const char* out, int dx, int dy);     // Sobel 梯度（|G|）
+int cvo_bilateral(const char* in, const char* out, int d, double sc, double ss);  // 双边去噪（保边修复）
 int cvo_erode_rgb(const char* in, const char* out, int k);
 int cvo_dilate_rgb(const char* in, const char* out, int k);
 #ifdef __cplusplus
