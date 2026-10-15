@@ -267,3 +267,6 @@ imgproc/preview_*.png
 /cvops/cv
 /cvops/cv.so
 /cpp/cvops/build/
+/font/font
+/font/font.so
+/cpp/font/build/
