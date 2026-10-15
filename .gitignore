@@ -258,3 +258,6 @@ imgproc/preview_*.png
 /cpp/ocr/imgsocr
 /cpp/florence2/img2prompt
 /cpp/florence2/vocab.bin
+/pathfind/pf
+/pathfind/pf.so
+/cpp/pathfind/build/
