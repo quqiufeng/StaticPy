@@ -54,6 +54,17 @@ LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/pil convert IN.png OUT.png L
 bash imgproc/build_app.sh my_app.static.py my_app   # 用 pil_lib 构建用户程序
 ```
 
+## LuaJIT 集成（编译时编入）
+
+C ABI 是共享的运行时表面：**同一份 `libimgproc.so`** 被 StaticPy(FFI)、Python(ctypes)、LuaJIT(ffi.C) 共用。
+更进一步，可把 **LuaJIT + 运行时静态编进一个单文件 ELF**（无动态 luajit 依赖）：
+
+```bash
+bash luajit/embed-build.sh                 # → ./lua_app（内嵌 LuaJIT + 图像运行时）
+./lua_app IN.png OUT.png                   # 内嵌 Lua 脚本，ffi.C 直接调运行时函数
+./lua_app my_script.lua                    # 或跑指定 Lua 脚本
+```
+
 ## 自举与信任链
 
 工具链**可自举**：上游 `ReScheme` 记录了三环自举（ReSchme/StaticPy/`.sp`）与**信任链**，

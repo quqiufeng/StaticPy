@@ -62,9 +62,9 @@ fi
 
 # Step 2: content hash for caching
 if [ "$IS_SCM" = "1" ]; then
-    HASH_INPUTS=(static_prelude.scm static_stdlib.scm "$CACHE_DIR/${STEM}_code.ss")
+    HASH_INPUTS=(static_prelude.scm "${STATICPY_STDLIB:-static_stdlib.scm}" "$CACHE_DIR/${STEM}_code.ss")
 else
-    HASH_INPUTS=(static_prelude.scm static_stdlib.scm static_translate.py "$CACHE_DIR/${STEM}_code.ss")
+    HASH_INPUTS=(static_prelude.scm "${STATICPY_STDLIB:-static_stdlib.scm}" static_translate.py "$CACHE_DIR/${STEM}_code.ss")
 fi
 [ -n "$FFI_SCM" ] && HASH_INPUTS+=("$FFI_SCM")
 PRELUDE_HASH=$(md5sum "${HASH_INPUTS[@]}" 2>/dev/null | md5sum | cut -d' ' -f1)
@@ -80,7 +80,8 @@ else
     MERGED_SS="$CACHE_DIR/${STEM}_${PRELUDE_HASH}.ss"
     cat static_prelude.scm > "$MERGED_SS"
     echo "" >> "$MERGED_SS"
-    cat static_stdlib.scm >> "$MERGED_SS"
+    STDLIB="${STATICPY_STDLIB:-static_stdlib.scm}"
+    cat "$STDLIB" >> "$MERGED_SS"
     echo "" >> "$MERGED_SS"
     if [ -n "$FFI_SCM" ] && [ -f "$FFI_SCM" ]; then
         cat "$FFI_SCM" >> "$MERGED_SS"

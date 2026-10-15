@@ -238,3 +238,6 @@ imgproc/preview_*.png
 /staticc.so
 /staticc_self
 /staticc_self.so
+/lua_app
+/luajit/embed_lua.h
+/luajit/embed.o
