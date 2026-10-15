@@ -54,6 +54,29 @@ LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/pil convert IN.png OUT.png L
 bash imgproc/build_app.sh my_app.static.py my_app   # 用 pil_lib 构建用户程序
 ```
 
+## 部署（强分发 / 自包含）
+
+产物可打成**自包含目录**：把 ELF + 它用到的**全部 `.so`（含传递依赖）**一起放进包里，
+配一个设 `LD_LIBRARY_PATH=$DIR/lib` 的启动器。**目标服务器零要求**——不需要 Python、
+不需要 pip、不需要任何预装库；`scp` 过去 `./run` 即可。
+
+```
+mypkg/
+├── <name>        # 启动器（设 LD_LIBRARY_PATH 后 exec app）
+├── app           # StaticPy ELF（Chez 运行时已静态嵌入）
+└── lib/          # libimgproc.so + libgif/libwebp/libtiff/libfreetype + 传递依赖
+```
+
+```bash
+bash imgproc/package.sh imgproc/pil pil        # -> dist/pil/ 与 dist/pil.tar.gz
+```
+
+**唯一不可再拆的两样（且都可控）**：① Linux 内核 + x86-64 架构；② glibc 版本下限
+（用老 glibc 的 `GLIBC_SYSROOT` 构建即可覆盖新老发行版）。其余**全在包里**。
+
+> 对比 Go：产物同样是静态单文件；这里是「Python 语法 + 运行时 FFI 任意 C 库」，
+> 交付模型（compile once → copy → run）等价，且宿主不需要任何前置条件。
+
 ## 验证（自动化）
 
 ```bash

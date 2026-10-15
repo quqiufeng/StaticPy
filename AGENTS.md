@@ -157,6 +157,13 @@ $PY <lib>/difftest.py -v                     # ③ 差分测试（逐像素）
 
 ---
 
+## 7.5 部署 = 强分发（自包含）
+
+打包时把 ELF 用到的**全部 `.so`（含传递依赖）**一并收进包，配启动器设
+`LD_LIBRARY_PATH=$DIR/lib` → **目标服务器零要求（连 Python 都不需要）**。
+`bash imgproc/package.sh <app> <name>`。这正契合"给 agent 的强分发语言"：agent 产出的
+工具是自包含产物，交给谁都能直接跑，不挑环境。
+
 ## 8. 关键命令速查
 
 ```bash

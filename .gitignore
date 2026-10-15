@@ -233,3 +233,4 @@ __marimo__/
 /cpp/imgproc/build/
 imgproc/preview_*.png
 *.o
+/dist/
