@@ -14,6 +14,7 @@ extern fn birefnet_remove(inp: str, outp: str, mask: str, mode: int, color: str)
 extern fn ocr_image_json(path: str) -> str from "ocr"
 extern fn florence2_caption(path: str, task: str, beams: int) -> str from "florence2"
 extern fn sr_upscale(inp: str, outp: str) -> int from "sr"
+extern fn cf_restore(inp: str, outp: str, w: float) -> int from "codeformer"
 
 
 def main():
@@ -50,6 +51,11 @@ def main():
     elif op == "sr":
         rc: int = sr_upscale(inp, py_list_ref(args, 3))
         print("sr rc=" + string_of_int(rc))
+    elif op == "restore":
+        w: float = 0.5
+        if n >= 5: w = string_to_float(py_list_ref(args, 4))
+        rc: int = cf_restore(inp, py_list_ref(args, 3), w)
+        print("restore rc=" + string_of_int(rc))
     elif op == "caption":
         task: str = "<MORE_DETAILED_CAPTION>"
         beams: int = 3

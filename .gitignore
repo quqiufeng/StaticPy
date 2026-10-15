@@ -280,3 +280,4 @@ imgproc/preview_*.png
 /upscale/up.so
 /cpp/upscale/build/
 /cpp/sr/libsr.so
+/cpp/codeformer/libcodeformer.so

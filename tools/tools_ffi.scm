@@ -4,3 +4,4 @@
 (load-shared-object "libocr.so")
 (load-shared-object "libflorence2.so")
 (load-shared-object "libsr.so")
+(load-shared-object "libcodeformer.so")
