@@ -1,4 +1,4 @@
-# difftest.py — warp3d 差分：仿射 vs cv2 精确；透视（子像素/插值）容差
+# difftest.py — warp3d 差分：仿射 vs cv2（±1，cv2 定点插值舍入）
 import ctypes as C, numpy as np, cv2, os, sys, tempfile
 from PIL import Image
 lib=C.CDLL(os.environ.get("WARP3D_SO", os.path.join(os.path.dirname(__file__),"..","cpp","warp3d","build","libwarp3d.so")))
@@ -10,10 +10,10 @@ def run(H):
     lib.w3d_perspective(p.encode(),(tmp+"/o.png").encode(),",".join(str(x) for x in v).encode(),64,64,0)
     return np.array(Image.open(tmp+"/o.png").convert("RGB")).astype(int)
 fails=0
-# 仿射（旋转+缩放+平移，无透视项）→ 应精确
 for th in [0, 5, 15, 45]:
     t=np.radians(th); M=np.array([[np.cos(t),-np.sin(t),6.],[np.sin(t),np.cos(t),4.],[0,0,1.]])
     d=int(np.abs(run(np.linalg.inv(M))-cv2.warpPerspective(a,M,(64,64),flags=cv2.INTER_LINEAR,borderValue=0).astype(int)).max())
-    ok=d<=1; fails+=0 if ok else 1; print(f"affine rot{th:>3}  {chr(80)+chr(65)+chr(83)+chr(83) if ok else chr(68)+chr(73)+chr(70)+chr(70)} maxΔ={d}")
-print(f"\n4-fails}/4 仿射一致(±1)")
+    ok=d<=1; fails+=0 if ok else 1
+    print("affine rot%3d  %s maxΔ=%d" % (th, "PASS" if ok else "DIFF", d))
+print("\n%d/4 仿射一致(±1)" % (4-fails))
 sys.exit(1 if fails else 0)
