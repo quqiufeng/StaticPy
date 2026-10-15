@@ -164,6 +164,22 @@ $PY <lib>/difftest.py -v                     # ③ 差分测试（逐像素）
 `bash imgproc/package.sh <app> <name>`。这正契合"给 agent 的强分发语言"：agent 产出的
 工具是自包含产物，交给谁都能直接跑，不挑环境。
 
+## 7.6 自举与信任链（工具链可自持、可审计）
+
+StaticPy 不是"只能靠宿主"的：它**能自举**。上游 `/opt/ReScheme` 记录了**三环自举**：
+
+| 环 | 源语言 | 编译器实现 | 自举 |
+|---|---|---|---|
+| 1 ReSchme | 自定义(类 OCaml) | OCaml（HM 类型） | 自编译 |
+| 2 **StaticPy** | Python 子集 | Python（`static_translate.py`） | `staticc.py → ELF → 编译自身` |
+| 3 `.sp` | S-表达式（极简） | Python→.sp | `staticc.sp → staticc → staticc_self` |
+
+**信任链**：OCaml 编译器 → ReSchme 编译器 → `static_translate.py`(CPython) → `staticc` ELF →
+`staticc.sp`（**~1100 行，几天可完整审计 = 整个系统的信任根**）→ Chez → ELF。
+
+含义：**编译器和解释器只是"约定"的实现**——谁都可以另写一份，甚至自持/自举；
+需要信任的只有那一小段可审计的种子。这也是"开放架构给 agent"的完整含义。
+
 ## 8. 关键命令速查
 
 ```bash

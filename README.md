@@ -54,6 +54,12 @@ LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/pil convert IN.png OUT.png L
 bash imgproc/build_app.sh my_app.static.py my_app   # 用 pil_lib 构建用户程序
 ```
 
+## 自举与信任链
+
+工具链**可自举**：上游 `ReScheme` 记录了三环自举（ReSchme/StaticPy/`.sp`）与**信任链**，
+最终收敛到一段 **~1100 行的 `.sp` 编译器作为信任根**（几天可完整审计）。
+即"编译器/解释器只是约定的实现"——可替换、可自持、可审计。
+
 ## 部署（强分发 / 自包含）
 
 产物可打成**自包含目录**：把 ELF + 它用到的**全部 `.so`（含传递依赖）**一起放进包里，
