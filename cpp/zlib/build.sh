@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")"; mkdir -p build
+g++ -O2 -fPIC -shared -std=c++17 zlib.cpp -o build/libzlib.so -lz
+echo "built cpp/zlib/build/libzlib.so"

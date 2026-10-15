@@ -244,3 +244,6 @@ imgproc/preview_*.png
 /hashlib/hash
 /hashlib/hash.so
 /cpp/hashlib/build/
+/zlib/zc
+/zlib/zc.so
+/cpp/zlib/build/

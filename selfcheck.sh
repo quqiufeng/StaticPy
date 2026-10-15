@@ -16,6 +16,8 @@ if $PY -c "import PIL, numpy" 2>/dev/null; then
   $PY imgproc/frontend_coverage.py 2>/dev/null | tail -1
   echo ">>> [3b/4] hashlib 差分（Python vs 我们，逐字节）"
   bash hashlib/build.sh >/dev/null 2>&1 && $PY hashlib/difftest.py 2>/dev/null | tail -1
+  echo ">>> [3c/4] zlib 差分（Python vs 我们，逐字节）"
+  bash zlib/build.sh >/dev/null 2>&1 && $PY zlib/difftest.py 2>/dev/null | tail -1
 else
   echo ">>> [2-3/4] 跳过差分/覆盖（缺 Pillow/numpy，仅'测量'需要）"
 fi
