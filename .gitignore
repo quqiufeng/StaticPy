@@ -264,3 +264,6 @@ imgproc/preview_*.png
 /atlas/atlas
 /atlas/atlas.so
 /cpp/atlas/build/
+/cvops/cv
+/cvops/cv.so
+/cpp/cvops/build/
