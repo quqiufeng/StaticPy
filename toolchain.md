@@ -28,6 +28,12 @@ docker run --rm -v $PWD:/w -w /w staticpy bash selfcheck.sh
 | `GLIBC_SYSROOT` | （空） | 目标 glibc sysroot，用于兼容老发行版 |
 | `IMGPROC_SO` | 仓库内 `cpp/imgproc/build/libimgproc.so` | 运行时库路径 |
 
+## 图像/视觉工具（tools/，推理）
+
+`ORT_DIR`（ONNX Runtime 目录，默认 `/data/venv/onnxruntime-linux-x64-gpu-1.26.0`）+ 模型路径
+（各 `cpp/*/*_capi.cpp` 内有默认，如 `/data/models/...`，可用 `BIREFNET_MODEL`/`FLORENCE2_MODEL_DIR` 覆盖）。
+构建 `bash tools/build.sh`；运行 `tools/run.sh <op> ...`。
+
 ## 产物
 
 - `imgproc/build.sh` → `cpp/imgproc/build/libimgproc.so` + `imgproc/{pil,pilcli,mirror_gif}` + `concat`

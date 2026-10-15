@@ -247,3 +247,14 @@ imgproc/preview_*.png
 /zlib/zc
 /zlib/zc.so
 /cpp/zlib/build/
+/tools/tools
+/tools/tools.so
+/cpp/face/libface.so
+/cpp/birefnet/libbirefnet.so
+/cpp/ocr/libocr.so
+/cpp/florence2/libflorence2.so
+/cpp/face/facecli
+/cpp/birefnet/bgremove
+/cpp/ocr/imgsocr
+/cpp/florence2/img2prompt
+/cpp/florence2/vocab.bin
