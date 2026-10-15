@@ -234,3 +234,7 @@ __marimo__/
 imgproc/preview_*.png
 *.o
 /dist/
+/staticc
+/staticc.so
+/staticc_self
+/staticc_self.so
