@@ -273,3 +273,6 @@ imgproc/preview_*.png
 /easing/ease
 /easing/ease.so
 /cpp/easing/build/
+/warp3d/w3d
+/warp3d/w3d.so
+/cpp/warp3d/build/
