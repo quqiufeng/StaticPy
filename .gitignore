@@ -261,3 +261,6 @@ imgproc/preview_*.png
 /pathfind/pf
 /pathfind/pf.so
 /cpp/pathfind/build/
+/atlas/atlas
+/atlas/atlas.so
+/cpp/atlas/build/
