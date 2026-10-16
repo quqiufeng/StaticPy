@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -24,7 +25,16 @@ using namespace ctranslate2;
 
 namespace {
 
-const char* const kDefaultModelDir = "/data/models/faster-whisper-large-v3";
+const char* const kDefaultModelDir = "/data/models/faster-whisper-large-v3-turbo";
+
+bool Profiling() {
+  static bool p = std::getenv("WHISPER_PROFILE") != nullptr;
+  return p;
+}
+double NowSec() {
+  using namespace std::chrono;
+  return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
 
 std::mutex g_mutex;
 models::Whisper* g_model = nullptr;
@@ -151,8 +161,11 @@ std::string DetectLang(models::Whisper* model, const StorageView& feat) {
 
 Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   Transcript out;
+  double t_start = NowSec();
   std::vector<float> audio = LoadAudio16kMono(path);
+  double t_load = NowSec();
   if (audio.empty()) return out;
+  double t_mel = 0.0, t_gen = 0.0;
 
   const int sr = g_cfg.sample_rate;
   const int window = 30 * sr;  // 480000
@@ -164,6 +177,7 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   opt.beam_size = 5;
   opt.patience = 1.0f;
   opt.max_length = 448;
+  if (const char* bs = std::getenv("WHISPER_BEAM")) opt.beam_size = std::atoi(bs);
 
   // faster-whisper 式长音频解码：滑动窗口，seek 前进到“最后一个时间戳”，
   // 使块边界处被截断的句子在下一窗口重新解码，避免丢句。
@@ -172,20 +186,27 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
     const int len = (int)std::min<long long>(window, total - seek);
     std::vector<float> chunk(audio.begin() + seek, audio.begin() + seek + len);
     int frames = 0;
+    double m0 = NowSec();
     std::vector<float> mel = LogMel(chunk, g_cfg, frames);
     if (frames <= 0) { seek += window; continue; }
     StorageView feat = MakeFeatures(mel, frames);
+    t_mel += NowSec() - m0;
 
     if (!have_lang) {
+      double d0 = NowSec();
       out.lang = DetectLang(model, feat);
+      if (Profiling())
+        std::fprintf(stderr, "[whisper] detect_lang(1 encoder pass)=%.2fs\n", NowSec() - d0);
       lang_tok = "<|" + out.lang + "|>";
       have_lang = true;
     }
 
     std::vector<std::vector<std::string>> prompts = {
         {"<|startoftranscript|>", lang_tok, "<|transcribe|>"}};
+    double g0 = NowSec();
     auto futures = model->generate(feat, prompts, opt);
     auto result = futures[0].get();
+    t_gen += NowSec() - g0;
     if (result.sequences.empty()) { seek += window; continue; }
     const auto& toks = result.sequences[0];
 
@@ -224,6 +245,9 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
     long long adv = last_end > 0.1 ? (long long)(last_end * sr) : window;
     seek = std::max(seek + 1, seek + adv);
   }
+  if (Profiling())
+    std::fprintf(stderr, "[whisper] load=%.2fs mel=%.2fs gen=%.2fs total=%.2fs\n",
+                 t_load - t_start, t_mel, t_gen, NowSec() - t_start);
   return out;
 }
 
