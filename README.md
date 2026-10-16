@@ -1,7 +1,7 @@
 # StaticPy
 
-> **一个小 Python 子集 + 一个用 C ABI 拼起来的生态。**
-> **A small Python subset with an ecosystem assembled over a plain C ABI.**
+> **一个小 Python 子集 + 一个用 C ABI 拼起来的生态；可自举、可审计，因而可信任。**
+> **A small Python subset with an ecosystem assembled over a plain C ABI — self-hosting and auditable, hence trustworthy.**
 
 **Python 语法 → Scheme(Chez) IR → AOT 机器码**，产物是独立 ELF/`.so`；
 需要什么能力就**运行时挂 C 库**（FFI），**不依赖 Python 解释器 / pip / venv**。
