@@ -31,7 +31,7 @@ using namespace ctranslate2;
 
 namespace {
 
-const char* const kDefaultModelDir = "/data/models/faster-whisper-large-v3-turbo";
+const char* const kDefaultModelDir = "/data/models/faster-whisper-large-v3";
 
 bool Profiling() {
   static bool p = std::getenv("WHISPER_PROFILE") != nullptr;
