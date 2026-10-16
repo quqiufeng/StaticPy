@@ -109,6 +109,39 @@ bool IsTimestamp(const std::string& t, double& sec) {
   return true;
 }
 
+// 解码一个 UTF-8 码点，返回其字节长度
+size_t Utf8NextCp(const std::string& s, size_t i, uint32_t& cp) {
+  unsigned char c = (unsigned char)s[i];
+  if (c < 0x80) { cp = c; return 1; }
+  if ((c >> 5) == 0x6 && i + 1 < s.size()) {
+    cp = ((c & 0x1F) << 6) | ((unsigned char)s[i + 1] & 0x3F); return 2;
+  }
+  if ((c >> 4) == 0xE && i + 2 < s.size()) {
+    cp = ((c & 0x0F) << 12) | (((unsigned char)s[i + 1] & 0x3F) << 6) |
+         ((unsigned char)s[i + 2] & 0x3F); return 3;
+  }
+  if ((c >> 3) == 0x1E && i + 3 < s.size()) {
+    cp = ((c & 0x07) << 18) | (((unsigned char)s[i + 1] & 0x3F) << 12) |
+         (((unsigned char)s[i + 2] & 0x3F) << 6) | ((unsigned char)s[i + 3] & 0x3F); return 4;
+  }
+  cp = c; return 1;
+}
+
+// 最长“同一码点连续重复”的长度（用于识别 ああああ / はははは 等复读幻觉）
+size_t MaxCodepointRun(const std::string& s) {
+  size_t best = 0, run = 0, i = 0;
+  uint32_t prev = 0;
+  bool first = true;
+  while (i < s.size()) {
+    uint32_t cp;
+    size_t len = Utf8NextCp(s, i, cp);
+    if (!first && cp == prev) ++run; else { run = 1; prev = cp; first = false; }
+    if (run > best) best = run;
+    i += len;
+  }
+  return best;
+}
+
 // ---- 模型 / 特征 -------------------------------------------------------------
 
 bool InitLocked() {
@@ -438,16 +471,47 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   double max_seg = 15.0, vad_min = 0.1;
   if (const char* v = std::getenv("WHISPER_MAX_SEG_SEC")) max_seg = std::atof(v);
   if (const char* v = std::getenv("WHISPER_VAD_MIN_SEC")) vad_min = std::atof(v);
+
+  // 复读幻觉：同一字连续重复（ああああ / はははは 等）
+  size_t max_char_run = 4;
+  if (const char* v = std::getenv("WHISPER_MAX_CHAR_RUN")) max_char_run = (size_t)std::atoi(v);
+  // 已知幻觉短语（片头片尾/音乐段常见）；WHISPER_DROP_PHRASES 覆盖该项（"-" 表示关闭）
+  std::vector<std::string> drop_phrases = {
+      "ご視聴ありがとうございました", "ご視聴ありがとうございます",
+      "チャンネル登録", "おやすみなさい", "ご視聴ありがとう"};
+  if (const char* v = std::getenv("WHISPER_DROP_PHRASES")) {
+    drop_phrases.clear();
+    std::string s(v);
+    if (s != "-") {
+      size_t p = 0;
+      while (p <= s.size()) {
+        size_t q = s.find(',', p);
+        std::string item = s.substr(p, q == std::string::npos ? std::string::npos : q - p);
+        if (!item.empty()) drop_phrases.push_back(item);
+        if (q == std::string::npos) break;
+        p = q + 1;
+      }
+    }
+  }
   const size_t before = out.segments.size();
   std::vector<Segment> filtered;
   filtered.reserve(before);
+  size_t n_run = 0, n_phrase = 0;
   for (const Segment& s : out.segments) {
     if (s.end - s.start >= max_seg) continue;                          // 整窗填充伪影
     const double sp = speech_seconds_in(s.start, s.end);               // 落在非语音区则丢弃
     if (sp >= 0.0 && sp < vad_min) continue;
     if (!filtered.empty() && filtered.back().text == s.text) continue;  // 相邻重复
+    if (max_char_run > 0 && MaxCodepointRun(s.text) >= max_char_run) { ++n_run; continue; }
+    bool hit = false;
+    for (const std::string& ph : drop_phrases)
+      if (!ph.empty() && s.text.find(ph) != std::string::npos) { hit = true; break; }
+    if (hit) { ++n_phrase; continue; }
     filtered.push_back(s);
   }
+  if (Profiling())
+    std::fprintf(stderr, "[whisper] hallucination filter: char-run=%zu phrase=%zu\n", n_run,
+                 n_phrase);
   if (Profiling())
     std::fprintf(stderr, "[whisper] window-fill filter: %zu -> %zu\n", before, filtered.size());
   out.segments.swap(filtered);
