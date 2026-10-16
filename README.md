@@ -1,6 +1,9 @@
 # StaticPy
 
-**Python 语法 → Scheme(Cchez) IR → AOT 机器码**，产物是独立 ELF/`.so`；
+> **一个小 Python 子集 + 一个用 C ABI 拼起来的生态。**
+> **A small Python subset with an ecosystem assembled over a plain C ABI.**
+
+**Python 语法 → Scheme(Chez) IR → AOT 机器码**，产物是独立 ELF/`.so`；
 需要什么能力就**运行时挂 C 库**（FFI），**不依赖 Python 解释器 / pip / venv**。
 
 > 定位：把 Python 的**表达力**接到**原生后端**上——不是重造语言，而是把成熟的
