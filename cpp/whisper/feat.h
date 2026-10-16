@@ -15,7 +15,7 @@ struct MelConfig {
 // 用 ffmpeg 解码任意音频/视频为 16k 单声道 float32
 std::vector<float> LoadAudio16kMono(const char* path);
 
-// 读取 preprocessor_config.json（缺省 large-v3：128 mel / 400 / 160 / 16000 / 3000）
+// 读取 preprocessor_config.json（缺省：128 mel / 400 / 160 / 16000 / 3000）
 MelConfig ReadMelConfig(const std::string& model_dir);
 
 // 返回 [n_mels, out_frames] 行主序；out_frames 为真实帧数

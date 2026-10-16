@@ -8,8 +8,7 @@
 // 依赖：libctranslate2.so（thirdparty/ctranslate2/lib）、fftw3f、ffmpeg（运行时解码音频）
 //
 // 环境变量：
-//   WHISPER_MODEL_DIR  模型目录（默认 /data/models/faster-whisper-large-v3-turbo；
-//                      切回高精度可设为 /data/models/faster-whisper-large-v3）
+//   WHISPER_MODEL_DIR  模型目录（默认 /data/models/faster-whisper-large-v3-turbo）
 //   WHISPER_DEVICE     设为 cpu 强制 CPU（默认 CUDA/FP16）
 //   WHISPER_BEAM       束搜索宽度（默认 5；1=贪心，略快）
 //   WHISPER_N_MELS     覆盖 mel 通道数
