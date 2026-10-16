@@ -32,6 +32,14 @@ using namespace ctranslate2;
 namespace {
 
 const char* const kDefaultModelDir = "/data/models/faster-whisper-large-v3";
+// 日语专用模型（kotoba-whisper v2.0，检测到日语时自动切换；不存在则忽略）
+const char* const kDefaultJaModelDir = "/data/models/kotoba-whisper-v2-faster";
+
+bool FileExists(const std::string& p) {
+  std::FILE* f = std::fopen(p.c_str(), "rb");
+  if (f) { std::fclose(f); return true; }
+  return false;
+}
 
 bool Profiling() {
   static bool p = std::getenv("WHISPER_PROFILE") != nullptr;
@@ -45,6 +53,7 @@ double NowSec() {
 std::mutex g_mutex;
 models::Whisper* g_model = nullptr;
 MelConfig g_cfg;
+std::string g_dir;
 bool g_ready = false;
 
 // ---- GPT-2 byte-level 去分词 -------------------------------------------------
@@ -144,30 +153,54 @@ size_t MaxCodepointRun(const std::string& s) {
 
 // ---- 模型 / 特征 -------------------------------------------------------------
 
+// 加载指定目录模型（失败则保持原模型不变）
+bool LoadModelDir(const std::string& dir) {
+  MelConfig cfg = ReadMelConfig(dir);
+  const char* de = std::getenv("WHISPER_DEVICE");
+  bool want_cpu = de && std::strcmp(de, "cpu") == 0;
+  models::Whisper* m = nullptr;
+  try {
+    if (want_cpu)
+      m = new models::Whisper(dir, Device::CPU, ComputeType::FLOAT32);
+    else
+      m = new models::Whisper(dir, Device::CUDA, ComputeType::FLOAT16);
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[whisper] GPU 初始化失败(%s)，回退 CPU\n", e.what());
+    try {
+      m = new models::Whisper(dir, Device::CPU, ComputeType::FLOAT32);
+    } catch (const std::exception& e2) {
+      std::fprintf(stderr, "[whisper] 模型加载失败 %s: %s\n", dir.c_str(), e2.what());
+      return false;
+    }
+  }
+  if (g_model) delete g_model;
+  g_model = m;
+  g_cfg = cfg;
+  g_dir = dir;
+  g_ready = true;
+  return true;
+}
+
+// 返回日语专用模型目录（环境变量优先，其次默认路径，均需存在）
+std::string JaModelDir() {
+  const char* e = std::getenv("WHISPER_MODEL_DIR_JA");
+  if (e && e[0]) return e;
+  if (FileExists(std::string(kDefaultJaModelDir) + "/model.bin")) return kDefaultJaModelDir;
+  return "";
+}
+
 bool InitLocked() {
   if (g_ready) return true;
   const char* md = std::getenv("WHISPER_MODEL_DIR");
   std::string dir = md ? md : kDefaultModelDir;
-  g_cfg = ReadMelConfig(dir);
-
-  const char* de = std::getenv("WHISPER_DEVICE");
-  bool want_cpu = de && std::strcmp(de, "cpu") == 0;
-  try {
-    if (want_cpu)
-      g_model = new models::Whisper(dir, Device::CPU, ComputeType::FLOAT32);
-    else
-      g_model = new models::Whisper(dir, Device::CUDA, ComputeType::FLOAT16);
-  } catch (const std::exception& e) {
-    std::fprintf(stderr, "[whisper] GPU 初始化失败(%s)，回退 CPU\n", e.what());
-    try {
-      g_model = new models::Whisper(dir, Device::CPU, ComputeType::FLOAT32);
-    } catch (const std::exception& e2) {
-      std::fprintf(stderr, "[whisper] 模型加载失败: %s\n", e2.what());
-      return false;
-    }
+  // 已强制日语 → 直接用日语专用模型
+  const char* fl = std::getenv("WHISPER_LANG");
+  if (!md && fl && std::strcmp(fl, "ja") == 0) {
+    std::string ja = JaModelDir();
+    if (!ja.empty() && FileExists(ja + "/model.bin")) dir = ja;
   }
-  g_ready = true;
-  return true;
+  if (Profiling()) std::fprintf(stderr, "[whisper] model dir = %s\n", dir.c_str());
+  return LoadModelDir(dir);
 }
 
 StorageView MakeFeatures(const std::vector<float>& mel, int frames) {
@@ -307,7 +340,13 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   double t_mel = 0.0, t_gen = 0.0;
 
   const int sr = g_cfg.sample_rate;
-  const int window = 30 * sr;  // 480000
+  auto is_distil = [](const std::string& d) {
+    return d.find("kotoba") != std::string::npos || d.find("distil") != std::string::npos;
+  };
+  double chunk_sec = is_distil(g_dir) ? 15.0 : 30.0;  // kotoba/distil 建议 15s 窗
+  if (const char* v = std::getenv("WHISPER_CHUNK_SEC")) chunk_sec = std::atof(v);
+  if (chunk_sec < 5.0) chunk_sec = 5.0;
+  int window = (int)(chunk_sec * sr);
   const long long total = (long long)audio.size();
   bool have_lang = false;
   std::string lang_tok;
@@ -402,6 +441,25 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
       }
       lang_tok = "<|" + out.lang + "|>";
       have_lang = true;
+      // 自动检测为日语 → 切到日语专用模型（kotoba-whisper）
+      const char* md = std::getenv("WHISPER_MODEL_DIR");
+      if (!forced_lang && !md && out.lang == "ja") {
+        std::string ja = JaModelDir();
+        if (!ja.empty() && ja != g_dir) {
+          if (Profiling()) std::fprintf(stderr, "[whisper] switch JA model -> %s\n", ja.c_str());
+          if (LoadModelDir(ja)) {
+            model = g_model;
+            if (!std::getenv("WHISPER_CHUNK_SEC")) {   // 按新模型重置解码窗
+              chunk_sec = is_distil(g_dir) ? 15.0 : 30.0;
+              if (chunk_sec < 5.0) chunk_sec = 5.0;
+              window = (int)(chunk_sec * sr);
+            }
+            seek = 0;          // 用日语模型从头重解
+            out.segments.clear();
+            continue;
+          }
+        }
+      }
     }
 
     std::vector<std::vector<std::string>> prompts = {
