@@ -15,14 +15,29 @@ if [ ! -f "$CT2/lib/libctranslate2.so.4" ]; then
   exit 1
 fi
 
+# onnxruntime（用于 Silero VAD 门控）
+ORT="${ORT_DIR:-/opt/cosyvoice.cpp/build/_deps/onnxruntime}"
+
 CXXFLAGS=(-O2 -std=c++17 -fPIC)
 INCS=(-I"$DIR" -I"$CT2/include")
 LIBS=(-L"$CT2/lib" -l:libctranslate2.so.4 -lfftw3f -lstdc++ -lpthread -ldl)
+if [ -f "$ORT/lib/libonnxruntime.so" ]; then
+  INCS+=(-I"$ORT/include")
+  LIBS+=(-L"$ORT/lib" -lonnxruntime)
+  ORT_RPATH=" -Wl,-rpath,$ORT/lib"
+  echo ">>> 启用 Silero VAD（onnxruntime @ $ORT）"
+else
+  ORT_RPATH=""
+  echo ">>> 未找到 onnxruntime，编译时禁用 VAD（不会影响其它功能）"
+fi
 # --disable-new-dtags -> DT_RPATH（传递性），使 ctranslate2 的依赖 libgomp 也能找到
-RPATH="-Wl,--disable-new-dtags -Wl,-rpath,\$ORIGIN/thirdparty/ctranslate2/lib"
+RPATH="-Wl,--disable-new-dtags -Wl,-rpath,\$ORIGIN/thirdparty/ctranslate2/lib$ORT_RPATH"
+
+DEFS=()
+[ -f "$ORT/lib/libonnxruntime.so" ] && DEFS+=(-DMYTRANS_HAVE_ORT)
 
 echo ">>> compiling libwhisper.so"
-g++ "${CXXFLAGS[@]}" -shared \
+g++ "${CXXFLAGS[@]}" "${DEFS[@]}" -shared \
   "$DIR/whisper_capi.cpp" "$DIR/feat.cpp" \
   "${INCS[@]}" "${LIBS[@]}" $RPATH \
   -o "$DIR/libwhisper.so"
