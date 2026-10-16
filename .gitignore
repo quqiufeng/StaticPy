@@ -285,3 +285,12 @@ imgproc/preview_*.png
 /cpp/pose/libpose.so
 /cpp/det/libdet.so
 /cpp/annot/libannot.so
+
+# ==== whisper(语音识别) / llm(翻译) 构建产物 ====
+/transcribe
+/translate
+/whisper/whisper
+/whisper/whisper.so
+/cpp/whisper/libwhisper.so
+/cpp/llm/libllm.so
+/cpp/whisper/thirdparty/ctranslate2/lib/
