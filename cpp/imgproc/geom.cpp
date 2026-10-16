@@ -101,6 +101,7 @@ void* img_resize_ex(void* p, int nw, int nh, const char* resample, float bx0, fl
 
     Coeffs ch, cv;
     bool need_h = (nw != W) || (bx0 != 0) || (bx1 != W), need_v = (nh != H) || (by0 != 0) || (by1 != H);
+    if (!need_h && !need_v) { Image* o = dup_img(rg); if (rg != im) delete rg; return o; }
     if (need_h) ch = precompute(W, bx0, bx1, nw, flt);
     if (need_v) cv = precompute(H, by0, by1, nh, flt);
 
