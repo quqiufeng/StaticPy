@@ -331,6 +331,33 @@ std::string DetectLang(models::Whisper* model, const StorageView& feat) {
   return tok;
 }
 
+// 跨多个窗口投票检测语言（单窗易被开头音乐/静音带偏，曾把日语误判为 nn）
+std::string DetectLanguageMulti(const std::vector<float>& audio) {
+  const int sr = g_cfg.sample_rate;
+  const int win = 30 * sr;
+  const long long total = (long long)audio.size();
+  const long long step = std::max<long long>(win, total / 8);
+  std::unordered_map<std::string, int> votes;
+  int samples = 0;
+  for (long long s = 0; s < total && samples < 5; s += step) {
+    const int l = (int)std::min<long long>(win, total - s);
+    std::vector<float> ch(audio.begin() + s, audio.begin() + s + l);
+    int fr = 0;
+    std::vector<float> ml = LogMel(ch, g_cfg, fr);
+    if (fr <= 0) continue;
+    std::string d = DetectLang(g_model, MakeFeatures(ml, fr));
+    votes[d]++;
+    samples++;
+    if (Profiling())
+      std::fprintf(stderr, "[whisper] lang vote %s @%.0fs\n", d.c_str(), (double)s / sr);
+  }
+  std::string best = "en";
+  int bc = 0;
+  for (const auto& kv : votes)
+    if (kv.second > bc) { bc = kv.second; best = kv.first; }
+  return best;
+}
+
 Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   Transcript out;
   double t_start = NowSec();
@@ -348,8 +375,6 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   if (chunk_sec < 5.0) chunk_sec = 5.0;
   int window = (int)(chunk_sec * sr);
   const long long total = (long long)audio.size();
-  bool have_lang = false;
-  std::string lang_tok;
 
   // ---- Silero VAD 门控：音乐/静音段不转写，从根上消除幻觉 ----
   bool vad_on = !(std::getenv("WHISPER_VAD") && std::strcmp(std::getenv("WHISPER_VAD"), "0") == 0);
@@ -410,6 +435,32 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   const char* forced_lang = std::getenv("WHISPER_LANG");
   if (forced_lang && !forced_lang[0]) forced_lang = nullptr;
 
+  // ---- 语言检测：跨多个窗口投票取多数（单窗易被音乐/静音带偏，曾把日语误判为 nn）----
+  if (forced_lang) {
+    out.lang = forced_lang;
+    if (Profiling()) std::fprintf(stderr, "[whisper] lang forced = %s\n", forced_lang);
+  } else {
+    out.lang = DetectLanguageMulti(audio);
+    if (Profiling()) std::fprintf(stderr, "[whisper] lang = %s\n", out.lang.c_str());
+  }
+
+  // 日语 → 切换日语专用模型（kotoba-whisper）
+  if (!forced_lang && !std::getenv("WHISPER_MODEL_DIR") && out.lang == "ja") {
+    std::string ja = JaModelDir();
+    if (!ja.empty() && ja != g_dir) {
+      if (Profiling()) std::fprintf(stderr, "[whisper] switch JA model -> %s\n", ja.c_str());
+      if (LoadModelDir(ja)) {
+        model = g_model;
+        if (!std::getenv("WHISPER_CHUNK_SEC")) {
+          chunk_sec = is_distil(g_dir) ? 15.0 : 30.0;
+          if (chunk_sec < 5.0) chunk_sec = 5.0;
+          window = (int)(chunk_sec * sr);
+        }
+      }
+    }
+  }
+  const std::string lang_tok = "<|" + out.lang + "|>";
+
   // faster-whisper 式长音频解码：滑动窗口，seek 前进到“最后一个时间戳”，
   // 使块边界处被截断的句子在下一窗口重新解码，避免丢句。
   long long seek = 0;
@@ -427,40 +478,6 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
     if (frames <= 0) { seek += window; continue; }
     StorageView feat = MakeFeatures(mel, frames);
     t_mel += NowSec() - m0;
-
-    if (!have_lang) {
-      if (forced_lang) {
-        out.lang = forced_lang;
-        if (Profiling())
-          std::fprintf(stderr, "[whisper] lang forced = %s\n", forced_lang);
-      } else {
-        double d0 = NowSec();
-        out.lang = DetectLang(model, feat);
-        if (Profiling())
-          std::fprintf(stderr, "[whisper] detect_lang(1 encoder pass)=%.2fs\n", NowSec() - d0);
-      }
-      lang_tok = "<|" + out.lang + "|>";
-      have_lang = true;
-      // 自动检测为日语 → 切到日语专用模型（kotoba-whisper）
-      const char* md = std::getenv("WHISPER_MODEL_DIR");
-      if (!forced_lang && !md && out.lang == "ja") {
-        std::string ja = JaModelDir();
-        if (!ja.empty() && ja != g_dir) {
-          if (Profiling()) std::fprintf(stderr, "[whisper] switch JA model -> %s\n", ja.c_str());
-          if (LoadModelDir(ja)) {
-            model = g_model;
-            if (!std::getenv("WHISPER_CHUNK_SEC")) {   // 按新模型重置解码窗
-              chunk_sec = is_distil(g_dir) ? 15.0 : 30.0;
-              if (chunk_sec < 5.0) chunk_sec = 5.0;
-              window = (int)(chunk_sec * sr);
-            }
-            seek = 0;          // 用日语模型从头重解
-            out.segments.clear();
-            continue;
-          }
-        }
-      }
-    }
 
     std::vector<std::vector<std::string>> prompts = {
         {"<|startoftranscript|>", lang_tok, "<|transcribe|>"}};
@@ -630,15 +647,10 @@ const char* wh_lang(const char* audio_path) {
     if (forced[0]) { out = forced; return out.c_str(); }
   }
   if (!InitLocked()) return "";
-  Transcript t;  // 仅需语言：跑第一块即可，这里直接复用整段（短音频开销可接受）
-  // 为节省时间，只解码首 30s 做语言检测
   std::vector<float> audio = LoadAudio16kMono(audio_path);
   if (audio.empty()) { out = ""; return out.c_str(); }
-  int len = std::min((int)audio.size(), 30 * g_cfg.sample_rate);
-  std::vector<float> head(audio.begin(), audio.begin() + len);
-  int frames = 0;
-  std::vector<float> mel = LogMel(head, g_cfg, frames);
-  out = frames > 0 ? DetectLang(g_model, MakeFeatures(mel, frames)) : "";
+  // 与转写用同一套多窗投票，保证命名与转写语言一致
+  out = DetectLanguageMulti(audio);
   return out.c_str();
 }
 
