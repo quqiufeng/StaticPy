@@ -562,8 +562,9 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   if (const char* v = std::getenv("WHISPER_MAX_SEG_SEC")) max_seg = std::atof(v);
   if (const char* v = std::getenv("WHISPER_VAD_MIN_SEC")) vad_min = std::atof(v);
 
-  // 复读幻觉：同一字连续重复（ああああ / はははは 等）
-  size_t max_char_run = 4;
+  // 复读过滤默认关闭：ああああ 也可能是真实发声，不能仅凭文本判定为幻觉。
+  // 需要时用 WHISPER_MAX_CHAR_RUN=4 开启。
+  size_t max_char_run = 0;
   if (const char* v = std::getenv("WHISPER_MAX_CHAR_RUN")) max_char_run = (size_t)std::atoi(v);
   // 已知幻觉短语（片头片尾/音乐段常见）；WHISPER_DROP_PHRASES 覆盖该项（"-" 表示关闭）
   // 默认不做短语黑名单：仅凭文本无法区分「真的说了」与幻觉，误删真台词不可接受。
