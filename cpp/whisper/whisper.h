@@ -8,7 +8,7 @@
 // 依赖：libctranslate2.so（thirdparty/ctranslate2/lib）、fftw3f、ffmpeg（运行时解码音频）
 //
 // 环境变量：
-//   WHISPER_MODEL_DIR  模型目录（默认 /data/models/faster-whisper-large-v3-turbo）
+//   WHISPER_MODEL_DIR  模型目录（默认 /data/models/faster-whisper-large-v3；日语自动用 kotoba）
 //   WHISPER_DEVICE     设为 cpu 强制 CPU（默认 CUDA/FP16）
 //   WHISPER_BEAM       束搜索宽度（默认 5；1=贪心，略快）
 //   WHISPER_N_MELS     覆盖 mel 通道数
@@ -40,7 +40,7 @@ const char* wh_transcribe_json(const char* audio_path);
 // 转写并写成 ASS 双语/单语字幕（仓耳今楷02 字体）；返回段数，失败 -1
 int wh_to_ass(const char* audio_path, const char* out_ass, double offset);
 
-// 模型目录（默认 /data/models/faster-whisper-large-v3-turbo，可用 WHISPER_MODEL_DIR 覆盖）
+// 模型目录（默认 /data/models/faster-whisper-large-v3；日语自动用 kotoba，可用 WHISPER_MODEL_DIR 覆盖）
 const char* wh_model_dir(void);
 
 #ifdef __cplusplus
