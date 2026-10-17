@@ -572,7 +572,9 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   // 已知幻觉短语（片头片尾/音乐段常见）；WHISPER_DROP_PHRASES 覆盖该项（"-" 表示关闭）
   std::vector<std::string> drop_phrases = {
       "ご視聴ありがとうございました", "ご視聴ありがとうございます",
-      "チャンネル登録", "おやすみなさい", "ご視聴ありがとう", "今日の天気は晴れ"};
+      "ご視聴いただきありがとうございます", "ご覧いただきありがとうございます",
+      "チャンネル登録", "おやすみなさい", "ご視聴ありがとう",
+      "今日の天気は晴れ", "次回もお楽しみに", "またお会いしましょう"};
   if (const char* v = std::getenv("WHISPER_DROP_PHRASES")) {
     drop_phrases.clear();
     std::string s(v);
