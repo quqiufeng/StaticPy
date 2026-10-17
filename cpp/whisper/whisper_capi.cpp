@@ -376,8 +376,40 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   int window = (int)(chunk_sec * sr);
   const long long total = (long long)audio.size();
 
-  // ---- Silero VAD 门控：音乐/静音段不转写，从根上消除幻觉 ----
-  bool vad_on = !(std::getenv("WHISPER_VAD") && std::strcmp(std::getenv("WHISPER_VAD"), "0") == 0);
+  // WHISPER_LANG 强制源语言（如 ja / zh / en），跳过自动检测，避免误检
+  const char* forced_lang = std::getenv("WHISPER_LANG");
+  if (forced_lang && !forced_lang[0]) forced_lang = nullptr;
+
+  // ---- 语言检测：跨多个窗口投票取多数（单窗易被音乐/静音带偏，曾把日语误判为 nn）----
+  if (forced_lang) {
+    out.lang = forced_lang;
+    if (Profiling()) std::fprintf(stderr, "[whisper] lang forced = %s\n", forced_lang);
+  } else {
+    out.lang = DetectLanguageMulti(audio);
+    if (Profiling()) std::fprintf(stderr, "[whisper] lang = %s\n", out.lang.c_str());
+  }
+
+  // 日语 → 切换日语专用模型（kotoba-whisper）
+  if (!forced_lang && !std::getenv("WHISPER_MODEL_DIR") && out.lang == "ja") {
+    std::string ja = JaModelDir();
+    if (!ja.empty() && ja != g_dir) {
+      if (Profiling()) std::fprintf(stderr, "[whisper] switch JA model -> %s\n", ja.c_str());
+      if (LoadModelDir(ja)) {
+        model = g_model;
+        if (!std::getenv("WHISPER_CHUNK_SEC")) {
+          chunk_sec = is_distil(g_dir) ? 15.0 : 30.0;
+          if (chunk_sec < 5.0) chunk_sec = 5.0;
+          window = (int)(chunk_sec * sr);
+        }
+      }
+    }
+  }
+  const std::string lang_tok = "<|" + out.lang + "|>";
+
+  // ---- Silero VAD 门控：默认仅日语开启（日语 AV 音乐/呻吟多）；其它语言关闭，
+  //      以免把轻声对白（如电影里的短句）误判为非语音而整段漏识别 ----
+  const char* vv = std::getenv("WHISPER_VAD");
+  bool vad_on = vv ? std::strcmp(vv, "0") != 0 : (out.lang == "ja");
   double vad_thr = 0.5;
   if (const char* v = std::getenv("WHISPER_VAD_THRESHOLD")) vad_thr = std::atof(v);
   std::vector<uint8_t> speech;   // 逐帧(512 采样)语音标志
@@ -430,36 +462,10 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   float no_speech_threshold = 0.6f;
   if (const char* ns = std::getenv("WHISPER_NO_SPEECH_THRESHOLD"))
     no_speech_threshold = (float)std::atof(ns);
-
-  // WHISPER_LANG 强制源语言（如 ja / zh / en），跳过自动检测，避免误检
-  const char* forced_lang = std::getenv("WHISPER_LANG");
-  if (forced_lang && !forced_lang[0]) forced_lang = nullptr;
-
-  // ---- 语言检测：跨多个窗口投票取多数（单窗易被音乐/静音带偏，曾把日语误判为 nn）----
-  if (forced_lang) {
-    out.lang = forced_lang;
-    if (Profiling()) std::fprintf(stderr, "[whisper] lang forced = %s\n", forced_lang);
-  } else {
-    out.lang = DetectLanguageMulti(audio);
-    if (Profiling()) std::fprintf(stderr, "[whisper] lang = %s\n", out.lang.c_str());
-  }
-
-  // 日语 → 切换日语专用模型（kotoba-whisper）
-  if (!forced_lang && !std::getenv("WHISPER_MODEL_DIR") && out.lang == "ja") {
-    std::string ja = JaModelDir();
-    if (!ja.empty() && ja != g_dir) {
-      if (Profiling()) std::fprintf(stderr, "[whisper] switch JA model -> %s\n", ja.c_str());
-      if (LoadModelDir(ja)) {
-        model = g_model;
-        if (!std::getenv("WHISPER_CHUNK_SEC")) {
-          chunk_sec = is_distil(g_dir) ? 15.0 : 30.0;
-          if (chunk_sec < 5.0) chunk_sec = 5.0;
-          window = (int)(chunk_sec * sr);
-        }
-      }
-    }
-  }
-  const std::string lang_tok = "<|" + out.lang + "|>";
+  // 与 whisper.cpp 一致：no_speech 高“且”置信度低才丢弃，避免误删真实对白
+  float logprob_threshold = -1.0f;
+  if (const char* lp = std::getenv("WHISPER_LOGPROB_THRESHOLD"))
+    logprob_threshold = (float)std::atof(lp);
 
   // faster-whisper 式长音频解码：滑动窗口，seek 前进到“最后一个时间戳”，
   // 使块边界处被截断的句子在下一窗口重新解码，避免丢句。
@@ -526,11 +532,13 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
                    result.no_speech_prob, result.scores.empty() ? 0.0f : result.scores[0],
                    win.size());
 
-    // 静音/音乐段幻觉：整窗判定为“无语音”则丢弃该窗所有段
-    if (result.no_speech_prob > no_speech_threshold) {
+    // 静音/音乐段幻觉：仅当“无语音概率高”且“置信度低”才丢弃整窗
+    // （只看 no_speech 会误删真实对白，例如《The Reader》开头 nsp=0.62 但 score=-0.31）
+    const float win_score = result.scores.empty() ? 0.0f : result.scores[0];
+    if (result.no_speech_prob > no_speech_threshold && win_score < logprob_threshold) {
       if (Profiling())
-        std::fprintf(stderr, "[whisper] drop window @%.1fs (no_speech=%.2f, %zu segs)\n",
-                     base, result.no_speech_prob, win.size());
+        std::fprintf(stderr, "[whisper] drop window @%.1fs (no_speech=%.2f, score=%.2f, %zu segs)\n",
+                     base, result.no_speech_prob, win_score, win.size());
     } else {
       for (Segment& s : win) out.segments.push_back(s);
     }
@@ -543,7 +551,7 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   // ---- 幻觉过滤（结构性，不做文本黑名单）----
   // 真实语音段远短于一个解码窗；跨满整窗（≈window 秒）的单段是“无语音仍强制输出”
   // 的解码器伪影，直接丢弃。
-  double max_seg = 15.0, vad_min = 0.1;
+  double max_seg = 25.0, vad_min = 0.1;  // 只丢接近整窗(~30s)的填充伪影，避免误删真实长句
   if (const char* v = std::getenv("WHISPER_MAX_SEG_SEC")) max_seg = std::atof(v);
   if (const char* v = std::getenv("WHISPER_VAD_MIN_SEC")) vad_min = std::atof(v);
 
