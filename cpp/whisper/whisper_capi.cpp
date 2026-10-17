@@ -32,9 +32,8 @@ using namespace ctranslate2;
 namespace {
 
 const char* const kDefaultModelDir = "/data/models/faster-whisper-large-v3";
-// 日语专用模型（kotoba-whisper v2.0，检测到日语时自动切换；不存在则忽略）
-// 日语默认也用完整 large-v3（kotoba 2 层蒸馏在 BGM 下幻觉明显更多）；
-// 想要快速可用 WHISPER_MODEL_DIR_JA=/data/models/kotoba-whisper-v2-faster
+// 可选：日语专用模型（kotoba / whisper-ja 等）。默认与多语言相同；
+// 需要时用 WHISPER_MODEL_DIR_JA 指定，检测到日语时自动切换（不存在则忽略）。
 const char* const kDefaultJaModelDir = "/data/models/faster-whisper-large-v3";
 
 bool FileExists(const std::string& p) {
@@ -57,6 +56,9 @@ models::Whisper* g_model = nullptr;
 MelConfig g_cfg;
 std::string g_dir;
 bool g_ready = false;
+// 语言检测缓存：wh_lang 算一次，TranscribeAudio 复用，避免重复跑 encoder
+std::string g_detect_path;
+std::string g_detect_lang;
 
 // ---- GPT-2 byte-level 去分词 -------------------------------------------------
 
@@ -324,15 +326,6 @@ void SanitizeUtf8(std::string& s) {
   s.swap(o);
 }
 
-std::string DetectLang(models::Whisper* model, const StorageView& feat) {
-  auto futures = model->detect_language(feat);
-  auto res = futures[0].get();
-  if (res.empty()) return "en";
-  std::string tok = res[0].first;  // 形如 "<|en|>"
-  if (tok.size() >= 4) return tok.substr(2, tok.size() - 4);
-  return tok;
-}
-
 // 跨多个窗口投票检测语言（单窗易被开头音乐/静音带偏，曾把日语误判为 nn）
 std::string DetectLanguageMulti(const std::vector<float>& audio) {
   const int sr = g_cfg.sample_rate;
@@ -395,6 +388,9 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   if (forced_lang) {
     out.lang = forced_lang;
     if (Profiling()) std::fprintf(stderr, "[whisper] lang forced = %s\n", forced_lang);
+  } else if (!g_detect_path.empty() && g_detect_path == path && !g_detect_lang.empty()) {
+    out.lang = g_detect_lang;  // 复用 wh_lang 的检测结果，避免重复跑 encoder
+    if (Profiling()) std::fprintf(stderr, "[whisper] lang = %s (cached)\n", out.lang.c_str());
   } else {
     out.lang = DetectLanguageMulti(audio);
     if (Profiling()) std::fprintf(stderr, "[whisper] lang = %s\n", out.lang.c_str());
@@ -570,11 +566,9 @@ Transcript TranscribeAudio(models::Whisper* model, const char* path) {
   size_t max_char_run = 4;
   if (const char* v = std::getenv("WHISPER_MAX_CHAR_RUN")) max_char_run = (size_t)std::atoi(v);
   // 已知幻觉短语（片头片尾/音乐段常见）；WHISPER_DROP_PHRASES 覆盖该项（"-" 表示关闭）
-  std::vector<std::string> drop_phrases = {
-      "ご視聴ありがとうございました", "ご視聴ありがとうございます",
-      "ご視聴いただきありがとうございます", "ご覧いただきありがとうございます",
-      "チャンネル登録", "おやすみなさい", "ご視聴ありがとう",
-      "今日の天気は晴れ", "次回もお楽しみに", "またお会いしましょう"};
+  // 默认不做短语黑名单：仅凭文本无法区分「真的说了」与幻觉，误删真台词不可接受。
+  // 需要时用 WHISPER_DROP_PHRASES="a,b" 显式开启（默认关闭）。
+  std::vector<std::string> drop_phrases;
   if (const char* v = std::getenv("WHISPER_DROP_PHRASES")) {
     drop_phrases.clear();
     std::string s(v);
@@ -672,6 +666,8 @@ const char* wh_lang(const char* audio_path) {
   if (audio.empty()) { out = ""; return out.c_str(); }
   // 与转写用同一套多窗投票，保证命名与转写语言一致
   out = DetectLanguageMulti(audio);
+  g_detect_path = audio_path;
+  g_detect_lang = out;
   return out.c_str();
 }
 
@@ -734,9 +730,15 @@ int wh_to_ass(const char* audio_path, const char* out_ass, double offset) {
   int n = 0;
   for (const auto& s : t.segments) {
     if (s.text.empty()) continue;
-    std::string text = s.text;
-    for (char& c : text)
-      if (c == '\n') c = ' ';
+    // 防止字幕文本中的 { } 触发 ASS override 标签
+    std::string text;
+    text.reserve(s.text.size());
+    for (char c : s.text) {
+      if (c == '\n') text += ' ';
+      else if (c == '{') text += "\xEF\xBD\x9B";  // ｛
+      else if (c == '}') text += "\xEF\xBD\x9D";  // ｝
+      else text += c;
+    }
     ass += "Dialogue: 0," + FormatTimeAss(s.start + offset) + "," +
            FormatTimeAss(s.end + offset) + ",Default,,0,0,0,," + text + "\\N\n";
     ++n;
