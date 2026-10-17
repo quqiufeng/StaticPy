@@ -35,7 +35,7 @@ const char* const kDefaultModelDir = "/data/models/faster-whisper-large-v3";
 // 日语专用模型（kotoba-whisper v2.0，检测到日语时自动切换；不存在则忽略）
 // 日语默认也用完整 large-v3（kotoba 2 层蒸馏在 BGM 下幻觉明显更多）；
 // 想要快速可用 WHISPER_MODEL_DIR_JA=/data/models/kotoba-whisper-v2-faster
-const char* const kDefaultJaModelDir = "/data/models/whisper-ja-1.5B-ct2";
+const char* const kDefaultJaModelDir = "/data/models/faster-whisper-large-v3";
 
 bool FileExists(const std::string& p) {
   std::FILE* f = std::fopen(p.c_str(), "rb");
