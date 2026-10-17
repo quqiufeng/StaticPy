@@ -337,7 +337,7 @@ std::string DetectLanguageMulti(const std::vector<float>& audio) {
   const int win = 30 * sr;
   const long long total = (long long)audio.size();
   const long long step = std::max<long long>(win, total / 8);
-  std::unordered_map<std::string, int> votes;
+  std::unordered_map<std::string, double> votes;  // 软投票：累加各语言概率
   int samples = 0;
   for (long long s = 0; s < total && samples < 5; s += step) {
     const int l = (int)std::min<long long>(win, total - s);
@@ -345,14 +345,23 @@ std::string DetectLanguageMulti(const std::vector<float>& audio) {
     int fr = 0;
     std::vector<float> ml = LogMel(ch, g_cfg, fr);
     if (fr <= 0) continue;
-    std::string d = DetectLang(g_model, MakeFeatures(ml, fr));
-    votes[d]++;
+    auto futures = g_model->detect_language(MakeFeatures(ml, fr));
+    auto res = futures[0].get();
+    std::string top;
+    double topp = -1;
+    for (const auto& p : res) {
+      std::string t = p.first;
+      if (t.size() >= 4) t = t.substr(2, t.size() - 4);
+      votes[t] += p.second;
+      if (p.second > topp) { topp = p.second; top = t; }
+    }
     samples++;
     if (Profiling())
-      std::fprintf(stderr, "[whisper] lang vote %s @%.0fs\n", d.c_str(), (double)s / sr);
+      std::fprintf(stderr, "[whisper] lang vote %s(%.2f) @%.0fs\n", top.c_str(), topp,
+                   (double)s / sr);
   }
   std::string best = "en";
-  int bc = 0;
+  double bc = -1;
   for (const auto& kv : votes)
     if (kv.second > bc) { bc = kv.second; best = kv.first; }
   return best;
