@@ -110,28 +110,28 @@ def draw_hand(im: ptr, ex: float, ey: float, wx: float, wy: float, length: float
     return 0
 
 
-def leg(hipd: float, kneed: float, ankled: float, dx: float):
+def leg(hipd: float, kneed: float, ankled: float, dx: float, hy: float):
     hx: float = 256.0 + dx
-    hx1: float = hx + LEGX * 140.0 * sin(deg2rad(hipd))
-    hy1: float = 460.0 + 140.0 * cos(deg2rad(hipd))
+    hx1: float = hx + LEGX * 130.0 * sin(deg2rad(hipd))
+    hy1: float = hy + 130.0 * cos(deg2rad(hipd))
     sd: float = hipd - kneed
-    hx2: float = hx1 + LEGX * 140.0 * sin(deg2rad(sd))
-    hy2: float = hy1 + 140.0 * cos(deg2rad(sd))
-    fx: float = hx2 + LEGX * 26.0 * sin(deg2rad(sd + ankled))
-    fy: float = hy2 + 15.0
-    if fy > 738.0:
-        fy = 738.0
-    return py_list(hx, 460.0, hx1, hy1, hx2, hy2, fx, fy)
+    hx2: float = hx1 + LEGX * 130.0 * sin(deg2rad(sd))
+    hy2: float = hy1 + 130.0 * cos(deg2rad(sd))
+    fx: float = hx2 + LEGX * 24.0 * sin(deg2rad(sd + ankled))
+    fy: float = hy2 + 14.0
+    if fy > 705.0:
+        fy = 705.0
+    return py_list(hx, hy, hx1, hy1, hx2, hy2, fx, fy)
 
 
-def arm(shod: float, elbd: float, dx: float):
+def arm(shod: float, elbd: float, dx: float, sy: float):
     sx: float = 256.0 + dx
-    sx1: float = sx + ARMX * 95.0 * sin(deg2rad(shod))
-    sy1: float = 258.0 + 95.0 * cos(deg2rad(shod))
+    sx1: float = sx + ARMX * 85.0 * sin(deg2rad(shod))
+    sy1: float = sy + 85.0 * cos(deg2rad(shod))
     fd: float = shod - elbd
-    sx2: float = sx1 + ARMX * 95.0 * sin(deg2rad(fd))
-    sy2: float = sy1 + 95.0 * cos(deg2rad(fd))
-    return py_list(sx, 258.0, sx1, sy1, sx2, sy2)
+    sx2: float = sx1 + ARMX * 85.0 * sin(deg2rad(fd))
+    sy2: float = sy1 + 85.0 * cos(deg2rad(fd))
+    return py_list(sx, sy, sx1, sy1, sx2, sy2)
 
 
 def shift_up(im: ptr, dy: int) -> ptr:
@@ -147,19 +147,19 @@ def save(im: ptr, path: str) -> int:
 
 
 def kf0():
-    return py_list(22.0, 8.0, 5.0, -22.0, 20.0, 12.0, -26.0, 38.0, 26.0, 42.0)
+    return py_list(18.0, 2.0, 0.0, -18.0, 12.0, -8.0, -14.0, 18.0, 14.0, 18.0)
 
 
 def kf1():
-    return py_list(5.0, 5.0, 0.0, -5.0, 38.0, 16.0, -8.0, 34.0, 8.0, 44.0)
+    return py_list(-2.0, 2.0, 0.0, 4.0, 55.0, -6.0, -4.0, 16.0, 4.0, 16.0)
 
 
 def kf2():
-    return py_list(-22.0, 20.0, 12.0, 22.0, 8.0, 5.0, 26.0, 42.0, -26.0, 38.0)
+    return py_list(-18.0, 12.0, -8.0, 18.0, 2.0, 0.0, 14.0, 18.0, -14.0, 18.0)
 
 
 def kf3():
-    return py_list(-5.0, 38.0, 16.0, 5.0, 5.0, 0.0, 8.0, 44.0, -8.0, 34.0)
+    return py_list(4.0, 55.0, -6.0, -2.0, 2.0, 0.0, 4.0, 16.0, -4.0, 16.0)
 
 
 def blend(k0, k1, t: float):
@@ -181,38 +181,41 @@ def draw_dots(im: ptr, lst, cnt: int) -> int:
     return 0
 
 
-def draw_frame(a) -> ptr:
+def draw_frame(a, hy: float) -> ptr:
     im = img_new(W, H)
     img_fill(im, 255)
+    neck_y: float = hy - 175.0
+    head_y: float = hy - 220.0
+    sho_y: float = neck_y + 8.0
 
-    Lleg = leg(py_list_ref(a, 0), py_list_ref(a, 1), py_list_ref(a, 2), -10.0)
-    Rleg = leg(py_list_ref(a, 3), py_list_ref(a, 4), py_list_ref(a, 5), 12.0)
-    Larm = arm(py_list_ref(a, 6), py_list_ref(a, 7), -12.0)
-    Rarm = arm(py_list_ref(a, 8), py_list_ref(a, 9), 14.0)
+    Lleg = leg(py_list_ref(a, 0), py_list_ref(a, 1), py_list_ref(a, 2), -10.0, hy)
+    Rleg = leg(py_list_ref(a, 3), py_list_ref(a, 4), py_list_ref(a, 5), 12.0, hy)
+    Larm = arm(py_list_ref(a, 6), py_list_ref(a, 7), -12.0, sho_y)
+    Rarm = arm(py_list_ref(a, 8), py_list_ref(a, 9), 14.0, sho_y)
 
     # 主干
-    img_draw_line(im, CX, 180, CX, 250, rcol(255, 0, 0), 6)
+    img_draw_line(im, CX, rint(head_y), CX, rint(neck_y), rcol(255, 0, 0), 6)
     # 右臂（近）
-    img_draw_line(im, CX, 250, rint(py_list_ref(Rarm, 0)), rint(py_list_ref(Rarm, 1)), rcol(255, 85, 0), 6)
+    img_draw_line(im, CX, rint(neck_y), rint(py_list_ref(Rarm, 0)), rint(py_list_ref(Rarm, 1)), rcol(255, 85, 0), 6)
     img_draw_line(im, rint(py_list_ref(Rarm, 0)), rint(py_list_ref(Rarm, 1)), rint(py_list_ref(Rarm, 2)), rint(py_list_ref(Rarm, 3)), rcol(255, 170, 0), 6)
     img_draw_line(im, rint(py_list_ref(Rarm, 2)), rint(py_list_ref(Rarm, 3)), rint(py_list_ref(Rarm, 4)), rint(py_list_ref(Rarm, 5)), rcol(255, 255, 0), 6)
     # 左臂（远）
-    img_draw_line(im, CX, 250, rint(py_list_ref(Larm, 0)), rint(py_list_ref(Larm, 1)), rcol(170, 255, 0), 6)
+    img_draw_line(im, CX, rint(neck_y), rint(py_list_ref(Larm, 0)), rint(py_list_ref(Larm, 1)), rcol(170, 255, 0), 6)
     img_draw_line(im, rint(py_list_ref(Larm, 0)), rint(py_list_ref(Larm, 1)), rint(py_list_ref(Larm, 2)), rint(py_list_ref(Larm, 3)), rcol(85, 255, 0), 6)
     img_draw_line(im, rint(py_list_ref(Larm, 2)), rint(py_list_ref(Larm, 3)), rint(py_list_ref(Larm, 4)), rint(py_list_ref(Larm, 5)), rcol(0, 255, 0), 6)
     # 右腿
-    img_draw_line(im, CX, 250, rint(py_list_ref(Rleg, 0)), rint(py_list_ref(Rleg, 1)), rcol(0, 255, 85), 6)
+    img_draw_line(im, CX, rint(neck_y), rint(py_list_ref(Rleg, 0)), rint(py_list_ref(Rleg, 1)), rcol(0, 255, 85), 6)
     img_draw_line(im, rint(py_list_ref(Rleg, 0)), rint(py_list_ref(Rleg, 1)), rint(py_list_ref(Rleg, 2)), rint(py_list_ref(Rleg, 3)), rcol(0, 255, 170), 6)
     img_draw_line(im, rint(py_list_ref(Rleg, 2)), rint(py_list_ref(Rleg, 3)), rint(py_list_ref(Rleg, 4)), rint(py_list_ref(Rleg, 5)), rcol(0, 255, 255), 6)
     img_draw_line(im, rint(py_list_ref(Rleg, 4)), rint(py_list_ref(Rleg, 5)), rint(py_list_ref(Rleg, 6)), rint(py_list_ref(Rleg, 7)), rcol(0, 255, 255), 6)
     # 左腿
-    img_draw_line(im, CX, 250, rint(py_list_ref(Lleg, 0)), rint(py_list_ref(Lleg, 1)), rcol(0, 170, 255), 6)
+    img_draw_line(im, CX, rint(neck_y), rint(py_list_ref(Lleg, 0)), rint(py_list_ref(Lleg, 1)), rcol(0, 170, 255), 6)
     img_draw_line(im, rint(py_list_ref(Lleg, 0)), rint(py_list_ref(Lleg, 1)), rint(py_list_ref(Lleg, 2)), rint(py_list_ref(Lleg, 3)), rcol(0, 85, 255), 6)
     img_draw_line(im, rint(py_list_ref(Lleg, 2)), rint(py_list_ref(Lleg, 3)), rint(py_list_ref(Lleg, 4)), rint(py_list_ref(Lleg, 5)), rcol(0, 0, 255), 6)
     img_draw_line(im, rint(py_list_ref(Lleg, 4)), rint(py_list_ref(Lleg, 5)), rint(py_list_ref(Lleg, 6)), rint(py_list_ref(Lleg, 7)), rcol(0, 0, 255), 6)
 
     # 关键点白点
-    headp = py_list(256.0, 180.0, 256.0, 250.0, 264.0, 174.0, 248.0, 178.0)
+    headp = py_list(CX, head_y, CX, neck_y, CX + 8.0, head_y - 6.0, CX - 8.0, head_y - 2.0)
     draw_dots(im, headp, 4)
     draw_dots(im, Rarm, 3)
     draw_dots(im, Larm, 3)
@@ -260,8 +263,10 @@ def main():
             a = blend(k2, k3, t)
         else:
             a = blend(k3, k0, t)
-        save(shift_up(draw_frame(a), YUP), outdir + "/" + fname(i))
+        ph: float = float(i) / 16.0
+        bob: float = -5.0 * (1.0 - cos(4.0 * PI * ph)) / 2.0
+        save(shift_up(draw_frame(a, 430.0 + bob), YUP), outdir + "/" + fname(i))
         i = i + 1
-    save(shift_up(draw_frame(k0), YUP), outdir + "/preview_contact.png")
-    save(shift_up(draw_frame(k1), YUP), outdir + "/preview_passing.png")
+    save(shift_up(draw_frame(k0, 430.0), YUP), outdir + "/preview_contact.png")
+    save(shift_up(draw_frame(k1, 430.0), YUP), outdir + "/preview_passing.png")
     print("pose_walk: " + string_of_int(N) + " frames -> " + outdir)
