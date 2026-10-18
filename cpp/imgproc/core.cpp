@@ -142,6 +142,14 @@ int encode_gif(Image* im, const char* path) {
     if (!gcmo || EGifPutScreenDesc(g, W, H, 8, 0, gcmo) == GIF_ERROR) {
         if (gcmo) GifFreeMapObject(gcmo); EGifCloseFile(g, &err); return -2;
     }
+    // Netscape 循环扩展（loop=0 表示无限循环）；不写的话 GIF 只播一遍
+    {
+        unsigned char loop_block[3] = {0x01, 0x00, 0x00};
+        EGifPutExtensionLeader(g, APPLICATION_EXT_FUNC_CODE);
+        EGifPutExtensionBlock(g, 11, "NETSCAPE2.0");
+        EGifPutExtensionBlock(g, 3, loop_block);
+        EGifPutExtensionTrailer(g);
+    }
     std::vector<GifPixelType> row(W);
     for (int i = 0; i < N; ++i) {
         Frame& fr = im->frames[i];
