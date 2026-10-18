@@ -354,6 +354,39 @@ int img_getbbox4(void* p, int rgba, char* out, int outlen) {
     snprintf(out, outlen, "%d,%d,%d,%d", x0, y0, x1 + 1, y1 + 1);
     return 0;
 }
+int img_alpha_bbox(void* p, int thr, char* out, int outlen) {
+    Image* im = (Image*)p; if (!im) return -1;
+    Image* rg = as_rgba(im);
+    int x0 = rg->w, y0 = rg->h, x1 = -1, y1 = -1;
+    for (int y = 0; y < rg->h; ++y) for (int x = 0; x < rg->w; ++x) {
+        uint8_t a = rg->frames[0].data.data()[((size_t)y * rg->w + x) * 4 + 3];
+        if (a > thr) { if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y; }
+    }
+    if (rg != im) delete rg;
+    if (x1 < 0) { snprintf(out, outlen, "None"); return 0; }
+    snprintf(out, outlen, "%d,%d,%d,%d", x0, y0, x1 + 1, y1 + 1);
+    return 0;
+}
+
+int img_col_gaps(void* p, int thr, int min_gap, char* out, int outlen) {
+    Image* im = (Image*)p; if (!im) return -1;
+    Image* rg = as_rgba(im);
+    std::vector<int> fg(rg->w, 0);
+    for (int y = 0; y < rg->h; ++y) for (int x = 0; x < rg->w; ++x) {
+        uint8_t a = rg->frames[0].data.data()[((size_t)y * rg->w + x) * 4 + 3];
+        if (a > thr) fg[x]++;
+    }
+    std::string s; int run = -1;
+    for (int x = 0; x < rg->w; ++x) {
+        if (fg[x] == 0) { if (run < 0) run = x; }
+        else { if (run >= 0 && x - run >= min_gap) { if (!s.empty()) s += ","; s += std::to_string((run + x) / 2); } run = -1; }
+    }
+    if (run >= 0 && rg->w - run >= min_gap) { if (!s.empty()) s += ","; s += std::to_string((run + rg->w) / 2); }
+    if (rg != im) delete rg;
+    snprintf(out, outlen, "%s", s.c_str());
+    return 0;
+}
+
 void* img_getbbox(void* p, int rgba) { (void)p; (void)rgba; return nullptr; }
 
 // img_warp：按给定每像素源坐标（CSV:"sx,sy,..."）逆向采样（对称 deform 的基本能力）

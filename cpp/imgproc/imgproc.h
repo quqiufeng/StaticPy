@@ -64,6 +64,8 @@ void*       img_blend(void* a, void* b, float alpha);                       // a
 void*       img_getbbox(void* im, int rgba);                                // 非背景包围盒
 void*       img_warp(void* im, int w, int h, const char* coords_csv, const char* resample);
 int         img_getbbox4(void* im, int rgba, char* out_csv, int out_len);   // "x0,y0,x1,y1"
+int         img_alpha_bbox(void* im, int thr, char* out_csv, int out_len);  // 按 alpha>thr 的 bbox "x0,y0,x1,y1"
+int         img_col_gaps(void* im, int thr, int min_gap, char* out_csv, int out_len); // 背景列连续段中点 CSV
 
 /* ============================ 颜色 / 模式 / 调色板 ============================ */
 void*       img_convert(void* im, const char* mode);
