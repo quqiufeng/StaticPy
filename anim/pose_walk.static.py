@@ -245,28 +245,35 @@ def main():
     if outdir == "":
         outdir = "walk6"
     os_mkdir(outdir)
-    k0 = kf0()
-    k1 = kf1()
-    k2 = kf2()
-    k3 = kf3()
     N: int = 16
+    A: float = 18.0
+    K: float = 55.0
+    ARMA: float = 16.0
+    BOB: float = 6.0
     i: int = 0
     while i < N:
-        f: float = (float(i) * 4.0) / 16.0
-        j: int = int(f)
-        t: float = f - float(j)
-        if j == 0:
-            a = blend(k0, k1, t)
-        elif j == 1:
-            a = blend(k1, k2, t)
-        elif j == 2:
-            a = blend(k2, k3, t)
+        t: float = float(i) / 16.0
+        ph: float = 2.0 * PI * t
+        s: float = sin(ph)
+        c: float = cos(ph)
+        hipL: float = A * c
+        hipR: float = -hipL
+        kneeL: float = 0.0
+        kneeR: float = 0.0
+        if t < 0.5:
+            kneeL = K * (1.0 - cos(2.0 * ph)) / 2.0
         else:
-            a = blend(k3, k0, t)
-        ph: float = float(i) / 16.0
-        bob: float = -5.0 * (1.0 - cos(4.0 * PI * ph)) / 2.0
+            kneeR = K * (1.0 + cos(2.0 * ph)) / 2.0
+        ankleL: float = -(hipL - kneeL)
+        ankleR: float = -(hipR - kneeR)
+        shoL: float = -ARMA * c
+        shoR: float = ARMA * c
+        bob: float = -BOB * (1.0 - cos(2.0 * ph)) / 2.0
+        a = py_list(hipL, kneeL, ankleL, hipR, kneeR, ankleR, shoL, -14.0, shoR, -14.0)
         save(shift_up(draw_frame(a, 430.0 + bob), YUP), outdir + "/" + fname(i))
         i = i + 1
-    save(shift_up(draw_frame(k0, 430.0), YUP), outdir + "/preview_contact.png")
-    save(shift_up(draw_frame(k1, 430.0), YUP), outdir + "/preview_passing.png")
+    a0 = py_list(A, 0.0, -A, -A, 0.0, A, -ARMA, -14.0, ARMA, -14.0)
+    save(shift_up(draw_frame(a0, 430.0), YUP), outdir + "/preview_contact.png")
+    a1 = py_list(0.0, 0.0, 0.0, 0.0, K, -K, 0.0, -14.0, 0.0, -14.0)
+    save(shift_up(draw_frame(a1, 430.0 - BOB), YUP), outdir + "/preview_passing.png")
     print("pose_walk: " + string_of_int(N) + " frames -> " + outdir)
