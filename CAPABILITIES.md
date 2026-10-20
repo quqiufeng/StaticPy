@@ -19,7 +19,7 @@
 | `font` | TTF → 字形图集 + 度量（FreeType） | **15/15** vs PIL |
 | `easing` | 25 条缓动曲线（Penner） | **525/525** 双实现 |
 | `warp3d` | 2D 图像 3D 旋转 / 透视（伪 3D） | **4/4** vs cv2（仿射） |
-| `upscale` | 像素画高清放大（Scale2x） | **20/20** 双实现 |
+| `upscale` | `2x` 像素画 Scale2x / `4x` Real-ESRGAN 模型 | Scale2x **20/20**；4x 走 ONNX |
 
 ## 2. 已集成工具（C++ + ONNX Runtime 推理）
 
