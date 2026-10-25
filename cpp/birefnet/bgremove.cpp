@@ -3,8 +3,11 @@
 
 #include <cstdlib>
 #include <ctime>
+#include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 std::string DefaultOut() {
@@ -34,7 +37,7 @@ int main(int argc, char** argv) {
     std::string mode_s = "transparent";
     std::string color_s = "";
     std::string mask_out = "";
-    std::string in, out;
+    std::string in, out, list_path;
     bool cpu = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -43,20 +46,23 @@ int main(int argc, char** argv) {
         else if (a == "--mode" && i + 1 < argc) mode_s = argv[++i];
         else if (a == "--color" && i + 1 < argc) color_s = argv[++i];
         else if (a == "--mask" && i + 1 < argc) mask_out = argv[++i];
+        else if (a == "--list" && i + 1 < argc) list_path = argv[++i];
         else if (a == "--cpu") cpu = true;
         else if (a == "-h" || a == "--help") {
             std::cerr << "usage: " << argv[0]
                       << " [--model PATH] [--mode transparent|white|black|green|color|mask]"
-                         " [--color RRGGBB] [--mask mask.png] [--cpu] <input> [output]\n";
+                         " [--color RRGGBB] [--mask mask.png] [--cpu]"
+                         " <input> [output] | --list list.tsv\n"
+                         "  list.tsv: <input>\\t<output> per line\n";
             return 0;
         } else if (in.empty()) in = a;
         else out = a;
     }
-    if (in.empty()) {
-        std::cerr << "error: missing input image\n";
+    if (in.empty() && list_path.empty()) {
+        std::cerr << "error: missing input image (or --list)\n";
         return 2;
     }
-    if (out.empty()) out = DefaultOut();
+    if (!in.empty() && out.empty()) out = DefaultOut();
 
     int mode = ParseMode(mode_s);
     if (mode < 0) {
@@ -75,10 +81,31 @@ int main(int argc, char** argv) {
     }
 
     try {
+        std::vector<std::pair<std::string, std::string>> jobs;
+        if (!list_path.empty()) {
+            std::ifstream lf(list_path);
+            if (!lf) { std::cerr << "error: cannot open list " << list_path << "\n"; return 2; }
+            std::string line;
+            while (std::getline(lf, line)) {
+                if (line.empty()) continue;
+                auto tab = line.find('\t');
+                if (tab == std::string::npos) jobs.emplace_back(line, DefaultOut());
+                else jobs.emplace_back(line.substr(0, tab), line.substr(tab + 1));
+            }
+            if (jobs.empty()) { std::cerr << "error: empty list\n"; return 2; }
+        }
         bref::BgRemover model_(model, !cpu);
-        std::cerr << "[bgremove] provider=" << model_.provider() << " mode=" << mode_s << "\n";
-        model_.Process(in, out, mask_out, mode, r, g, b);
-        std::cout << out << std::endl;
+        std::cerr << "[bgremove] provider=" << model_.provider() << " mode=" << mode_s
+                  << (jobs.empty() ? "" : " batch=" + std::to_string(jobs.size())) << "\n";
+        if (jobs.empty()) {
+            model_.Process(in, out, mask_out, mode, r, g, b);
+            std::cout << out << std::endl;
+        } else {
+            for (const auto& j : jobs) {
+                model_.Process(j.first, j.second, mask_out, mode, r, g, b);
+                std::cout << j.second << std::endl;
+            }
+        }
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "[bgremove] error: " << e.what() << "\n";
