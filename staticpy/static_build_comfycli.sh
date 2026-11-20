@@ -1,14 +1,22 @@
 #!/bin/bash
-# static_build_comfycli.sh — ComfyCLI 本地构建脚本（基于上游 StaticPy 工具链）
-#
-# 与上游 static_build.sh 的差异（上游版硬编码 /opt/ReScheme 且链接 torch）：
-#   - 使用本项目 staticpy/ 目录下的编译器文件（上游原样拷贝，未改）
-#   - 不链接 torch（sd.cpp 后端无需）
-#   - 支持 GLIBC_SYSROOT 兼容编译
-#   - 产物输出到项目根目录
+# static_build.sh — StaticPy 唯一构建入口（translate → Chez AOT → 独立 ELF）
 #
 # 用法:
-#   bash staticpy/static_build_comfycli.sh <input.py> <output-name> [ffi.scm]
+#   bash staticpy/static_build_comfycli.sh <input.static.py|input.scm> [output-name] [ffi.scm]
+#
+# 环境变量:
+#   CHEZ_SCHEME_DIR / CHEZ_SCHEME / CHEZ_BOOT_DIR  Chez 安装位置
+#   STATICPY_CACHE   缓存目录（默认 ~/iso_gen/staticpy-cache）
+#   STATICPY_OUTDIR  产物目录（默认 dist/，仅对“无路径前缀”的 output-name 生效）
+#   STATICPY_STDLIB  合并的标准库（默认 static_stdlib.scm，可给 static_stdlib_full.scm）
+#   STATICPY_PLUGINS 启用的插件（默认全部）
+#   STATICPY_LIB=1   库模式：允许没有 main()，不生成 (static_main)
+#   STATICPY_WARN=1  类型检查用 warn 模式
+#   STATICPY_CACHE_KEEP  缓存保留条目数（默认 24）
+#   GLIBC_SYSROOT    可选 sysroot，兼容老 glibc
+#
+# 后缀 .scm/.ss 视为已翻译的 Scheme，跳过翻译阶段。
+# 产物：<outdir>/<stem>（ELF）与 <outdir>/<stem>.so（Chez AOT 代码）
 set -euo pipefail
 
 SCHEME_DIR="${CHEZ_SCHEME_DIR:-/opt/ChezScheme/ta6le}"
@@ -16,105 +24,164 @@ SCHEME="${CHEZ_SCHEME:-$SCHEME_DIR/bin/ta6le/scheme}"
 SCHEME_BOOT_DIR="${CHEZ_BOOT_DIR:-/opt/ChezScheme/boot/ta6le}"
 STATICPY_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$STATICPY_DIR")"
-CACHE_DIR="/tmp/staticpy-cache"
 PYTHON="${STATICPY_PYTHON:-python3}"
+STDLIB="${STATICPY_STDLIB:-static_stdlib.scm}"
+# 缓存不再写 /tmp（本项目约定：临时文件一律放 ~/iso_gen）
+CACHE_DIR="${STATICPY_CACHE:-$HOME/iso_gen/staticpy-cache}"
+CACHE_KEEP="${STATICPY_CACHE_KEEP:-24}"
+LIB_MODE="${STATICPY_LIB:-0}"
 
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 input.py [output-name] [ffi.scm]"
+    echo "Usage: $0 <input.static.py|input.scm> [output-name] [ffi.scm]"
+    echo "  STATICPY_CACHE=$CACHE_DIR   (缓存目录)"
+    echo "  STATICPY_OUTDIR=dist        (裸名产物目录)"
+    echo "  STATICPY_LIB=1              (库模式：无 main)"
     exit 1
+fi
+if [ "$1" = "--clean" ]; then
+    rm -rf "$CACHE_DIR"
+    echo "cleaned cache: $CACHE_DIR"
+    exit 0
 fi
 if [ ! -x "$SCHEME" ]; then
     echo "Error: Chez Scheme not found at $SCHEME"
+    echo "Set CHEZ_SCHEME_DIR or CHEZ_SCHEME."
     exit 1
 fi
 
-# 解析为绝对路径（脚本随后会 cd 到 staticpy/）
-INPUT="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+# --- 绝对路径（脚本随后会 cd 到 staticpy/） --------------------------------
+abspath() { local d; d="$(cd "$(dirname "$1")" && pwd)"; echo "$d/$(basename "$1")"; }
+INPUT="$(abspath "$1")"
 STEM="${2:-$(basename "$INPUT" .py)}"
+STEM="${STEM%.static.py}"
+STEM="${STEM%.py}"
 FFI_SCM=""
-if [ -n "${3:-}" ]; then
-    FFI_SCM="$(cd "$(dirname "$3")" && pwd)/$(basename "$3")"
+[ -n "${3:-}" ] && FFI_SCM="$(abspath "$3")"
+
+# 产物落点：带路径前缀（imgproc/pil）沿用原语义；裸名进 dist/
+OUTDIR=""
+if [ -n "${STATICPY_OUTDIR:-}" ] || [ "${STEM#*/}" = "$STEM" ]; then
+    OUTDIR="${STATICPY_OUTDIR:-$PROJECT_DIR/dist}"
+    # 相对路径按**调用者 cwd** 解析（脚本随后会 cd 到 staticpy/，相对路径会跑偏）
+    case "$OUTDIR" in
+        /*) ;;
+        *) OUTDIR="$(pwd)/$OUTDIR" ;;
+    esac
+    mkdir -p "$OUTDIR"
+    OUTPUT_BASE="$OUTDIR/$(basename "$STEM")"
+else
+    OUTPUT_BASE="$PROJECT_DIR/$STEM"
+    mkdir -p "$(dirname "$OUTPUT_BASE")"
 fi
+STEM_BASE="$(basename "$STEM")"
+
 mkdir -p "$CACHE_DIR"
 cd "$STATICPY_DIR"
 
-echo "=== StaticPy Build (ComfyCLI) ==="
+echo "=== StaticPy Build ==="
 echo "Source: $INPUT"
-echo "Output: $PROJECT_DIR/$STEM"
-echo "Chez:   $SCHEME"
+echo "Output: $OUTPUT_BASE (+ .so)"
+echo "Cache:  $CACHE_DIR"
 
 INPUT_EXT="${INPUT##*.}"
 IS_SCM=0
-[ "$INPUT_EXT" = "scm" ] || [ "$INPUT_EXT" = "ss" ] && IS_SCM=1
+if [ "$INPUT_EXT" = "scm" ] || [ "$INPUT_EXT" = "ss" ]; then IS_SCM=1; fi
 
-# Step 1: Translate
-echo ">>> Step 1: Translate"
-if [ "$IS_SCM" = "1" ]; then
-    echo "  -> Input is Scheme code, skipping translation"
-    cp "$INPUT" "$CACHE_DIR/${STEM}_code.ss"
-else
-    if [ "${STATICPY_WARN:-0}" = "1" ]; then
-        "$PYTHON" static_translate.py --warn "$INPUT" > "$CACHE_DIR/${STEM}_code.ss"
+# --- 输入指纹：所有**影响产物**的输入都进 hash（含插件与内核） ------------
+fingerprint() {
+    local files=()
+    if [ "$IS_SCM" = "1" ]; then
+        files+=("$INPUT" "$STATICPY_DIR/static_prelude.scm" "$STATICPY_DIR/$STDLIB")
     else
-        "$PYTHON" static_translate.py "$INPUT" > "$CACHE_DIR/${STEM}_code.ss"
+        files+=("$INPUT" "$STATICPY_DIR/static_translate.py"
+                "$STATICPY_DIR/static_prelude.scm" "$STATICPY_DIR/$STDLIB")
     fi
-fi
+    [ -n "$FFI_SCM" ] && [ -f "$FFI_SCM" ] && files+=("$FFI_SCM")
+    # 插件（语法重写 + 运行时 .scm/.py）与内核：改了插件必须重编，不能命中旧 .so
+    files+=($(find "$PROJECT_DIR/plugins" "$PROJECT_DIR/kernel" \
+                -type f \( -name '*.py' -o -name '*.scm' -o -name '*.lua' \) 2>/dev/null | sort))
+    {
+        echo "STATICPY_STDLIB=$STDLIB"
+        echo "STATICPY_PLUGINS=${STATICPY_PLUGINS:-}"
+        echo "STATICPY_LIB=$LIB_MODE"
+        md5sum "${files[@]}" 2>/dev/null
+    } | md5sum | cut -d' ' -f1
+}
 
-# Step 2: content hash for caching
-if [ "$IS_SCM" = "1" ]; then
-    HASH_INPUTS=(static_prelude.scm "${STATICPY_STDLIB:-static_stdlib.scm}" "$CACHE_DIR/${STEM}_code.ss")
-else
-    HASH_INPUTS=(static_prelude.scm "${STATICPY_STDLIB:-static_stdlib.scm}" static_translate.py "$CACHE_DIR/${STEM}_code.ss")
-fi
-[ -n "$FFI_SCM" ] && HASH_INPUTS+=("$FFI_SCM")
-PRELUDE_HASH=$(md5sum "${HASH_INPUTS[@]}" 2>/dev/null | md5sum | cut -d' ' -f1)
-CACHED_SO="$CACHE_DIR/${STEM}_${PRELUDE_HASH}.so"
-CACHED_ELF="$CACHE_DIR/${STEM}_${PRELUDE_HASH}"
+BUILD_HASH="$(fingerprint)"
+CACHED_SO="$CACHE_DIR/${STEM_BASE}_${BUILD_HASH}.so"
+CACHED_ELF="$CACHE_DIR/${STEM_BASE}_${BUILD_HASH}"
+
+prune_cache() {
+    # 只保留最近的 N 个顶层条目（文件与 elf_* 目录），避免缓存无限膨胀
+    local victims
+    # boot_* 与 launcher 是跨产物复用的公共件，不参与淘汰
+    victims=$(ls -1dt "$CACHE_DIR"/* 2>/dev/null \
+        | grep -v '/boot_' \
+        | tail -n +$((CACHE_KEEP + 1)) || true)
+    if [ -n "$victims" ]; then echo "$victims" | xargs -r rm -rf; fi
+    return 0
+}
 
 if [ -f "$CACHED_ELF" ] && [ -f "$CACHED_SO" ]; then
-    echo ">>> Step 2: Cached, skip compile"
-    OUTPUT_SO="$CACHED_SO"
-    OUTPUT_ELF="$CACHED_ELF"
+    echo ">>> Cached (hash ${BUILD_HASH:0:12}), skip translate+compile"
 else
-    echo ">>> Step 2: Compile"
-    MERGED_SS="$CACHE_DIR/${STEM}_${PRELUDE_HASH}.ss"
-    cat static_prelude.scm > "$MERGED_SS"
-    echo "" >> "$MERGED_SS"
-    STDLIB="${STATICPY_STDLIB:-static_stdlib.scm}"
-    cat "$STDLIB" >> "$MERGED_SS"
-    echo "" >> "$MERGED_SS"
-    if [ -n "$FFI_SCM" ] && [ -f "$FFI_SCM" ]; then
-        cat "$FFI_SCM" >> "$MERGED_SS"
-        echo "" >> "$MERGED_SS"
+    # --- Step 1: 翻译 -----------------------------------------------------
+    echo ">>> Step 1: Translate"
+    CODE_SS="$CACHE_DIR/${STEM_BASE}_${BUILD_HASH}.code.ss"
+    if [ "$IS_SCM" = "1" ]; then
+        echo "  -> input is Scheme, skip translation"
+        cp "$INPUT" "$CODE_SS"
+    else
+        TRANSLATE_ARGS=()
+        [ "${STATICPY_WARN:-0}" = "1" ] && TRANSLATE_ARGS+=(--warn)
+        [ "$LIB_MODE" = "1" ] && TRANSLATE_ARGS+=(--lib)
+        [ -n "${STATICPY_PLUGINS:-}" ] && TRANSLATE_ARGS+=(--plugins "$STATICPY_PLUGINS")
+        "$PYTHON" static_translate.py "${TRANSLATE_ARGS[@]}" "$INPUT" > "$CODE_SS"
     fi
-    cat "$CACHE_DIR/${STEM}_code.ss" >> "$MERGED_SS"
 
-    cat > "$CACHE_DIR/compile_${PRELUDE_HASH}.ss" << EOF
-(import (chezscheme))
-(compile-file "$MERGED_SS")
-EOF
-    $SCHEME --quiet "$CACHE_DIR/compile_${PRELUDE_HASH}.ss" 2>&1
-    mv "${MERGED_SS}.so" "$CACHED_SO" 2>/dev/null || true
+    # --- Step 2: Chez AOT -------------------------------------------------
+    echo ">>> Step 2: Compile (Chez AOT)"
+    MERGED_SS="$CACHE_DIR/${STEM_BASE}_${BUILD_HASH}.ss"
+    {
+        cat static_prelude.scm; echo
+        cat "$STDLIB"; echo
+        if [ -n "$FFI_SCM" ] && [ -f "$FFI_SCM" ]; then cat "$FFI_SCM"; echo; fi
+        cat "$CODE_SS"
+    } > "$MERGED_SS"
 
-    # Step 3: standalone ELF
-    echo ">>> Step 3: Build standalone ELF binary"
-    BUILD_DIR="$CACHE_DIR/elf_${PRELUDE_HASH}"
-    rm -rf "$BUILD_DIR"
-    mkdir -p "$BUILD_DIR"
+    printf '(import (chezscheme))\n(compile-file "%s")\n' "$MERGED_SS" \
+        > "$CACHE_DIR/compile_${BUILD_HASH}.ss"
+    $SCHEME --quiet "$CACHE_DIR/compile_${BUILD_HASH}.ss" 2>&1
+    # Chez 把 foo.ss 编到 foo.so（就是 CACHED_SO 本身）；缺了说明编译失败
+    if [ ! -f "$CACHED_SO" ]; then
+        echo "Error: Chez compile-file 未产出 $CACHED_SO" >&2
+        exit 1
+    fi
 
-    cp "$SCHEME_BOOT_DIR/petite.boot" "$BUILD_DIR/petite.boot"
-    cp "$SCHEME_BOOT_DIR/scheme.boot" "$BUILD_DIR/scheme.boot"
-    (cd "$BUILD_DIR" && \
-      objcopy --input-target binary --output-target elf64-x86-64 --binary-architecture i386:x86-64 \
-        petite.boot petite_boot.o && \
-      objcopy --input-target binary --output-target elf64-x86-64 --binary-architecture i386:x86-64 \
-        scheme.boot scheme_boot.o && \
-      objcopy --add-section .note.GNU-stack=/dev/null --set-section-flags .note.GNU-stack=readonly \
-        petite_boot.o petite_boot.o && \
-      objcopy --add-section .note.GNU-stack=/dev/null --set-section-flags .note.GNU-stack=readonly \
-        scheme_boot.o scheme_boot.o)
+    # --- Step 3: 独立 ELF -------------------------------------------------
+    echo ">>> Step 3: Link standalone ELF"
+    BOOT_HASH="$(md5sum "$SCHEME_BOOT_DIR/petite.boot" "$SCHEME_BOOT_DIR/scheme.boot" | md5sum | cut -d' ' -f1)"
+    BOOT_DIR="$CACHE_DIR/boot_${BOOT_HASH:0:12}"
+    if [ ! -f "$BOOT_DIR/.stamp" ]; then
+        # boot 文件与产物无关，跨 build hash 复用（只做一次 objcopy）
+        echo "  -> objcopy boot files (once per Chez install)"
+        rm -rf "$BOOT_DIR"; mkdir -p "$BOOT_DIR"
+        cp "$SCHEME_BOOT_DIR/petite.boot" "$SCHEME_BOOT_DIR/scheme.boot" "$BOOT_DIR/"
+        ( cd "$BOOT_DIR" && \
+          objcopy --input-target binary --output-target elf64-x86-64 --binary-architecture i386:x86-64 \
+            petite.boot petite_boot.o && \
+          objcopy --input-target binary --output-target elf64-x86-64 --binary-architecture i386:x86-64 \
+            scheme.boot scheme_boot.o && \
+          objcopy --add-section .note.GNU-stack=/dev/null --set-section-flags .note.GNU-stack=readonly \
+            petite_boot.o petite_boot.o && \
+          objcopy --add-section .note.GNU-stack=/dev/null --set-section-flags .note.GNU-stack=readonly \
+            scheme_boot.o scheme_boot.o && \
+          touch .stamp )
+    fi
 
-    cat > "$BUILD_DIR/launcher.c" << 'CCODE'
+    LAUNCHER="$CACHE_DIR/launcher_${BUILD_HASH}.c"
+    cat > "$LAUNCHER" << 'CCODE'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -149,47 +216,40 @@ int main(int argc, char **argv) {
             }
         }
     }
-
     return Sscheme_program(prog_path, argc, (const char **)argv);
 }
 CCODE
-    CSTEM_BASE="$(basename "$STEM")"
-    sed "s|CSTEM|$CSTEM_BASE|g" "$BUILD_DIR/launcher.c" > "$BUILD_DIR/launcher_fixed.c"
+    sed "s|CSTEM|$STEM_BASE|g" "$LAUNCHER" > "${LAUNCHER%.c}_fixed.c"
 
-    # GLIBC 兼容：可选 sysroot 链接
-    GLIBC_SYSROOT="${GLIBC_SYSROOT:-}"
     GLIBC_LDFLAGS=()
-    if [ -n "$GLIBC_SYSROOT" ]; then
-        GLIBC_LDFLAGS+=("-L$GLIBC_SYSROOT/lib")
-        GLIBC_LDFLAGS+=("-L$GLIBC_SYSROOT/lib/x86_64-linux-gnu")
-        GLIBC_LDFLAGS+=("-L$GLIBC_SYSROOT/usr/lib/x86_64-linux-gnu")
-        GLIBC_LDFLAGS+=("-Wl,-rpath-link,$GLIBC_SYSROOT/lib")
-        GLIBC_LDFLAGS+=("-Wl,-rpath-link,$GLIBC_SYSROOT/lib/x86_64-linux-gnu")
-        GLIBC_LDFLAGS+=("-Wl,-rpath-link,$GLIBC_SYSROOT/usr/lib/x86_64-linux-gnu")
+    if [ -n "${GLIBC_SYSROOT:-}" ]; then
+        GLIBC_LDFLAGS+=("-L$GLIBC_SYSROOT/lib" "-L$GLIBC_SYSROOT/lib/x86_64-linux-gnu"
+                        "-L$GLIBC_SYSROOT/usr/lib/x86_64-linux-gnu"
+                        "-Wl,-rpath-link,$GLIBC_SYSROOT/lib"
+                        "-Wl,-rpath-link,$GLIBC_SYSROOT/lib/x86_64-linux-gnu"
+                        "-Wl,-rpath-link,$GLIBC_SYSROOT/usr/lib/x86_64-linux-gnu")
     fi
 
     gcc -o "$CACHED_ELF" \
-        "$BUILD_DIR/launcher_fixed.c" \
-        "$BUILD_DIR/petite_boot.o" \
-        "$BUILD_DIR/scheme_boot.o" \
-        -I"$SCHEME_DIR/boot/ta6le" \
-        -L"$SCHEME_DIR/boot/ta6le" \
+        "${LAUNCHER%.c}_fixed.c" \
+        "$BOOT_DIR/petite_boot.o" "$BOOT_DIR/scheme_boot.o" \
+        -I"$SCHEME_DIR/boot/ta6le" -L"$SCHEME_DIR/boot/ta6le" \
         -l:libkernel.a \
         "$SCHEME_DIR/lz4/lib/liblz4.a" \
         "$SCHEME_DIR/zlib/libz.a" \
         -ldl -lpthread -lm -ltinfo \
-        "${GLIBC_LDFLAGS[@]}" \
-        2>&1
+        "${GLIBC_LDFLAGS[@]}"
 
-    echo "  -> ELF cached"
-    OUTPUT_SO="$CACHED_SO"
-    OUTPUT_ELF="$CACHED_ELF"
+    echo "  -> built (hash ${BUILD_HASH:0:12})"
+    prune_cache
 fi
 
-# Step 4: copy outputs to project root
-cp -L "$OUTPUT_SO" "$PROJECT_DIR/$STEM.so"
-cp -L "$OUTPUT_ELF" "$PROJECT_DIR/$STEM"
+# --- Step 4: 发布到输出目录 ------------------------------------------------
+cp -L "$CACHED_SO" "$OUTPUT_BASE.so"
+cp -L "$CACHED_ELF" "$OUTPUT_BASE"
+chmod +x "$OUTPUT_BASE"
+touch "$CACHED_ELF" "$CACHED_SO"   # 供 LRU 判定“最近使用”
 
 echo "=== Build complete ==="
-echo "  $PROJECT_DIR/$STEM       (ELF binary)"
-echo "  $PROJECT_DIR/$STEM.so    (Chez AOT compiled Scheme)"
+echo "  $OUTPUT_BASE       (ELF binary)"
+echo "  $OUTPUT_BASE.so    (Chez AOT compiled Scheme)"

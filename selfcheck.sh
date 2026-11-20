@@ -5,10 +5,16 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 fail=0
 
+PY="${PYTHON:-python3}"
+
+echo ">>> [0/4] 单一真源检查（plugins/ ⇄ static_prelude.scm）"
+if $PY tools/split_plugins.py --check >/dev/null 2>&1; then echo "  ok"; else
+  echo "  漂移：跑 python3 tools/split_plugins.py 重新生成"; fail=1
+fi
+
 echo ">>> [1/4] 构建 C 库 + 前端（imgproc）"
 bash imgproc/build.sh >/dev/null 2>&1 && echo "  ok" || { echo "  失败"; fail=1; }
 
-PY="${PYTHON:-python3}"
 if $PY -c "import PIL, numpy" 2>/dev/null; then
   echo ">>> [2/4] 差分测试（Pillow vs 我们，逐像素）"
   $PY imgproc/difftest.py 2>/dev/null | tail -1
@@ -26,7 +32,7 @@ echo ">>> [4/4] 自举比对（环 2：staticc.py CPython vs 自举 ELF）"
 bash imgproc/build.sh >/dev/null 2>&1
 if ( cd selfhost && $PY run_staticc_py.py tests/test_staticc_input.sp /tmp/sc_a.scm >/dev/null 2>&1 ) \
    && bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc >/dev/null 2>&1 \
-   && ./staticc selfhost/tests/test_staticc_input.sp /tmp/sc_b.scm >/dev/null 2>&1 \
+   && ./dist/staticc selfhost/tests/test_staticc_input.sp /tmp/sc_b.scm >/dev/null 2>&1 \
    && diff -q /tmp/sc_a.scm /tmp/sc_b.scm >/dev/null; then
   echo "  ok（一致）"
 else

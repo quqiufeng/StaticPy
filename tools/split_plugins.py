@@ -115,8 +115,12 @@ def slice_and_group(lines, spans):
     return out
 
 
-def emit_legacy():
-    """用插件重新拼装旧的两块单文件（兼容老构建脚本）"""
+def emit_legacy(check=False):
+    """用插件重新拼装旧的两块单文件（兼容老构建脚本）
+
+    check=True 时只比对不落盘：这样 --check 也能守住 prelude ⇄ plugins 的漂移
+    （否则 prelude 里的 183 个重复定义改了一边、另一边不动，谁也发现不了）。
+    """
     changed = []
     targets = [
         ("staticpy/static_prelude.scm", PRELUDE_SLICE, ";; static_prelude.scm — StaticPy 核心运行时（由 plugins/ 自动拼装，勿手改）\n"
@@ -138,8 +142,9 @@ def emit_legacy():
         text = "".join(p if p.endswith("\n\n") else p + "\n" for p in parts)
         path = os.path.join(ROOT, rel)
         if not os.path.exists(path) or open(path, encoding="utf-8").read() != text:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
+            if not check:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
             changed.append(path)
     return changed
 
@@ -219,8 +224,7 @@ def main():
 
     # 旧构建脚本仍读 static_prelude.scm / static_stdlib_full.scm：
     # 由插件重新拼装（保持原切片顺序），单一事实来源 = plugins/
-    if not check:
-        changed += emit_legacy()
+    changed += emit_legacy(check=check)
 
     if check and changed:
         print("插件与源文件不同步：")

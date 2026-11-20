@@ -4,12 +4,13 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
 USER="$1"; OUT="$2"
-CONCAT="$ROOT/concat"
+CONCAT="$ROOT/dist/concat"
 if [ ! -x "$CONCAT" ]; then
   ( cd "$ROOT" && bash staticpy/static_build_comfycli.sh imgproc/concat.static.py concat >/dev/null )
 fi
-mkdir -p /tmp/staticpy-cache
-BUNDLE="/tmp/staticpy-cache/$(basename "$OUT").bundle.static.py"
+CACHE="${STATICPY_CACHE:-$HOME/iso_gen/staticpy-cache}"
+mkdir -p "$CACHE"
+BUNDLE="$CACHE/$(basename "$OUT").bundle.static.py"
 "$CONCAT" "$BUNDLE" "$HERE/pil_lib.static.py" "$USER"
 ( cd "$ROOT" && bash staticpy/static_build_comfycli.sh "$BUNDLE" "$OUT" "$HERE/imgproc_ffi.scm" )
 echo "built: $OUT  (run: LD_LIBRARY_PATH=$ROOT/cpp/imgproc/build ./$OUT ...)"

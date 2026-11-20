@@ -297,7 +297,7 @@ PRELUDE_HASH=$(md5sum static_prelude.scm static_stdlib.scm static_translate.py c
 | 问题 | 方法 |
 |------|------|
 | 类型错误 | `python3 static_translate.py input.py` 直接看 stderr |
-| Scheme 编译错误 | 查看 `/tmp/staticpy-cache/${STEM}_${HASH}.ss` |
+| Scheme 编译错误 | 查看 `~/iso_gen/staticpy-cache/${STEM}_${HASH}.ss` |
 | 运行时找不到 .so | `LD_LIBRARY_PATH=. ./app` |
 | FFI 符号未找到 | 用 `nm -D libxxx.so \| grep symbol` 确认 |
 | Chez 异常 | Scheme 源码加 `(trace ...)` 或分步 REPL 加载 |

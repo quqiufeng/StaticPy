@@ -322,3 +322,8 @@ imgproc/preview_*.png
 /mem.bin
 /mem.idx
 /mem.lock
+
+# StaticPy 本地构建产物（禁止入库）
+/staticpy/spark
+/staticpy/spboot
+/pilcli_probe

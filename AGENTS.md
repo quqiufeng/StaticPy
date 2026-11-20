@@ -186,8 +186,14 @@ StaticPy 不是"只能靠宿主"的：它**能自举**。上游 `/opt/ReScheme` 
 ## 8. 关键命令速查
 
 ```bash
-# 编译工具链目标（Python → Scheme → ELF）
+# 编译工具链目标（Python → Scheme → ELF）；static_build.sh 是同一实现的转发别名
 bash staticpy/static_build_comfycli.sh input.static.py out_name [ffi.scm]
+
+# 库文件（无 main）：加 --lib（或 STATICPY_LIB=1），不生成 (static_main)
+python3 staticpy/static_translate.py --lib imgproc/pil_lib.static.py > lib.ss
+# 裸名产物落 dist/；带前缀的名字沿用原路径；缓存默认 ~/iso_gen/staticpy-cache
+STATICPY_CACHE=~/iso_gen/staticpy-cache  STATICPY_OUTDIR=dist
+bash staticpy/static_build_comfycli.sh --clean   # 清缓存
 
 # 迁移库的构建 / 运行
 bash imgproc/build.sh
@@ -198,6 +204,7 @@ bash imgproc/build_app.sh my_app.static.py my_app
 
 # 验证
 PY=python3
+$PY tools/split_plugins.py --check    # plugins/ ⇄ static_prelude.scm 单一真源（防漂移）
 $PY imgproc/pil_surface.py > imgproc/pil_api.md
 $PY imgproc/frontend_coverage.py
 $PY imgproc/difftest.py -v

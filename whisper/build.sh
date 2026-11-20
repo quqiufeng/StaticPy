@@ -4,6 +4,5 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
 
 bash "$ROOT/cpp/whisper/build.sh"
-mkdir -p /tmp/staticpy-cache/whisper
 ( cd "$ROOT" && bash staticpy/static_build_comfycli.sh \
     whisper/whisper.static.py whisper/whisper whisper/whisper_ffi.scm )

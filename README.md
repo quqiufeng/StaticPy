@@ -26,8 +26,9 @@ staticpy/                # 语言工具链
 │                          #   模块级变量 / 顶层语句 / float ABI / lambda+一等函数）
 ├── static_prelude.scm     # 运行时值类型
 ├── static_stdlib.scm      # 标准库
-├── static_build.sh        # 上游构建脚本
-└── static_build_comfycli.sh  # 本项目构建脚本（translate + Chez AOT + 独立 ELF）
+├── static_build.sh        # 兼容别名（转发到下面那个，单一真源）
+└── static_build_comfycli.sh  # 构建脚本（translate + Chez AOT + 独立 ELF）
+                             #   缓存 ~/iso_gen/staticpy-cache，裸名产物落 dist/
 
 imgproc/                 # 「StaticPy 版 Pillow」——图像处理库（本轮迁移样板）
 ├── pil_lib.static.py      # 库（纯函数，可被集成；lambda/一等函数）

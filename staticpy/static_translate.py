@@ -1597,6 +1597,13 @@ class StaticPyTypeError(Exception):
 # 类型检查模式：'strict'（默认）出错即退出；'warn' 只打印警告继续编译
 TYPECHECK_MODE = "strict"
 TYPE_WARNINGS = []
+# 收集到的硬错误：一次编译报告全部，而不是首个错误即停
+TYPE_ERRORS = []
+
+
+class _CollectedError(Exception):
+    """内部信号：错误已记录到 TYPE_ERRORS，向上冒泡到语句边界后继续检查"""
+    pass
 
 # 在 warn 模式下也会阻止 Scheme 生成的“硬错误”集合
 # 这些错误如果进入后端，必然导致 Chez 编译/运行失败
@@ -1617,14 +1624,34 @@ def _error_key(msg):
     return None
 
 def typecheck_error(node, msg):
-    """输出类型检查错误或警告；strict 模式抛出异常，warn 模式对硬错误仍抛出"""
+    """输出类型检查错误或警告。
+
+    strict 模式：记录到 TYPE_ERRORS（去重）并抛 _CollectedError，
+    由语句边界捕获后继续检查下一条语句 —— 一次编译报出全部错误。
+    warn 模式：硬错误（会击穿后端的那几类）仍按 strict 处理，其余仅告警。
+    """
     loc = format_loc(node)
     if TYPECHECK_MODE == "warn" and _error_key(msg) is None:
-        TYPE_WARNINGS.append(f"{loc}: {msg}")
-        sys.stderr.write(f"StaticPy type warning{loc}: {msg}\n")
-    else:
+        line = f"{loc}: {msg}"
+        if line not in TYPE_WARNINGS:
+            TYPE_WARNINGS.append(line)
+            sys.stderr.write(f"StaticPy type warning{loc}: {msg}\n")
+        return
+    line = f"{loc}: {msg}"
+    if line not in TYPE_ERRORS:
+        TYPE_ERRORS.append(line)
         sys.stderr.write(f"StaticPy type error{loc}: {msg}\n")
-        raise StaticPyTypeError(node, msg)
+    raise _CollectedError(line)
+
+
+def report_type_errors():
+    """输出汇总后的全部类型错误（返回 True 表示有错误）"""
+    if not TYPE_ERRORS:
+        return False
+    sys.stderr.write(f"\nStaticPy: {len(TYPE_ERRORS)} type error(s):\n")
+    for e in TYPE_ERRORS:
+        sys.stderr.write(f"  {e}\n")
+    return True
 
 def typecheck_warn(node, msg):
     """总是作为警告输出"""
@@ -2202,29 +2229,113 @@ def try_field_set(node_stmt):
     return None
 
 
+_PRELUDE_NAMES_CACHE = None
+
+# 真正的“语言内建”（Python 侧只有这几个是关键字/内建函数）
+PY_BUILTIN_NAMES = {
+    "print", "len", "range", "int", "float", "str", "bool", "list", "dict",
+    "min", "max", "abs", "sum", "sorted", "enumerate", "zip", "isinstance",
+    "open", "exit", "None", "True", "False",
+}
+
+# 运行时以 Scheme 函数提供、但在 prelude 里用非 define 形式导出的少数名字
+RUNTIME_ALIAS_NAMES = {
+    "make_array", "make_float_array", "make_int_array",
+    "float_array_set", "float_array_ref", "int_array_set", "int_array_ref",
+    "make_dict", "dict_get", "dict_get_or_empty", "dict_set",
+    "to_list", "available", "Ok", "Error", "Some", "none",
+    "is_ok", "is_error", "is_some", "is_none",
+    "unwrap", "unwrap_or", "unwrap_error",
+}
+
+_DEFINE_RE = None
+
+
+def prelude_defined_names():
+    """从 prelude / stdlib .scm 解析出已定义的 Scheme 名字。
+
+    这是“可见名字”的**单一真源**：prelude 里 define 了什么，用户代码就能引用什么，
+    不再靠手工维护的变量名白名单（那种白名单会随翻译器自身代码腐化）。
+    """
+    global _PRELUDE_NAMES_CACHE, _DEFINE_RE
+    if _PRELUDE_NAMES_CACHE is not None:
+        return _PRELUDE_NAMES_CACHE
+    if _DEFINE_RE is None:
+        _DEFINE_RE = re.compile(r"^\(define\s+\(?\s*([A-Za-z_][A-Za-z0-9_!?:*/<>=+.~^-]*)")
+    here = os.path.dirname(os.path.abspath(__file__))
+    files = [
+        os.environ.get("STATICPY_PRELUDE_SCM", os.path.join(here, "static_prelude.scm")),
+        os.environ.get("STATICPY_STDLIB", os.path.join(here, "static_stdlib.scm")),
+        os.path.join(here, "static_stdlib_full.scm"),
+    ]
+    raw = set()
+    for path in files:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    m = _DEFINE_RE.match(line)
+                    if m:
+                        raw.add(m.group(1))
+        except OSError:
+            continue
+    names = set()
+    for n in raw:
+        names.add(n)
+        names.add(n.replace("-", "_"))
+        names.add(n.replace("_", "-"))
+    _PRELUDE_NAMES_CACHE = names
+    return names
+
+
+def visible_global_names():
+    """用户代码可直接引用的全局名字 = Python 内建 + prelude 定义 + 插件模块函数"""
+    names = set(PY_BUILTIN_NAMES) | set(RUNTIME_ALIAS_NAMES) | prelude_defined_names()
+    try:
+        names |= set(MODULE_FN_RETURN_TYPES)
+    except NameError:
+        pass
+    return names
+
+
+def collect_bound_names(node):
+    """收集函数体内**所有会被绑定**的局部名。
+
+    覆盖：参数、赋值/增强赋值、for 目标、with、except、推导式、海象、嵌套 def/class、
+    import、global/nonlocal。这样“先用后赋值”的前向引用不会被误报 undefined。
+    """
+    bound = set()
+    for a in list(getattr(node.args, "posonlyargs", [])) + list(node.args.args) + list(node.args.kwonlyargs):
+        bound.add(a.arg)
+    if node.args.vararg:
+        bound.add(node.args.vararg.arg)
+    if node.args.kwarg:
+        bound.add(node.args.kwarg.arg)
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Name) and isinstance(sub.ctx, (ast.Store, ast.Del)):
+            bound.add(sub.id)
+        elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(sub.name)
+        elif isinstance(sub, ast.ExceptHandler) and sub.name:
+            bound.add(sub.name)
+        elif isinstance(sub, (ast.Global, ast.Nonlocal)):
+            bound.update(sub.names)
+        elif isinstance(sub, ast.Import):
+            for a in sub.names:
+                bound.add((a.asname or a.name).split(".")[0])
+        elif isinstance(sub, ast.ImportFrom):
+            for a in sub.names:
+                bound.add(a.asname or a.name)
+    return bound
+
+
 def typecheck_function(node, function_arities, module_env=None):
     """函数级类型检查：参数、返回值、赋值、运算、调用、下标、字段"""
     module_env = module_env or {}
     name = node.name
-    defined = set(arg.arg for arg in node.args.args)
-    builtin_names = {"print", "len", "range", "int", "float", "str", "bool",
-                     "make_array", "make_float_array", "make_int_array",
-                     "float_array_set", "float_array_ref",
-                     "int_array_set", "int_array_ref",
-                     "make_dict", "dict_get", "dict_get_or_empty", "dict_set",
-                     "to_list", "available", "Ok", "Error", "Some", "none",
-                     "is_ok", "is_error", "is_some", "is_none",
-                     "unwrap", "unwrap_or", "unwrap_error", "EConst", "EVar", "EBinop",
-                     "EUnary", "ECall", "IRStmt", "SLet", "SSet", "SReturn", "SExpr",
-                     "SIf", "SWhile", "SFor", "IRFunc", "IRExpr", "env", "lt", "rt",
-                     "indent", "value", "name", "op", "operand", "func", "args",
-                     "expr", "c", "v", "src", "out", "i", "n", "start", "pos", "tok",
-                     "s", "f", "stmts", "parts", "bindings", "body_expr", "tokens",
-                     "ln", "rn", "left", "right", "cond", "then_expr", "else_expr",
-                     "stop", "funcs", "func", "params", "scm", "stmt", "lv", "arg",
-                     "a", "p", "path", "inp", "source", "target", "result", "inner",
-                     "done", "ty", "end_tok", "nxt", "pos2", "def_tok", "lparen",
-                     "arrow", "ret", "body", "first", "rest", "outp", "sep_str", "lst", "val"}
+    # 可见全局名（内建 + prelude + 插件）与函数体绑定的局部名，全部自动收集
+    builtin_names = visible_global_names()
+    bound_names = collect_bound_names(node)
+    defined = set(bound_names)
 
     # 局部类型环境
     env = dict(module_env)
@@ -2287,7 +2398,8 @@ def typecheck_function(node, function_arities, module_env=None):
         if isinstance(expr, ast.Name):
             t = lookup(expr.id)
             if t is None and expr.id not in builtin_names and expr.id not in BUILTIN_MODULES \
-                    and expr.id not in IMPORTED_NAMES and expr.id not in RECORD_TYPES:
+                    and expr.id not in IMPORTED_NAMES and expr.id not in RECORD_TYPES \
+                    and expr.id not in bound_names:
                 typecheck_error(expr, f"undefined name '{expr.id}'")
             return t
         if isinstance(expr, ast.Attribute):
@@ -2580,8 +2692,12 @@ def typecheck_function(node, function_arities, module_env=None):
         elif isinstance(stmt, ast.FunctionDef):
             typecheck_function(stmt, function_arities, module_env)
 
+    # 语句边界捕获 _CollectedError：一条语句出错后继续检查下一条，一次报出全部错误
     for s in node.body:
-        check_stmt(s)
+        try:
+            check_stmt(s)
+        except _CollectedError:
+            continue
 
 
 def collect_function_arities(tree):
@@ -2612,9 +2728,16 @@ def typecheck_module(tree):
             for t in node.targets:
                 if isinstance(t, ast.Name):
                     module_env[t.id] = Type("Any")
+    # 顶层函数名也是可见名字（函数作为值传递 / 互相引用）
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name not in module_env:
+            module_env[node.name] = Type("Any")
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
-            typecheck_function(node, arities, module_env)
+            try:
+                typecheck_function(node, arities, module_env)
+            except _CollectedError:
+                continue
 
 
 def debug_annotation(node, source_file=""):
@@ -2638,8 +2761,7 @@ TENSOR_METHODS = {
     "unsqueeze", "squeeze", "split", "contiguous", "expand", "masked_fill",
     "gather", "index_select", "sqrt", "mul", "add", "sub", "div", "softmax", "argmax",
     "clone", "float", "detach", "max", "new_zeros", "repeat", "ne", "gt",
-    "lt", "eq", "matmul", "reshape_as", "narrow", "neg", "permute", "cat", "div", "add", "mul",
-    "unsqueeze", "squeeze", "transpose", "view", "mean", "sum",
+    "lt", "eq", "matmul", "reshape_as", "narrow", "neg", "cat",
 }
 
 # 方法关键字参数 → 最终位置参数下标（不含接收者）
@@ -3777,6 +3899,7 @@ def main():
     typecheck_mode = "strict"
     plugin_arg = ""
     input_files = []
+    lib_mode = os.environ.get("STATICPY_LIB", "0") == "1"
     i = 1
     while i < len(sys.argv):
         arg = sys.argv[i]
@@ -3784,28 +3907,39 @@ def main():
             typecheck_mode = "warn"
         elif arg == "--strict":
             typecheck_mode = "strict"
+        elif arg == "--lib" or arg == "--no-entry":
+            # 库模式：允许没有 main()，也不生成 (static_main) 调用
+            lib_mode = True
         elif arg == "--plugins":
             i += 1
             plugin_arg = sys.argv[i] if i < len(sys.argv) else ""
+        elif arg in ("-h", "--help"):
+            sys.stderr.write(
+                "usage: static_translate.py [--warn|--strict] [--lib] "
+                "[--plugins a,b] FILE.static.py > out.ss\n")
+            sys.exit(0)
         elif not arg.startswith("-"):
             input_files.append(arg)
         i += 1
 
     set_typecheck_mode(typecheck_mode)
-    TYPE_WARNINGS = []
 
     try:
-        _run_pipeline(input_files, plugin_arg)
-    except StaticPyTypeError as e:
+        _run_pipeline(input_files, plugin_arg, lib_mode=lib_mode)
+    except StaticPyTypeError:
+        sys.exit(1)
+    except _CollectedError:
+        report_type_errors()
         sys.exit(1)
 
 
-def _run_pipeline(input_files, plugin_arg=""):
-    global TYPE_ENV, EXTERN_FUNCTIONS, IMPORTED_NAMES, RECORD_TYPES, RECORD_FIELDS, FUNCTION_SIGS, TYPE_WARNINGS
+def _run_pipeline(input_files, plugin_arg="", lib_mode=False):
+    global TYPE_ENV, EXTERN_FUNCTIONS, IMPORTED_NAMES, RECORD_TYPES, RECORD_FIELDS, FUNCTION_SIGS, TYPE_WARNINGS, TYPE_ERRORS
 
     if input_files:
         source_filename = input_files[0]
-        with open(source_filename, "r") as f:
+        # 一律按 UTF-8 读（旧代码用 locale 默认编码，在 POSIX/C 环境下会炸中文注释）
+        with open(source_filename, "r", encoding="utf-8") as f:
             code = f.read()
     else:
         source_filename = "<stdin>"
@@ -3820,6 +3954,7 @@ def _run_pipeline(input_files, plugin_arg=""):
     FUNCTION_SIGS = {}
     FUNC_NODES = {}
     TYPE_WARNINGS = []
+    TYPE_ERRORS = []
     
     # 加载插件：语法扩展 / 运行时表 / C 库封装
     kernel = load_kernel(plugin_arg)
@@ -3829,8 +3964,15 @@ def _run_pipeline(input_files, plugin_arg=""):
     # 提取 extern fn 声明
     code = parse_extern_functions(code)
     
-    # 使用 Python 的 ast 解析
-    tree = ast.parse(code)
+    # 使用 Python 的 ast 解析（语法错误给出与编译器一致的定位格式）
+    try:
+        tree = ast.parse(code, filename=source_filename)
+    except SyntaxError as e:
+        sys.stderr.write(
+            f"StaticPy syntax error ({source_filename}:{e.lineno}:{e.offset}): {e.msg}\n")
+        if e.text:
+            sys.stderr.write("  " + e.text.rstrip() + "\n")
+        sys.exit(1)
     tree.source_file = source_filename
     
     # 解析 import / from ... import
@@ -3842,13 +3984,22 @@ def _run_pipeline(input_files, plugin_arg=""):
     # 生成 Scheme
     output_parts = []
     
-    # 类型检查
-    typecheck_module(tree)
-    
-    # 检查 main 函数存在性（缺少则后端编译必然失败）
+    # 类型检查（收集全部错误，一次报出）
+    try:
+        typecheck_module(tree)
+    except _CollectedError:
+        pass
+
+    # 检查 main 函数存在性（缺少则后端编译必然失败）；库模式跳过
     has_main = any(isinstance(node, ast.FunctionDef) and node.name == "main" for node in tree.body)
-    if not has_main:
-        typecheck_error(None, "missing main function")
+    if not has_main and not lib_mode:
+        try:
+            typecheck_error(None, "missing main function")
+        except _CollectedError:
+            pass
+
+    if report_type_errors():
+        sys.exit(1)
     ffi = generate_extern_ffi()
     if ffi:
         output_parts.append(";; extern FFI functions")
@@ -3879,10 +4030,14 @@ def _run_pipeline(input_files, plugin_arg=""):
             # 顶层表达式语句（如 register_node(...) 调用）
             output_parts.append(translate_expr(node.value))
     
-    # 顶层表达式（调用 main）
-    output_parts.append("")
-    output_parts.append(";; Entry point")
-    output_parts.append("(static_main)")
+    # 顶层表达式（调用 main）；库模式不生成，供 concat/静态库链接使用
+    if lib_mode:
+        output_parts.append("")
+        output_parts.append(";; Library mode: no (static_main) entry point")
+    else:
+        output_parts.append("")
+        output_parts.append(";; Entry point")
+        output_parts.append("(static_main)")
     
     # 输出 Scheme 代码（类型警告已提前输出到 stderr，不再混入生成文件）
     print("\n".join(output_parts))

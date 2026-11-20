@@ -569,7 +569,7 @@ SCHEME_DIR="${CHEZ_SCHEME_DIR:-/opt/ChezScheme/ta6le}"
 SCHEME="${CHEZ_SCHEME:-$SCHEME_DIR/bin/ta6le/scheme}"
 SCHEME_BOOT_DIR="${CHEZ_BOOT_DIR:-/opt/ChezScheme/boot/ta6le}"
 RESCHEME_DIR="/opt/ReScheme"
-CACHE_DIR="/tmp/staticpy-cache"
+CACHE_DIR="$HOME/iso_gen/staticpy-cache"
 
 INPUT="$1"           # 输入的 .py 文件
 STEM="${2:-$(basename "$INPUT" .py)}"

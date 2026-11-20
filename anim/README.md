@@ -20,7 +20,7 @@
 ## 构建（编成原生 ELF）
 ```bash
 cd /opt/StaticPy
-mkdir -p /tmp/staticpy-cache/anim
+mkdir -p ~/iso_gen/staticpy-cache/anim
 bash imgproc/build_app.sh anim/pose_walk.static.py     anim/pose_walk
 bash imgproc/build_app.sh anim/pack_sprites.static.py  anim/pack_sprites
 bash imgproc/build_app.sh anim/frames_to_gif.static.py anim/frames_to_gif
