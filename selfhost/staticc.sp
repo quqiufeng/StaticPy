@@ -6,6 +6,13 @@ def str-ref (s : str i : int) -> str
   return (call substring s i (+ i 1))
 end
 
+# ---------- 字符类 ----------
+# 词法约定（写 .sp 时必须遵守，写错了编译器会报错而不是产出废码）：
+#   标识符  = [A-Za-z_][A-Za-z0-9_?]*( '-' 后接字母 … )   ; '-' 只在后面紧跟字母时属于标识符
+#   数字    = '-'? digits [ '.' digits ] [ (e|E) [+-]? digits ]
+#   二元减法必须留空格：(- a b) / (n - 1)
+#   因此：a-1 → a , - , 1（减法）；emit-plus → 一个标识符；-7 → 一个字面量
+
 def is-digit (c : str) -> bool
   return (and (>= c "0") (<= c "9"))
 end
@@ -14,18 +21,90 @@ def is-alpha (c : str) -> bool
   return (or (and (>= c "a") (<= c "z")) (and (>= c "A") (<= c "Z")))
 end
 
-def is-alnum (c : str) -> bool
-  return (or (or (or (call is-alpha c) (call is-digit c)) (or (= c "_") (= c "-"))) (or (or (= c ">") (= c "?")) (or (= c "/") (= c "="))))
+def is-ident-char (c : str) -> bool
+  return (or (or (call is-alpha c) (call is-digit c)) (or (= c "_") (= c "?")))
+end
+
+# ========== 字符串构造（string port，避免 O(n^2)） ==========
+
+def sb-new () -> any
+  return (call open-output-string)
+end
+
+def sb-write (sb : any s : str) -> int
+  (call display s sb)
+  return 0
+end
+
+def sb-string (sb : any) -> str
+  return (call get-output-string sb)
+end
+
+def scan-ident (src : str i : int n : int) -> int
+  while (< i n)
+    let c str (call str-ref src i)
+    if (call is-ident-char c)
+      set i (+ i 1)
+    else
+      if (and (= c "-") (and (< (+ i 1) n) (call is-alpha (call str-ref src (+ i 1)))))
+        set i (+ i 1)
+      else
+        return i
+      end
+    end
+  end
+  return i
+end
+
+def exp-start? (src : str i : int n : int) -> bool
+  if (>= i n) return False
+  end
+  let c str (call str-ref src i)
+  if (call is-digit c) return True
+  end
+  if (and (or (= c "+") (= c "-")) (and (< (+ i 1) n) (call is-digit (call str-ref src (+ i 1)))))
+    return True
+  end
+  return False
+end
+
+def scan-exp (src : str i : int n : int) -> int
+  if (< i n)
+    let c str (call str-ref src i)
+    if (or (= c "+") (= c "-")) set i (+ i 1) end
+  end
+  while (and (< i n) (call is-digit (call str-ref src i)))
+    set i (+ i 1)
+  end
+  return i
+end
+
+def scan-number (src : str i : int n : int) -> int
+  while (< i n)
+    let c str (call str-ref src i)
+    if (call is-digit c)
+      set i (+ i 1)
+    else
+      if (and (= c ".") (and (< (+ i 1) n) (call is-digit (call str-ref src (+ i 1)))))
+        set i (+ i 1)
+      else
+        if (and (or (= c "e") (= c "E")) (call exp-start? src (+ i 1) n))
+          set i (call scan-exp src (+ i 1) n)
+        else
+          return i
+        end
+      end
+    end
+  end
+  return i
 end
 
 def tokenize (src : str) -> str
-  let out str ""
+  let sb any (call sb-new)
   let i int 0
-  let c str ""
-  let start int 0
   let n int (call list_length src)
   while (< i n)
-    set c (call substring src i (+ i 1))
+    let c str (call str-ref src i)
     if (or (or (or (= c " ") (= c "\t")) (= c "\n")) (= c "\r"))
       set i (+ i 1)
     else
@@ -36,7 +115,7 @@ def tokenize (src : str) -> str
         end
       else
         if (= c "\"")
-          set start i
+          let start int i
           set i (+ i 1)
           while (and (< i n) (not (= (call str-ref src i) "\"")))
             if (= (call str-ref src i) "\\")
@@ -45,43 +124,46 @@ def tokenize (src : str) -> str
               set i (+ i 1)
             end
           end
+          if (>= i n)
+            (call parse-fail "unterminated string literal")
+          end
           set i (+ i 1)
-          set out (call string-append out (call string-append (call substring src start i) " "))
+          (call sb-write sb (call substring src start i))
+          (call sb-write sb " ")
         else
           let tmp tuple (call tokenize-symbol src i n)
-          set out (call string-append out (call vector-ref tmp 0))
+          (call sb-write sb (call vector-ref tmp 0))
           set i (call vector-ref tmp 1)
         end
       end
     end
   end
-  return out
+  return (call sb-string sb)
 end
 
 def tokenize-symbol (src : str i : int n : int) -> tuple
-  let out str ""
-  let c str (call substring src i (+ i 1))
-  let start int 0
-  if (or (or (or (= c "-") (= c ">")) (or (= c "<") (= c "="))) (= c "!"))
-    return (call tokenize-op src i n)
-  else
-    if (or (= c "(") (= c ")"))
-      set out (call string-append c " ")
-      set i (+ i 1)
-    else
-      if (call is-alnum c)
-        set start i
-        while (and (< i n) (call is-alnum (call str-ref src i)))
-          set i (+ i 1)
-        end
-        set out (call string-append (call substring src start i) " ")
-      else
-        set out (call string-append c " ")
-        set i (+ i 1)
-      end
+  let c str (call str-ref src i)
+  if (or (= c "(") (= c ")"))
+    return (call vector (call string-append c " ") (+ i 1))
+  end
+  if (or (call is-alpha c) (= c "_"))
+    let start int i
+    set i (call scan-ident src i n)
+    return (call vector (call string-append (call substring src start i) " ") i)
+  end
+  if (call is-digit c)
+    let start int i
+    set i (call scan-number src i n)
+    return (call vector (call string-append (call substring src start i) " ") i)
+  end
+  if (and (= c "-") (and (< (+ i 1) n) (not (= (call str-ref src (+ i 1)) ">"))))
+    if (call is-digit (call str-ref src (+ i 1)))
+      let start int i
+      set i (call scan-number src (+ i 1) n)
+      return (call vector (call string-append (call substring src start i) " ") i)
     end
   end
-  return (call vector out i)
+  return (call tokenize-op src i n)
 end
 
 def tokenize-op (src : str i : int n : int) -> tuple
@@ -233,18 +315,17 @@ def list-ref-range (lst start stop) -> any
 end
 
 def str-join (parts sep-str) -> str
-  let result str ""
+  let sb any (call sb-new)
   let i int 0
   let n int (call list-length parts)
   while (< i n)
-    if (= i 0)
-      set result (call list-ref parts i)
-    else
-      set result (call string-append (call string-append result sep-str) (call list-ref parts i))
+    if (> i 0)
+      (call sb-write sb sep-str)
     end
+    (call sb-write sb (call list-ref parts i))
     set i (+ i 1)
   end
-  return result
+  return (call sb-string sb)
 end
 
 def func-params-to-str (params) -> str
@@ -275,17 +356,19 @@ def parse-expr-at (tokens : str pos : int tok : str) -> tuple
   else
     let result any ""
     if (= tok "")
-      set result (call EConst "")
+      (call parse-fail "unexpected end of input: expression expected")
+    end
+    if (call is-reserved tok)
+      (call parse-fail (call string-append (call string-append "expression expected, found keyword '") (call string-append tok "'")))
+    end
+    let first str (call substring tok 0 1)
+    if (= first "\"")
+      set result (call EConst tok)
     else
-      let first str (call substring tok 0 1)
-      if (= first "\"")
+      if (or (or (call is-digit first) (= first "-")) (= first "."))
         set result (call EConst tok)
       else
-        if (or (or (call is-digit first) (= first "-")) (= first "."))
-          set result (call EConst tok)
-        else
-          set result (call EVar tok)
-        end
+        set result (call EVar tok)
       end
     end
     return (call vector result pos)
@@ -334,6 +417,9 @@ def parse-not (tokens : str pos : int op : str) -> tuple
   let tmp tuple (call next-token tokens pos)
   let rparen str (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
+  if (not (= rparen ")"))
+    (call parse-fail (call string-append "expected ')' to close 'not', found '" (call string-append rparen "'")))
+  end
   set result (call EUnary op operand)
   return (call vector result pos)
 end
@@ -349,14 +435,40 @@ def parse-binop (tokens : str pos : int op : str) -> tuple
   let tmp tuple (call next-token tokens pos)
   let rparen str (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
+  if (not (= rparen ")"))
+    (call parse-fail (call string-append (call string-append "expected ')' to close '" (call string-append op "'")) (call string-append ", found '" (call string-append rparen "'"))))
+  end
   set result (call EBinop op left right)
   return (call vector result pos)
 end
 
 def parse-fail (msg : str) -> int
-  (call print (call string-append "staticc: error: " msg))
+  (call display (call string-append "staticc: error: " msg) (call current-error-port))
+  (call newline (call current-error-port))
+  (call flush-output-port (call current-error-port))
   (call exit 1)
   return 0
+end
+
+def known-type? (ty : str) -> bool
+  if (or (or (= ty "int") (or (= ty "float") (= ty "str"))) (or (or (= ty "bool") (= ty "any")) (or (= ty "tuple") (= ty "ptr"))))
+    return True
+  end
+  return False
+end
+
+def check-type (ty : str what : str) -> int
+  if (not (call known-type? ty))
+    (call parse-fail (call string-append (call string-append what ": unknown type '") (call string-append ty "'")))
+  end
+  return 0
+end
+
+def is-reserved (tok : str) -> bool
+  if (or (or (or (= tok "end") (= tok "else")) (or (= tok "def") (= tok "let"))) (or (or (= tok "set") (= tok "return")) (or (or (= tok "if") (= tok "while")) (= tok "for"))))
+    return True
+  end
+  return False
 end
 
 def parse-stmts (tokens : str pos : int) -> tuple
@@ -414,6 +526,7 @@ def parse-stmt-let (tokens : str pos : int) -> tuple
   let tmp tuple (call next-token tokens pos)
   let ty str (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
+  (call check-type ty (call string-append "let " name))
   let tmp tuple (call parse-expr tokens pos)
   let value any (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
@@ -441,6 +554,9 @@ def parse-stmt-ctrl (tokens : str pos : int tok : str) -> tuple
     let tmp tuple (call next-token tokens pos)
     let end-tok str (call vector-ref tmp 0)
     set pos (call vector-ref tmp 1)
+    if (not (= end-tok "end"))
+      (call parse-fail (call string-append (call string-append "expected 'end' to close 'if', found '") (call string-append end-tok "'")))
+    end
     return (call vector (call SIf cond-expr then-body else-body) pos)
   else
     return (call parse-stmt-loop tokens pos tok)
@@ -459,6 +575,9 @@ def parse-stmt-loop (tokens : str pos : int tok : str) -> tuple
     let tmp tuple (call next-token tokens pos)
     let end-tok str (call vector-ref tmp 0)
     set pos (call vector-ref tmp 1)
+    if (not (= end-tok "end"))
+      (call parse-fail (call string-append (call string-append "expected 'end' to close 'while', found '") (call string-append end-tok "'")))
+    end
     set result (call SWhile cond-expr body)
     return (call vector result pos)
   else
@@ -481,6 +600,9 @@ def parse-stmt-for (tokens : str pos : int tok : str) -> tuple
     let tmp tuple (call next-token tokens pos)
     let end-tok str (call vector-ref tmp 0)
     set pos (call vector-ref tmp 1)
+    if (not (= end-tok "end"))
+      (call parse-fail (call string-append (call string-append "expected 'end' to close 'for', found '") (call string-append end-tok "'")))
+    end
     set result (call SFor var stop body)
   else
     let tmp tuple (call parse-expr-at tokens pos tok)
@@ -495,8 +617,14 @@ def parse-params (tokens : str pos : int) -> tuple
   let tmp tuple (call next-token tokens pos)
   let nxt str (call vector-ref tmp 0)
   let pos2 int (call vector-ref tmp 1)
+  if (= nxt "")
+    (call parse-fail "unexpected end of input in parameter list")
+  end
   if (= nxt ")")
     return (call vector (call py-list) (call py-list) pos2)
+  end
+  if (call known-type? nxt)
+    (call parse-fail (call string-append (call string-append "parameter name missing before type '") (call string-append nxt "'")))
   end
   return (call parse-param-rest tokens nxt pos2)
 end
@@ -550,12 +678,21 @@ def parse-func-sig (tokens : str pos : int) -> tuple
   let tmp tuple (call next-token tokens pos)
   let def-tok str (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
+  if (not (= def-tok "def"))
+    (call parse-fail (call string-append (call string-append "expected 'def', found '") (call string-append def-tok "'")))
+  end
   set tmp (call next-token tokens pos)
   let name str (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
+  if (or (= name "") (call is-reserved name))
+    (call parse-fail "function name expected after 'def'")
+  end
   set tmp (call next-token tokens pos)
   let lparen str (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
+  if (not (= lparen "("))
+    (call parse-fail (call string-append (call string-append (call string-append "expected '(' after function name " name) ", found '") (call string-append lparen "'")))
+  end
   set tmp (call parse-params tokens pos)
   let params any (call vector-ref tmp 0)
   let param-types any (call vector-ref tmp 1)
@@ -563,9 +700,13 @@ def parse-func-sig (tokens : str pos : int) -> tuple
   set tmp (call next-token tokens pos)
   let arrow str (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
+  if (not (= arrow "->"))
+    (call parse-fail (call string-append (call string-append (call string-append "expected '->' after parameter list of " name) ", found '") (call string-append arrow "'")))
+  end
   set tmp (call next-token tokens pos)
   let ret str (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
+  (call check-type ret (call string-append "return type of " name))
   return (call vector name params param-types ret pos)
 end
 
@@ -995,7 +1136,9 @@ def emit-expr (expr env) -> str
         else
           if (call ir-tag? expr "ECall")
             return (call emit-expr-call expr env)
-          else return "#<expr>"
+          else
+            (call parse-fail "internal: unknown expression node")
+            return "0"
           end
         end
       end
@@ -1063,7 +1206,9 @@ def emit-binary-cmp (op left right lt rt) -> str
           if (= op "and") return (call make-binop-str "and" left right)
           else
             if (= op "or") return (call make-binop-str "or" left right)
-            else return (call make-binop-str (call string-append "__unknown__ " op) left right)
+            else
+              (call parse-fail (call string-append (call string-append "unsupported binary operator '" op) "'"))
+              return "0"
             end
           end
         end
@@ -1209,7 +1354,9 @@ def emit-stmt-for (stmt env indent) -> str
     set r (call string-append r "  " body-expr)
     set r (call string-append r ")")
     return r
-  else return "#<stmt>"
+  else
+    (call parse-fail "internal: unknown statement node")
+    return "0"
   end
 end
 
@@ -1232,20 +1379,17 @@ def emit-func (func) -> str
 end
 
 def emit-program (funcs) -> str
-  let nl str (call string (call integer->char 10))
-  let out str ";; generated by staticc.sp"
-  set out (call string-append out nl)
-  set out (call string-append out "(import (chezscheme))")
-  set out (call string-append out nl)
+  let sb any (call sb-new)
+  (call sb-write sb ";; generated by staticc.sp\n")
+  (call sb-write sb "(import (chezscheme))\n")
   let i int 0
   let n int (call list-length funcs)
   while (< i n)
-    set out (call string-append out (call emit-func (call list-ref funcs i)))
+    (call sb-write sb (call emit-func (call list-ref funcs i)))
     set i (+ i 1)
   end
-  set out (call string-append out "(main)")
-  set out (call string-append out nl)
-  return out
+  (call sb-write sb "(main)\n")
+  return (call sb-string sb)
 end
 
 def compile-file (path : str) -> str

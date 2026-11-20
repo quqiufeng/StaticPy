@@ -69,8 +69,55 @@ def is_alpha(c):
     return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z")
 
 
-def is_alnum(c):
-    return is_alpha(c) or is_digit(c) or c == "_" or c == "-" or c == ">" or c == "?" or c == "/" or c == "="
+def is_ident_char(c):
+    return is_alpha(c) or is_digit(c) or c == "_" or c == "?"
+
+
+def scan_ident(src, i, n):
+    while i < n:
+        c = src[i:i + 1]
+        if is_ident_char(c):
+            i = i + 1
+        elif c == "-" and i + 1 < n and is_alpha(src[i + 1:i + 2]):
+            i = i + 1
+        else:
+            return i
+    return i
+
+
+def exp_start(src, i, n):
+    if i >= n:
+        return False
+    c = src[i:i + 1]
+    if is_digit(c):
+        return True
+    if (c == "+" or c == "-") and i + 1 < n and is_digit(src[i + 1:i + 2]):
+        return True
+    return False
+
+
+def scan_exp(src, i, n):
+    if i < n:
+        c = src[i:i + 1]
+        if c == "+" or c == "-":
+            i = i + 1
+    while i < n and is_digit(src[i:i + 1]):
+        i = i + 1
+    return i
+
+
+def scan_number(src, i, n):
+    while i < n:
+        c = src[i:i + 1]
+        if is_digit(c):
+            i = i + 1
+        elif c == "." and i + 1 < n and is_digit(src[i + 1:i + 2]):
+            i = i + 1
+        elif (c == "e" or c == "E") and exp_start(src, i + 1, n):
+            i = scan_exp(src, i + 1, n)
+        else:
+            return i
+    return i
 
 
 def tokenize(src: str):
@@ -112,10 +159,17 @@ def tokenize(src: str):
         elif c == "(" or c == ")":
             out = out + c + " "
             i = i + 1
-        elif is_alnum(c):
+        elif is_alpha(c) or c == "_":
             start = i
-            while i < n and is_alnum(src[i:i + 1]):
-                i = i + 1
+            i = scan_ident(src, i, n)
+            out = out + src[start:i] + " "
+        elif is_digit(c):
+            start = i
+            i = scan_number(src, i, n)
+            out = out + src[start:i] + " "
+        elif c == "-" and i + 1 < n and is_digit(src[i + 1:i + 2]):
+            start = i
+            i = scan_number(src, i + 1, n)
             out = out + src[start:i] + " "
         else:
             out = out + c + " "
@@ -308,6 +362,22 @@ def func_params_to_str(params: list):
 # ---------- parser ----------
 
 
+def known_type(ty):
+    return ty == "int" or ty == "float" or ty == "str" or ty == "bool" or ty == "any" or ty == "tuple" or ty == "ptr"
+
+
+def check_type(ty, what):
+    if not known_type(ty):
+        parse_fail(what + ": unknown type '" + ty + "'")
+    return 0
+
+
+def expect_close(rparen, opener):
+    if rparen != ")":
+        parse_fail("expected ')' to close '" + opener + "', found '" + rparen + "'")
+    return 0
+
+
 def parse_expr(tokens: str, pos: int):
     tok, pos = next_token(tokens, pos)
     return parse_expr_at(tokens, pos, tok)
@@ -334,11 +404,13 @@ def parse_expr_at(tokens: str, pos: int, tok: str) -> Tuple:
             if op == "not":
                 operand, pos = parse_expr(tokens, pos)
                 rparen, pos = next_token(tokens, pos)
+                expect_close(rparen, "not")
                 result = (EUnary("not", operand), pos)
             else:
                 left, pos = parse_expr(tokens, pos)
                 right, pos = parse_expr(tokens, pos)
                 rparen, pos = next_token(tokens, pos)
+                expect_close(rparen, op)
                 result = (EBinop(op, left, right), pos)
     else:
         if tok == "":
@@ -374,6 +446,7 @@ def parse_stmt(tokens: str, pos: int) -> Tuple:
         name, pos = next_token(tokens, pos)
         ty, pos = next_token(tokens, pos)
         value, pos = parse_expr(tokens, pos)
+        check_type(ty, "let " + name)
         result = (SLet(name, ty, value), pos)
     else:
         if tok == "set":
@@ -422,9 +495,12 @@ def parse_params(tokens: str, pos: int) -> Tuple:
     ty = ""
     pos = pos2
     nxt, pos2 = next_token(tokens, pos)
+    if known_type(name) and nxt != ":":
+        parse_fail("parameter name missing before type '" + name + "'")
     if nxt == ":":
         ty, pos = next_token(tokens, pos2)
         nxt, pos2 = next_token(tokens, pos)
+        check_type(ty, "parameter '" + name + "'")
     if nxt == ",":
         pos = pos2
     rest_names, rest_types, pos = parse_params(tokens, pos)
@@ -444,6 +520,13 @@ def parse_func(tokens: str, pos: int):
     params, param_types, pos = parse_params(tokens, pos)
     arrow, pos = next_token(tokens, pos)
     ret, pos = next_token(tokens, pos)
+    if name == "":
+        parse_fail("function name expected after 'def'")
+    if lparen != "(":
+        parse_fail("expected '(' after function name " + name + ", found '" + lparen + "'")
+    if arrow != "->":
+        parse_fail("expected '->' after parameter list of " + name + ", found '" + arrow + "'")
+    check_type(ret, "return type of " + name)
     body, pos = parse_stmts(tokens, pos)
     end_tok, pos = next_token(tokens, pos)
     return IRFunc(name, params, param_types, ret, body), pos
@@ -751,7 +834,8 @@ def emit_expr(expr: IRExpr, env):
                             i = i + 1
                         result = result + ")"
                     else:
-                        result = "#<expr>"
+                        parse_fail("internal: unknown expression node")
+                        result = "0"
     return result
 
 
@@ -796,7 +880,8 @@ def emit_binop(op, left, right, ln, rn, env):
                                                 if op == "or":
                                                     result = "(or " + left + " " + right + ")"
                                                 else:
-                                                    result = "(__unknown__ " + op + " " + left + " " + right + ")"
+                                                    parse_fail("unsupported binary operator '" + op + "'")
+                                                    result = "0"
     return result
 
 
@@ -883,7 +968,8 @@ def emit_stmt(stmt, env, indent):
                                 body_expr = emit_block(stmt.body, env.copy(), indent)
                                 result = "(do ((" + stmt.var + " 0 (fx+ " + stmt.var + " 1)))\n" + indent + "    ((fx>=? " + stmt.var + " " + stop + "))\n" + indent + "  " + body_expr + ")"
                             else:
-                                result = "#<stmt>"
+                                parse_fail("internal: unknown statement node")
+                                result = "0"
     return result
 
 
