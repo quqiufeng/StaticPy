@@ -356,6 +356,8 @@ def infer_expr_type(n) -> str:
             if bt != "":
                 return bt
             return sig_ret(nm)
+        if nt(f) == "Attribute":
+            return module_ret(module_call_name(dict_get(f, "value"), dict_get(f, "attr")))
         return ""
     if t == "IfExp":
         a = infer_expr_type(dict_get(n, "body"))
@@ -560,10 +562,12 @@ def translate_subscript(n) -> str:
     vt = infer_expr_type(dict_get(n, "value"))
     if nt(slc) == "Slice":
         start: str = "0"
-        if dict_get(slc, "lower") is not None:
-            start = translate_expr(dict_get(slc, "lower"))
+        lo = dict_get(slc, "lower")
+        if lo is not None and nt(lo) != "":
+            start = translate_expr(lo)
+        up = dict_get(slc, "upper")
         end: str = ""
-        if dict_get(slc, "upper") is None:
+        if up is None or nt(up) == "":
             if vt == "str":
                 end = "(string-length " + value + ")"
             elif str_starts_with(vt, "list["):
@@ -571,7 +575,7 @@ def translate_subscript(n) -> str:
             else:
                 end = "(vector-length " + value + ")"
         else:
-            end = translate_expr(dict_get(slc, "upper"))
+            end = translate_expr(up)
         if vt == "str":
             return "(slice-string " + value + " " + start + " " + end + ")"
         if str_starts_with(vt, "list["):
@@ -629,6 +633,95 @@ IR_FIELDS = (
     "params param_types ret op left right ty "
 )
 
+COMP_STATE = {"uid": 0}
+
+def comp_next_uid() -> int:
+    """推导式唯一编号（同种子 itertools.count(1)）"""
+    COMP_STATE["uid"] = COMP_STATE["uid"] + 1
+    return COMP_STATE["uid"]
+
+def comp_bind(target, elt: str) -> str:
+    """解包绑定串：[(name, expr), ...] -> "(a e) (b (py-unpack e 1))" """
+    out: str = ""
+    if nt(target) == "Name":
+        return "(" + mangle_name(dict_get(target, "id")) + " " + elt + ")"
+    if nt(target) == "Tuple" or nt(target) == "List":
+        elts = dict_get(target, "elts")
+        i: int = 0
+        while i < py_list_length(elts):
+            e = py_list_ref(elts, i)
+            if nt(e) == "Name":
+                if out != "":
+                    out = out + " "
+                out = out + "(" + mangle_name(dict_get(e, "id")) + " (py-unpack " + elt + " " + str(i) + "))"
+            i = i + 1
+    return out
+
+def translate_comprehension(gens, elt: str, kind: str) -> str:
+    """[e for ...] / {k:v for ...} / {e for ...} / (e for ...)
+
+    嵌套 named-let，累加器 __acc 逐层显式传递；迭代源统一走 py-iter->list。
+    """
+    n_gen: int = py_list_length(gens)
+    if n_gen == 0:
+        return "(py-list " + elt + ")"
+    uid: int = comp_next_uid()
+    us: str = str(uid)
+    body: str = "(cons " + elt + " __acc)"
+    idx: int = n_gen - 1
+    while idx >= 0:
+        g = py_list_ref(gens, idx)
+        isx: str = str(idx)
+        it: str = "__it" + us + "_" + isx
+        nn: str = "__n" + us + "_" + isx
+        ii: str = "__i" + us + "_" + isx
+        el: str = "__e" + us + "_" + isx
+        nm: str = "loop" + us + "_" + isx
+        adv: str = "(" + nm + " (+ " + ii + " 1) __acc)"
+        cur: str = "(" + nm + " (+ " + ii + " 1) " + body + ")"
+        ifs = dict_get(g, "ifs")
+        k: int = py_list_length(ifs) - 1
+        while k >= 0:
+            cur = "(if " + translate_expr(py_list_ref(ifs, k)) + " " + cur + " " + adv + ")"
+            k = k - 1
+        binds: str = "(" + el + " (list-ref " + it + " " + ii + "))"
+        extra: str = comp_bind(dict_get(g, "target"), el)
+        if extra != "":
+            binds = binds + " " + extra
+        acc: str = "__acc"
+        if idx == 0:
+            acc = "'()"
+        body = ("(let* ((" + it + " (py-iter->list " + translate_expr(dict_get(g, "iter")) + "))"
+                + " (" + nn + " (length " + it + ")))"
+                + " (let " + nm + " ((" + ii + " 0) (__acc " + acc + "))"
+                + " (if (>= " + ii + " " + nn + ") __acc"
+                + " (let* (" + binds + ") " + cur + "))))")
+        idx = idx - 1
+    if kind == "dict":
+        return ("(let* ((__pairs" + us + " (reverse " + body + ")) (__d" + us + " (make-dict)))"
+                + " (for-each (lambda (__p) (dict-set! __d" + us + " (car __p) (cdr __p)))"
+                + " __pairs" + us + ")"
+                + " __d" + us + ")")
+    if kind == "set":
+        return ("(list->py-list (reverse (fold-left"
+                + " (lambda (__a __x) (if (member __x __a) __a (cons __x __a)))"
+                + " '() (reverse " + body + "))))")
+    if kind == "gen":
+        return "(list->vector (reverse " + body + "))"
+    return "(list->py-list (reverse " + body + "))"
+
+def tensor_attr_fn(at: str) -> str:
+    """张量无参属性 -> 运行时查询（同旧版 TENSOR_ATTR_FN）"""
+    if at == "dtype":
+        return "torch-tensor-dtype"
+    if at == "shape":
+        return "torch-tensor-shape"
+    if at == "ndim":
+        return "torch-tensor-ndim"
+    if at == "T":
+        return "torch-tensor-transpose-all"
+    return ""
+
 def translate_attribute(n) -> str:
     """x.attr 当值用（顺序与旧版 Attribute 分支一致；class/张量分支这里没有）"""
     at = dict_get(n, "attr")
@@ -636,7 +729,12 @@ def translate_attribute(n) -> str:
     # 模块常量/函数取值：math.pi -> (pi)，time.time -> (clock)
     mv: str = module_value_name(n)
     if mv != "":
-        return "(" + mv + ")"
+        # 模块常量/一等函数取值：math.pi -> pi（裸名，同旧版直接返回表值）
+        return mv
+    # 张量无参属性：a.shape -> (torch-tensor-shape a)
+    ta: str = tensor_attr_fn(at)
+    if ta != "":
+        return "(" + ta + " " + translate_expr(rv) + ")"
     if nt(rv) == "Name":
         vn = mangle_name(dict_get(rv, "id"))
         if at == "append":
@@ -680,8 +778,18 @@ def translate_expr(n) -> str:
     if t == "Tuple":
         # 与种子一致：Tuple 表达式是 Python tuple（记录类型，repr 为 (..)），不是 vector
         return "(py-tuple " + elems_text(dict_get(n, "elts")) + ")"
-    if t == "List":
+    if t == "List" or t == "Set":
         return "(py-list " + elems_text(dict_get(n, "elts")) + ")"
+    if t == "ListComp" or t == "SetComp" or t == "GeneratorExp":
+        kind2: str = "list"
+        if t == "SetComp":
+            kind2 = "set"
+        if t == "GeneratorExp":
+            kind2 = "gen"
+        return translate_comprehension(dict_get(n, "generators"), translate_expr(dict_get(n, "elt")), kind2)
+    if t == "DictComp":
+        pair: str = "(cons " + translate_expr(dict_get(n, "key")) + " " + translate_expr(dict_get(n, "value")) + ")"
+        return translate_comprehension(dict_get(n, "generators"), pair, "dict")
     if t == "Dict":
         ks = dict_get(n, "keys")
         vs = dict_get(n, "values")
@@ -985,6 +1093,36 @@ def translate_call(n) -> str:
                 return f"(ir-tag? {x0} '{dict_get(c, 'id')})"
             return f"(ir-tag? {x0} {translate_expr(c)})"
         return f"(ir-tag? {a})"
+    # 内建迭代/聚合（同旧版：sum/min/max/sorted/enumerate/zip/any/all/pow）
+    if nm == "sum":
+        return f"(py-sum {a})"
+    if nm == "min" or nm == "max":
+        return "(" + "py-" + nm + " " + a + ")"
+    if nm == "sorted":
+        al2 = dict_get(n, "args")
+        if py_list_length(al2) > 0:
+            first: str = translate_expr(py_list_ref(al2, 0))
+            kval: str = "#f"
+            rval: str = "#f"
+            kws = dict_get(n, "keywords")
+            if kws is not None:
+                ki2: int = 0
+                while ki2 < py_list_length(kws):
+                    k2 = py_list_ref(kws, ki2)
+                    if dict_get(k2, "arg") == "key":
+                        kval = translate_expr(dict_get(k2, "value"))
+                    if dict_get(k2, "arg") == "reverse":
+                        rval = translate_expr(dict_get(k2, "value"))
+                    ki2 = ki2 + 1
+            return f"(py-sorted {first} {kval} {rval})"
+    if nm == "enumerate":
+        return f"(py-enumerate {a})"
+    if nm == "zip":
+        return f"(py-zip {a})"
+    if nm == "any":
+        return f"(py-any {a})"
+    if nm == "all":
+        return f"(py-all {a})"
     if is_prelude_fn(nm):
         return f"({scheme_name(nm)} {a})"
     if is_param(nm):
@@ -1129,6 +1267,9 @@ def translate_block(stmts, lvl: int):
             exprs = py_list_append(exprs, block_while(s))
         elif t == "For":
             exprs = py_list_append(exprs, block_for(s, lvl))
+        elif t == "FunctionDef":
+            # 嵌套函数：就地 (define (static_X ..) ..)（Chez 内部 define，可闭包外层变量）
+            exprs = py_list_append(exprs, translate_function(s, src_get()))
         elif t == "Delete":
             exprs = py_list_append(exprs, block_delete(s))
         elif t == "With":
@@ -1862,6 +2003,297 @@ def mod_attr(mod: str, attr: str) -> str:
         return "torch-zeros"
     return ""
 
+# ====== 裸模块名兜底表（对齐旧版 NUMPY_MAP / MATH_MAP / OS_MAP / ...）======
+def mod_alias_attr(raw: str, attr: str) -> str:
+    """裸模块名兜底：只登记与属性名不同的项（同旧版 *_MAP；相同则用属性名本身）"""
+    if raw == "cuda" and attr == "gemm":
+        return "cuda-gemm"
+    if raw == "json" and attr == "dumps":
+        return "json_dumps"
+    if raw == "json" and attr == "loads":
+        return "parse_json"
+    if raw == "la" and attr == "eigvals":
+        return "la-eigvals"
+    if raw == "la" and attr == "solve":
+        return "la-solve"
+    if raw == "la" and attr == "svd":
+        return "la-svd"
+    if raw == "np" and attr == "abs":
+        return "np-abs"
+    if raw == "np" and attr == "arange":
+        return "np-arange"
+    if raw == "np" and attr == "argmax":
+        return "np-argmax"
+    if raw == "np" and attr == "array":
+        return "np-array"
+    if raw == "np" and attr == "clip":
+        return "np-clip"
+    if raw == "np" and attr == "concatenate":
+        return "np-concatenate"
+    if raw == "np" and attr == "copy":
+        return "np-copy"
+    if raw == "np" and attr == "daxpy":
+        return "np-daxpy"
+    if raw == "np" and attr == "dot":
+        return "np-dot"
+    if raw == "np" and attr == "exp":
+        return "np-exp"
+    if raw == "np" and attr == "gemm":
+        return "np-gemm"
+    if raw == "np" and attr == "gemv":
+        return "np-gemv"
+    if raw == "np" and attr == "linspace":
+        return "np-linspace"
+    if raw == "np" and attr == "matmul":
+        return "np-gemm"
+    if raw == "np" and attr == "max":
+        return "np-max"
+    if raw == "np" and attr == "mean":
+        return "np-mean"
+    if raw == "np" and attr == "min":
+        return "np-min"
+    if raw == "np" and attr == "ones":
+        return "np-ones"
+    if raw == "np" and attr == "scal":
+        return "np-scal"
+    if raw == "np" and attr == "sqrt":
+        return "np-sqrt"
+    if raw == "np" and attr == "sum":
+        return "np-sum"
+    if raw == "np" and attr == "zeros":
+        return "np-zeros"
+    if raw == "os" and attr == "getcwd":
+        return "os_cwd"
+    if raw == "os" and attr == "getenv":
+        return "os_getenv"
+    if raw == "os" and attr == "listdir":
+        return "os_list_dir"
+    if raw == "os" and attr == "mkdir":
+        return "os_mkdir"
+    if raw == "os" and attr == "remove":
+        return "os_delete_file"
+    if raw == "os" and attr == "rename":
+        return "os_move_file"
+    if raw == "os" and attr == "rmdir":
+        return "os_rmdir"
+    if raw == "os" and attr == "system":
+        return "os_shell"
+    if raw == "random" and attr == "choice":
+        return "random_choice"
+    if raw == "random" and attr == "randint":
+        return "random_randint"
+    if raw == "random" and attr == "random":
+        return "random_float"
+    if raw == "random" and attr == "seed":
+        return "random_seed"
+    if raw == "random" and attr == "uniform":
+        return "random_uniform"
+    if raw == "time" and attr == "strftime":
+        return "format_time"
+    if raw == "time" and attr == "time":
+        return "clock"
+    if raw == "torch" and attr == "add":
+        return "torch-add"
+    if raw == "torch" and attr == "available":
+        return "torch-available"
+    if raw == "torch" and attr == "cat":
+        return "torch-cat"
+    if raw == "torch" and attr == "cat_id":
+        return "torch-cat-id"
+    if raw == "torch" and attr == "causal_mask":
+        return "torch-causal-mask"
+    if raw == "torch" and attr == "clip_text_forward":
+        return "torch-clip-text-forward"
+    if raw == "torch" and attr == "clip_tokenizer_create":
+        return "torch-clip-tokenizer-create"
+    if raw == "torch" and attr == "clip_tokenizer_encode":
+        return "torch-clip-tokenizer-encode"
+    if raw == "torch" and attr == "clip_tokenizer_free":
+        return "torch-clip-tokenizer-free"
+    if raw == "torch" and attr == "clone":
+        return "torch-clone"
+    if raw == "torch" and attr == "color_convert":
+        return "torch-color-convert"
+    if raw == "torch" and attr == "controlnet_apply":
+        return "torch-controlnet-apply"
+    if raw == "torch" and attr == "controlnet_forward":
+        return "torch-controlnet-forward"
+    if raw == "torch" and attr == "conv2d":
+        return "torch-conv2d"
+    if raw == "torch" and attr == "cos":
+        return "torch-cos"
+    if raw == "torch" and attr == "ddpm_add_noise":
+        return "torch-ddpm-add-noise"
+    if raw == "torch" and attr == "ddpm_betas":
+        return "torch-ddpm-betas"
+    if raw == "torch" and attr == "empty":
+        return "torch-empty"
+    if raw == "torch" and attr == "flux_forward":
+        return "torch-flux-forward"
+    if raw == "torch" and attr == "fm_sigmas":
+        return "torch-fm-sigmas"
+    if raw == "torch" and attr == "fm_step":
+        return "torch-fm-step"
+    if raw == "torch" and attr == "gguf_free":
+        return "torch-gguf-free"
+    if raw == "torch" and attr == "gguf_load":
+        return "torch-gguf-load"
+    if raw == "torch" and attr == "gguf_load_tensor":
+        return "torch-gguf-load-tensor"
+    if raw == "torch" and attr == "gguf_load_tensor_by_name":
+        return "torch-gguf-load-tensor-by-name"
+    if raw == "torch" and attr == "gguf_tensor_count":
+        return "torch-gguf-tensor-count"
+    if raw == "torch" and attr == "gguf_tensor_name":
+        return "torch-gguf-tensor-name"
+    if raw == "torch" and attr == "image_composite":
+        return "torch-image-composite"
+    if raw == "torch" and attr == "image_crop":
+        return "torch-image-crop"
+    if raw == "torch" and attr == "image_resize":
+        return "torch-image-resize"
+    if raw == "torch" and attr == "image_resize_float":
+        return "torch-image-resize-float"
+    if raw == "torch" and attr == "index_select":
+        return "torch-tensor-index-select"
+    if raw == "torch" and attr == "jit_delete":
+        return "torch-jit-delete"
+    if raw == "torch" and attr == "jit_forward":
+        return "torch-jit-forward"
+    if raw == "torch" and attr == "jit_load":
+        return "torch-jit-load"
+    if raw == "torch" and attr == "last_argmax":
+        return "torch-last-argmax"
+    if raw == "torch" and attr == "load_image":
+        return "torch-load-image"
+    if raw == "torch" and attr == "lora_apply":
+        return "torch-lora-apply"
+    if raw == "torch" and attr == "lora_merge_into":
+        return "torch-lora-merge-into"
+    if raw == "torch" and attr == "matmul":
+        return "torch-matmul"
+    if raw == "torch" and attr == "mul":
+        return "torch-mul"
+    if raw == "torch" and attr == "narrow":
+        return "torch-narrow"
+    if raw == "torch" and attr == "neg":
+        return "torch-tensor-neg"
+    if raw == "torch" and attr == "ones":
+        return "torch-ones"
+    if raw == "torch" and attr == "outer":
+        return "torch-outer"
+    if raw == "torch" and attr == "randint":
+        return "torch-randint"
+    if raw == "torch" and attr == "reshape":
+        return "torch-reshape"
+    if raw == "torch" and attr == "rope_inv_freq":
+        return "torch-rope-inv-freq"
+    if raw == "torch" and attr == "rope_t":
+        return "torch-rope-t"
+    if raw == "torch" and attr == "rope_t_pos":
+        return "torch-rope-t-pos"
+    if raw == "torch" and attr == "rsqrt":
+        return "torch-rsqrt"
+    if raw == "torch" and attr == "safetensors_count":
+        return "torch-safetensors-count"
+    if raw == "torch" and attr == "safetensors_free":
+        return "torch-safetensors-free"
+    if raw == "torch" and attr == "safetensors_get_tensor_by_name":
+        return "torch-safetensors-get-tensor-by-name"
+    if raw == "torch" and attr == "safetensors_load":
+        return "torch-safetensors-load"
+    if raw == "torch" and attr == "safetensors_name":
+        return "torch-safetensors-name"
+    if raw == "torch" and attr == "safetensors_tensor":
+        return "torch-safetensors-tensor"
+    if raw == "torch" and attr == "sample_ddim":
+        return "torch-sample-ddim"
+    if raw == "torch" and attr == "sample_dpmpp_2m":
+        return "torch-sample-dpmpp-2m"
+    if raw == "torch" and attr == "sample_euler":
+        return "torch-sample-euler"
+    if raw == "torch" and attr == "sample_euler_ancestral":
+        return "torch-sample-euler-ancestral"
+    if raw == "torch" and attr == "sampler_sigmas":
+        return "torch-sampler-sigmas"
+    if raw == "torch" and attr == "save_image":
+        return "torch-save-image"
+    if raw == "torch" and attr == "save_state_dict":
+        return "torch-save-state-dict"
+    if raw == "torch" and attr == "sd_unet_forward":
+        return "torch-sd-unet-forward"
+    if raw == "torch" and attr == "sdxl_dual_clip":
+        return "torch-sdxl-dual-clip"
+    if raw == "torch" and attr == "sdxl_unet_forward":
+        return "torch-sdxl-unet-forward"
+    if raw == "torch" and attr == "sin":
+        return "torch-sin"
+    if raw == "torch" and attr == "softmax":
+        return "torch-softmax"
+    if raw == "torch" and attr == "sqrt":
+        return "torch-sqrt"
+    if raw == "torch" and attr == "sub":
+        return "torch-sub"
+    if raw == "torch" and attr == "t5_tokenizer_create":
+        return "torch-t5-tokenizer-create"
+    if raw == "torch" and attr == "t5_tokenizer_encode":
+        return "torch-t5-tokenizer-encode"
+    if raw == "torch" and attr == "t5_tokenizer_free":
+        return "torch-t5-tokenizer-free"
+    if raw == "torch" and attr == "tensor":
+        return "torch-tensor"
+    if raw == "torch" and attr == "tensor_ptr":
+        return "torch-tensor-ptr-debug"
+    if raw == "torch" and attr == "to_list":
+        return "torch-to-list"
+    if raw == "torch" and attr == "topk":
+        return "torch-topk"
+    if raw == "torch" and attr == "tpack_get":
+        return "torch-tpack-get"
+    if raw == "torch" and attr == "tpack_index":
+        return "torch-tpack-index"
+    if raw == "torch" and attr == "tpack_load":
+        return "torch-tpack-load"
+    if raw == "torch" and attr == "vae_decode_tiled":
+        return "torch-vae-decode-tiled"
+    if raw == "torch" and attr == "vae_encode_tiled":
+        return "torch-vae-encode-tiled"
+    if raw == "torch" and attr == "zeros":
+        return "torch-zeros"
+    return ""
+
+MOD_RET_FLOAT = (" sin cos tan log log2 log10 exp sqrt abs pow fmod floor ceil round "
+                 "sinh cosh tanh atan2 asin acos atan random_float random_uniform clock ")
+MOD_RET_INT = " random_range random_randint random_int os_file_size "
+MOD_RET_STR = " json_dumps os_cwd os_getenv http_get_simple "
+MOD_RET_LISTF = " np-array np-zeros np-ones "
+
+def module_ret(sn: str) -> str:
+    """模块调用返回类型（同种子 infer_expr_type 的 Attribute 分支）"""
+    if sn == "":
+        return ""
+    if str_contains(MOD_RET_FLOAT, " " + sn + " "):
+        return "float"
+    if str_contains(MOD_RET_INT, " " + sn + " "):
+        return "int"
+    if str_contains(MOD_RET_STR, " " + sn + " "):
+        return "str"
+    if str_contains(MOD_RET_LISTF, " " + sn + " "):
+        return "list[float]"
+    if sn == "torch-to-list":
+        return "vector[float]"
+    if sn == "torch-available":
+        return "bool"
+    if sn == "parse_json":
+        return "dict"
+    if sn == "os_file_exists":
+        return "bool"
+    if sn == "os_list_dir":
+        return "list[str]"
+    if str_starts_with(sn, "torch-") or sn == "torch-tensor":
+        return "torch-tensor"
+    return ""
+
 MOD_ALIAS = make_dict()
 MOD_KEYS = " np la torch nn cuda math random json time os urllib os.path "
 
@@ -1874,7 +2306,7 @@ def mod_key(name: str) -> str:
         return name
     return ""
 
-MOD_FALLBACK = " np la torch cuda math random json time os os.path "
+MOD_FALLBACK = " np la torch nn cuda math random json time os os.path networkx nx scipy urllib "
 
 def module_call_name(rv, attr: str) -> str:
     """调用点：<mod>.<attr> / <mod>.<mid>.<attr> -> Scheme 名（未登记返回空串）"""
@@ -1893,16 +2325,19 @@ def module_call_name(rv, attr: str) -> str:
 def module_fallback_name(rv, attr: str) -> str:
     """未登记表项的模块调用：兜底用属性名本身（同旧版 *_MAP.get(attr, attr)）"""
     if nt(rv) == "Name":
-        mk: str = mod_key(dict_get(rv, "id"))
-        if mk != "" and str_contains(MOD_FALLBACK, " " + mk + " "):
+        raw: str = dict_get(rv, "id")
+        if str_contains(MOD_FALLBACK, " " + raw + " "):
+            sn: str = mod_alias_attr(raw, attr)
+            if sn != "":
+                return sn
             return attr
         return ""
     if nt(rv) == "Attribute" and nt(dict_get(rv, "value")) == "Name":
-        top: str = mod_key(dict_get(dict_get(rv, "value"), "id"))
-        if top == "":
-            return ""
-        key: str = top + "." + dict_get(rv, "attr")
+        key: str = dict_get(dict_get(rv, "value"), "id") + "." + dict_get(rv, "attr")
         if str_contains(MOD_FALLBACK, " " + key + " "):
+            sn2: str = mod_alias_attr(key, attr)
+            if sn2 != "":
+                return sn2
             return attr
     return ""
 
