@@ -1,0 +1,204 @@
+{
+  "_about": "StaticPy 信任链清单 — 由 trust/manifest.py --write 生成",
+  "root": "/opt/StaticPy",
+  "entries": [
+    {
+      "role": "trust-root",
+      "path": "selfhost/staticc.sp",
+      "why": "信任根：用 .sp 语法写的编译器，人审计的就是它",
+      "state": "present",
+      "sha256": "6d274f46b36a63882c9fb733302932d2023dc38d70e9bd9edfd0dab62685ab96",
+      "bytes": 52484,
+      "lines": 1653
+    },
+    {
+      "role": "trust-root",
+      "path": "selfhost/staticc_split.sp",
+      "why": "信任根的拆分版（同源，用于分段审计）",
+      "state": "present",
+      "sha256": "e3a174282dc7430827e145eb1da60a677806d48c75712f0ff03efc5c2b8275b8",
+      "bytes": 36583,
+      "lines": 1167
+    },
+    {
+      "role": "seed",
+      "path": "staticpy/static_translate.py",
+      "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
+      "state": "present",
+      "sha256": "344b748c0d94220700c563a201dbf524ef8706ab2a068897ff0543d3800f9de9",
+      "bytes": 198845,
+      "lines": 4523
+    },
+    {
+      "role": "seed",
+      "path": "tools/seed/prelude.scm",
+      "why": "**运行时真源**（split_plugins.py 从它切出 plugins/ 再拼回 prelude）；改语义改这里",
+      "state": "present",
+      "sha256": "62a822159acc9641664d9d604bb2a949899e8694359d7cc1def60aa418adba8b",
+      "bytes": 76393,
+      "lines": 1964
+    },
+    {
+      "role": "seed",
+      "path": "tools/seed/stdlib_full.scm",
+      "why": "标准库真源（切出 plugins/*+ static_stdlib_full.scm）",
+      "state": "present",
+      "sha256": "e9e5dc5e000867bd77e16b762fc228642c35ea27a7e53a14ac0b4af7e7108b74",
+      "bytes": 102639,
+      "lines": 2692
+    },
+    {
+      "role": "seed",
+      "path": "plugins/core/runtime.scm",
+      "why": "切分后的 core 运行时（构建实际读它）：位运算等兜底在此",
+      "state": "present",
+      "sha256": "dfbae308ad7f10bead7ffe65219b53da6844cb07069c1ae17dc4f673350c5441",
+      "bytes": 48314,
+      "lines": 1236
+    },
+    {
+      "role": "gen",
+      "path": "staticpy/static_prelude.scm",
+      "why": "**生成物**（勿手改）：prelude ⇄ plugins 必须同步，check 不过就别提交",
+      "state": "present",
+      "sha256": "37a29030e17207e4d1c646a168bb0a0bb956d9432c06f10c395230a96ce9820d",
+      "bytes": 76343,
+      "lines": 1960
+    },
+    {
+      "role": "seed",
+      "path": "staticpy/static_stdlib.scm",
+      "why": "标准库（合并进 ELF）",
+      "state": "present",
+      "sha256": "91cc83d8734d0ef477c83a5914fd86e525551901e7d830b59166ac935286e2f6",
+      "bytes": 658,
+      "lines": 10
+    },
+    {
+      "role": "impl",
+      "path": "staticpy/static_translate.static.py",
+      "why": "环2 实现：词法器+驱动（自举，可被 ELF 顶替种子）",
+      "state": "present",
+      "sha256": "38862a1805d5a643d8b9ae9f551f7a9f0cd661a228f96f9667049c9b9db7ab42",
+      "bytes": 17152,
+      "lines": 556
+    },
+    {
+      "role": "impl",
+      "path": "staticpy/parse_lib.static.py",
+      "why": "环2 实现：解析器",
+      "state": "present",
+      "sha256": "a0284dfdaf231da7b981e16ca676044ecbed7388440df36b6ec94d6aeaa1b44c",
+      "bytes": 58869,
+      "lines": 2052
+    },
+    {
+      "role": "impl",
+      "path": "staticpy/emit_lib.static.py",
+      "why": "环2 实现：类型系统+代码生成",
+      "state": "present",
+      "sha256": "c6d7b98d8cc4b72244db2bc663bf327fcd284d15457a9cd9015f6a7bbf431593",
+      "bytes": 45544,
+      "lines": 1282
+    },
+    {
+      "role": "impl",
+      "path": "staticpy/emit_dump.static.py",
+      "why": "环2 实现：入口薄壳",
+      "state": "present",
+      "sha256": "e19369ad8e77c15e3f26e8a3ebbb0dede507396f7a53dae14f9d6b3f1cd440ae",
+      "bytes": 806,
+      "lines": 22
+    },
+    {
+      "role": "impl",
+      "path": "selfhost/staticc.py",
+      "why": "环3 的另一份实现：Python 子集语法的编译器（DDC 的 C1）",
+      "state": "present",
+      "sha256": "0c61a646ff73af3addd3d7429f2d7b88ef9f7f30233fdc7893d6bd6ec070ef5e",
+      "bytes": 34288,
+      "lines": 1128
+    },
+    {
+      "role": "harness",
+      "path": "selfcheck.sh",
+      "why": "一键自检",
+      "state": "present",
+      "sha256": "fc057ac498096926bda50a9bb29994976cdc04ea25c19e48883250843488c94f",
+      "bytes": 4470,
+      "lines": 93
+    },
+    {
+      "role": "harness",
+      "path": "staticpy/check_tokenize.sh",
+      "why": "判据：token 流差分（vs CPython tokenize）",
+      "state": "present",
+      "sha256": "f51b9f5028af76fc8ecf9e98195577ea714655d2ff6947bd486f8fede514fe0d",
+      "bytes": 752,
+      "lines": 19
+    },
+    {
+      "role": "harness",
+      "path": "staticpy/check_parse.sh",
+      "why": "判据：AST 形状差分（vs CPython ast）",
+      "state": "present",
+      "sha256": "bbbda361af81cdae893b5b9ca9b456d325b356f8cc987fe4170936f9cc574d06",
+      "bytes": 1075,
+      "lines": 24
+    },
+    {
+      "role": "harness",
+      "path": "staticpy/check_translate.sh",
+      "why": "判据：IR 逐字节差分（自举 vs 冻结种子）",
+      "state": "present",
+      "sha256": "5e4a6e5f1f9b88cabe7aa9ec5497036c716c40e834f0fae2344b22a810ead410",
+      "bytes": 1997,
+      "lines": 43
+    },
+    {
+      "role": "harness",
+      "path": "staticpy/semantics_diff.py",
+      "why": "判据：语义差分（CPython 跑 vs ELF 跑）",
+      "state": "present",
+      "sha256": "20e88a0cb8f3953e013638ff36832db005ec3409a8a2f170c5a02c3392ab23e4",
+      "bytes": 4027,
+      "lines": 96
+    },
+    {
+      "role": "harness",
+      "path": "trust/normalize_scm.py",
+      "why": "判据：IR token 级规范化（去注释/去空白）",
+      "state": "present",
+      "sha256": "a4c5ae22865d583ab4ae94626855acaefa4ffd4bd66bb2e5df2c41e80bcd8f03",
+      "bytes": 3105,
+      "lines": 95
+    },
+    {
+      "role": "harness",
+      "path": "trust/ddc.sh",
+      "why": "判据：异源双编译交叉验证（环3 抗后门）",
+      "state": "present",
+      "sha256": "ea3a8cd2105415dc98c81db6576ba5d9b641fa86bdcb70ee74ec299a9e921e9d",
+      "bytes": 8057,
+      "lines": 162
+    },
+    {
+      "role": "harness",
+      "path": "trust/fixpoint.sh",
+      "why": "判据：三阶段固定点（自举收敛）",
+      "state": "present",
+      "sha256": "3706be07e6997716f5a5cbcbaa4d7e1cf8df42470f970fce6d92acb1fc5576ae",
+      "bytes": 4130,
+      "lines": 85
+    },
+    {
+      "role": "harness",
+      "path": "trust/rebuild_spboot.sh",
+      "why": "把 ~/iso_gen/spboot/spboot_self 重编成当前源码产物（防止陈旧二进制冒充 C2）",
+      "state": "present",
+      "sha256": "4fbcd70dcc31a765c6fa55de99ab823ea4fa75d734f66678aa97357aa44e8162",
+      "bytes": 2631,
+      "lines": 45
+    }
+  ]
+}

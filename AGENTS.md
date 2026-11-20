@@ -194,7 +194,7 @@ StaticPy 不是"只能靠宿主"的：它**能自举**。上游 `/opt/ReScheme` 
 
 **信任链**：OCaml 编译器 → ReSchme 编译器 → `static_translate.py`（种子，冻结）→
 自举翻译器 ELF → `staticc` ELF →
-`staticc.sp`（**~1100 行，几天可完整审计 = 整个系统的信任根**）→ Chez → ELF。
+`staticc.sp`（**1653 行，几天可完整审计 = 整个系统的信任根**）→ Chez → ELF。
 
 **四层机器验收**（改完必跑）：`check_tokenize.sh`（token 流）→ `check_parse.sh`（AST dump）→
 `check_translate.sh`（IR vs 种子）→ `semantics_diff.py`（CPython vs ELF 的 stdout）。

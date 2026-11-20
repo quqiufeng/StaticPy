@@ -104,7 +104,7 @@ bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc
 ```
 OCaml 编译器 → ReScheme 编译器 → static_translate.py（种子，冻结）
                               → 自举翻译器 ELF（staticpy/*.static.py）
-                              → staticc ELF → staticc.sp（~1100 行，信任根）
+                              → staticc ELF → staticc.sp（1653 行，信任根）
                               → Chez → 机器码
 ```
 
@@ -112,7 +112,7 @@ OCaml 编译器 → ReScheme 编译器 → static_translate.py（种子，冻结
 |---|---|---|
 | 种子 | `staticpy/static_translate.py` | 冻结；改动 = 重走自举 |
 | 自举翻译器 | `staticpy/{static_translate,parse_lib,emit_lib,emit_dump}.static.py` | 日常演化面 |
-| 信任根 | `selfhost/staticc.sp` | ~1100 行，几天可读完 |
+| 信任根 | `selfhost/staticc.sp` | 1653 行（拆分审计版 `staticc_split.sp` 1167 行） |
 | 兼容垫片 | `selfhost/run_staticc_py.py` | 让 `staticc.py` 在 CPython 下直跑（比对用） |
 
 可替换性：编译器/解释器只是"约定"的实现——谁都可以另写一份（甚至自持/自举），
@@ -127,11 +127,50 @@ bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc
 ./dist/staticc selfhost/tests/test_staticc_input.sp ~/iso_gen/b.scm
 diff ~/iso_gen/a.scm ~/iso_gen/b.scm     # 一致 → 环 2 成立
 
-bash selfcheck.sh                        # 一键（其 [4/4] 就是这条比对）
+bash selfcheck.sh                        # 一键（[4/4] 这条比对 + [5-7] 信任链/DDC/固定点）
 ```
 
-环 3（`.sp` 信任根自持）：`staticc.py` 编 `staticc.sp` → `sc1.scm` → 编成 `staticc_self` ELF；
-`staticc_self` 再编 `staticc.sp` → `sc2.scm`；**规范化（去注释 + 去空白）后逐字节一致** → 环 3 成立。
+环 3（`.sp` 信任根自持）——**已自动化，别再手敲**：
+
+```bash
+bash trust/fixpoint.sh      # 三阶段固定点，产物落 ~/iso_gen/trust/fixpoint
+```
+
+```
+stage0  seed 编 staticc.py → E0
+stage1  E0 编 staticc.sp   → g1.scm
+stage2  g1 → E1；E1 编 staticc.sp → g2.scm
+stage3  g2 → E2；E2 编 staticc.sp → g3.scm
+判定    g2 ≡ g3（token 级）→ 固定点成立
+```
+
+**规范化**指 token 级比较（`trust/normalize_scm.py`：去注释、去空白，但字符串字面量原样保留），
+不是行级 `sed`——行级正则会截断 `"a;b"`、折叠 `"a  b"`，把不同的 IR 误判成相同。
+
+2026-11-20 实测：`g1 66150 B / g2 65698 B / g3 65698 B`，`g2 ≡ g3` 且 `g1 ≡ g2`
+（字节数差只是换行风格）。**g1 ≡ g2 比固定点更强**：种子与自举编译器给出的 IR token 全同。
+
+> 固定点只证明「编译器能稳定复制自己」，**不证明它翻译得对** —— 自洽后门同样能通过
+> （Thompson 攻击）。正确性另需异源双编译 `trust/ddc.sh`，见 §6.5。
+
+## 6.5 信任判据装置（`trust/`）
+
+信任链不能只有主张，得有装置。四件套：
+
+| 装置 | 干什么 | 命令 |
+|---|---|---|
+| `trust/fixpoint.sh` | 三阶段固定点：自举链是否收敛 | `bash trust/fixpoint.sh` |
+| `trust/ddc.sh` | **异源双编译（DDC）**：`staticc.py`（Python 语法）vs `staticc.sp`（S-表达式）对同一源出 IR 是否一致 | `bash trust/ddc.sh` |
+| `trust/manifest.py` | 信任链清单：被信文件的哈希/行数；`--verify` 检测悄悄漂移 | `python3 trust/manifest.py --verify` |
+| `trust/normalize_scm.py` | IR 的 token 级规范化（E5/E6 的判据实现） | `python3 trust/normalize_scm.py --eq A B` |
+
+**为什么必须有 DDC**：本仓过去只有「同源不同执行方式」的自比（`staticc.py` 用 CPython 跑
+vs 编成 ELF 跑）—— 同源自比挡不住 Thompson 攻击，因为两份产物来自同一份代码。
+DDC 比的是**两份不同代码**：只藏在其中一份、且只在自编译时激活的后门，会让两侧 IR 分叉。
+
+**边界（务必照抄到主张里）**：DDC 只覆盖**两份实现都能处理**的语法子集。
+2026-11-20 实测 31 个用例：`IR 一致 18 / 负向拒绝 6 / 分叉 0 / C2 能力未覆盖 7`
+（`staticc.sp` 尚不支持 lambda / 嵌套 def / `list` 类型 / `%`）。分级与缺口见 **`trust/REPORT.md`**。
 
 ## 7.5 不用 CPython 的构建路径（自举翻译器 ELF，已验证）
 

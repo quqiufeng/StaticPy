@@ -48,15 +48,44 @@ else
   echo ">>> [2-3/4] 跳过差分/覆盖（缺 Pillow/numpy，仅'测量'需要）"
 fi
 
+W="${STATICPY_WORK:-$HOME/iso_gen/selfcheck}"
+mkdir -p "$W"
+
 echo ">>> [4/4] 自举比对（环 2：staticc.py CPython vs 自举 ELF）"
-bash imgproc/build.sh >/dev/null 2>&1
-if ( cd selfhost && $PY run_staticc_py.py tests/test_staticc_input.sp /tmp/sc_a.scm >/dev/null 2>&1 ) \
+if ( cd selfhost && $PY run_staticc_py.py tests/test_staticc_input.sp "$W/sc_a.scm" >/dev/null 2>&1 ) \
    && bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc >/dev/null 2>&1 \
-   && ./dist/staticc selfhost/tests/test_staticc_input.sp /tmp/sc_b.scm >/dev/null 2>&1 \
-   && diff -q /tmp/sc_a.scm /tmp/sc_b.scm >/dev/null; then
-  echo "  ok（一致）"
+   && ./dist/staticc selfhost/tests/test_staticc_input.sp "$W/sc_b.scm" >/dev/null 2>&1 \
+   && $PY trust/normalize_scm.py --eq "$W/sc_a.scm" "$W/sc_b.scm" >/dev/null 2>&1; then
+  echo "  ok（IR token 级一致）"
 else
   echo "  自举比对失败"; fail=1
+fi
+
+echo ">>> [5/7] 信任链清单（trust/manifest.py --verify）"
+_mf=$($PY trust/manifest.py --verify 2>&1 | tail -1)
+if grep -q "无漂移" <<<"$_mf"; then echo "  ok（$_mf）"; else
+  echo "  漂移：$_mf"; echo "    有意改动就跑 $PY trust/manifest.py --write 重签"; fail=1
+fi
+
+echo ">>> [6/7] DDC 异源双编译（trust/ddc.sh；慢，TRUST_SLOW=0 可跳）"
+if [ "${TRUST_SLOW:-1}" = 0 ]; then echo "  跳过（TRUST_SLOW=0）"; else
+  # 判据用退出码，不靠文案：0=全通过，1=IR 分叉，2=环境/构建失败，3=C2 覆盖不全（都不算通过）
+  _ddout=$(bash trust/ddc.sh 2>&1); _ddrc=$?
+  _dd=$(grep -E "^DDC:" <<<"$_ddout" | tail -1)
+  case $_ddrc in
+    0) echo "  ok（$_dd）" ;;
+    1) echo "  分叉：$_dd"; echo "    定位：bash trust/ddc.sh"; fail=1 ;;
+    3) echo "  C2 覆盖不全（不算通过）：$_dd"; echo "    先看是否二进制陈旧：bash trust/ddc.sh（默认从源码现建 C2）"; fail=1 ;;
+    *) echo "  DDC 无法完成 rc=$_ddrc"; tail -3 <<<"$_ddout" | sed 's/^/    /'; fail=1 ;;
+  esac
+fi
+
+echo ">>> [7/7] 固定点（trust/fixpoint.sh；最慢，TRUST_FIXPOINT=1 才跑）"
+if [ "${TRUST_FIXPOINT:-0}" = 1 ]; then
+  _fx=$(bash trust/fixpoint.sh 2>&1 | grep -E "固定点(成立|不成立)" | tail -1)
+  if grep -q "成立" <<<"$_fx"; then echo "  ok（$_fx）"; else echo "  失败：bash trust/fixpoint.sh"; fail=1; fi
+else
+  echo "  跳过（设 TRUST_FIXPOINT=1 启用）"
 fi
 
 echo
