@@ -7,8 +7,9 @@
 
 ```
 app.static.py
-   │  ① 翻译       staticpy/static_translate.py
-   │               extern fn 抽取 → AST → 类型检查 → Scheme S-表达式
+   │  ① 翻译       staticpy/static_translate.py（**种子**，冻结的验收基准）
+   │               或 自举翻译器 ELF（staticpy/*.static.py 编出来，演化面）
+   │               extern fn 抽取 → token 流 → AST → 类型检查 → Scheme S-表达式
    ▼
    │  ② 拼装       kernel/bundle.py
    │               插件 runtime.scm + 插件 ffi.scm + 用户 -f FFI + 翻译产物
@@ -22,7 +23,9 @@ bundle.ss ── ③ Chez AOT ──► <stem>.so
 ./<stem>      独立 ELF（Chez 运行时已静态嵌入）   ./<stem>.so  AOT 编译产物
 ```
 
-- **不依赖 Python**：Python 只在①出现（翻译器用标准库），产物里没有解释器。
+- **不依赖 Python**：Python 只在①出现，且只在**种子**那条路上出现；自举翻译器是 ELF，
+  产物里没有任何解释器。**①的两条路必须给出同一份 IR**（`staticpy/check_translate.sh`），
+  细节与现状见 [SELFHOST.md](./SELFHOST.md)。
 - **运行时依赖只有 `.so`**：产物用 `load-shared-object` 在启动时挂（`libimgproc.so`、`libgif.so.7`…），
   解析路径靠 `LD_LIBRARY_PATH` 或 soname；打包时一并收进部署包（见 [DEPLOY.md](./DEPLOY.md)）。
 - **确定性 + 缓存**：bundle 的输入文件列表做 hash 作缓存键，命中则跳过 AOT。
@@ -99,4 +102,10 @@ bash imgproc/build_app.sh app.static.py app  # 用 pil_lib 编用户程序（con
 bash imgproc/package.sh imgproc/pil pil      # 自包含部署包 → dist/pil{,.tar.gz}
 bash tools/build.sh                          # ONNX 推理工具（tools/run.sh <op> …）
 bash selfcheck.sh                            # 构建 + 差分 + 覆盖 + 插件钩子 + 自举比对
+
+# 改翻译器之后（四层差分；check_parse/check_translate 不在 selfcheck 里，必须手跑）
+bash staticpy/check_tokenize.sh <file…>      # token 流 vs CPython tokenize
+bash staticpy/check_parse.sh    <file…>      # AST dump vs CPython ast
+bash staticpy/check_translate.sh <file…>     # IR vs 种子
+python3 staticpy/semantics_diff.py           # CPython 输出 vs AOT ELF 输出
 ```

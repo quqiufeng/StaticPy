@@ -1,36 +1,125 @@
-# SELFHOST —— 三环自举与信任链
+# SELFHOST —— 三环自举、种子边界与信任链
 
-> 编译器不是"凭什么信它"，而是"**能被谁审计**"。答案是：把信任收敛到一段很小的种子，
-> 而这条收敛路径本身**在本仓就能复现**（`selfhost/` 是从上游 `ReScheme` 拷来的自举代码，不依赖外部仓库）。
+> 编译器不是"凭什么信它"，而是"**能被谁审计**"。答案：把信任收敛到一小段**冻结的种子**，
+> 而"自举实现 ≡ 种子"这件事本身**在本仓可复现、可差分**（`staticpy/check_*.sh`）。
+
+---
 
 ## 1. 三环
 
 | 环 | 源语言 | 编译器实现 | 自举结果 |
 |---|---|---|---|
 | 1 ReScheme | 自定义（类 OCaml，HM 类型） | OCaml（lexer/parser/typecheck/codegen） | OCaml 版编译 bootstrap 编译器，再编译自身 |
-| 2 **StaticPy** | Python 子集 | `staticpy/static_translate.py`（CPython） | `staticc.py` → ELF → 编译自身 |
+| 2 **StaticPy** | Python 子集 | **自举翻译器**（`staticpy/*.static.py` → ELF） | 翻译器编自己，编 `staticc.py`，再编自身 |
 | 3 **`.sp`** | S-表达式（极简） | Python → `.sp` 自持 | `staticc.sp` → `staticc` ELF → `staticc_self` ELF |
 
-本仓只保留环 2 / 环 3 的**可执行部分**与环 1 的说明；环 1 的 OCaml 源码在上游 `ReScheme`。
+本仓保留环 2 / 环 3 的**可执行部分**与环 1 的说明；环 1 的 OCaml 源码在上游 `ReScheme`。
 
-## 2. 信任链
+## 2. 环 2 的内部：谁是"真的翻译器"
 
-```
-OCaml 编译器 → ReScheme 编译器 → static_translate.py (CPython)
-            → staticc ELF → staticc.sp（~1100 行 = 信任根）→ Chez → 机器码
-```
+环 2 不是"一个 CPython 脚本"，而是**一份用 StaticPy 子集写的编译器**，四个文件拼起来即为全部：
 
-- **信任根**：`selfhost/staticc.sp`，约 1100 行，可几天内完整读完。
-- **可替换**：编译器/解释器只是"约定"的一种实现——谁都可以另写一份（甚至自持/自举），
-  需要信任的只有那一小段种子。这与 [VISION.md](../VISION.md) 一致：**约定长存，实现皆耗材**。
+| 文件 | 职责 |
+|---|---|
+| `staticpy/static_translate.static.py` | **词法器 + 驱动**：缩进敏感的 token 流（NEWLINE/INDENT/DEDENT）、字符串/数字字面量、extern 抽取、CLI |
+| `staticpy/parse_lib.static.py` | **解析器**：token → AST（dict 表示，节点键与 CPython `ast` 对齐） |
+| `staticpy/emit_lib.static.py` | **类型系统 + 代码生成**：`emit_expr`/`emit_stmt`/`emit_program` → Scheme IR |
+| `staticpy/emit_dump.static.py` | **入口薄壳**：把上面三个 `concat` 起来，接受 `<src> [--lib]`，输出 IR |
 
-## 3. 复现自举（本目录即可，不依赖 `/opt/ReScheme`）
+把它们拼起来编译成 ELF，就是**生产可用的翻译器**：
 
 ```bash
-# 环 2：CPython 跑 staticc.py（StaticPy 写的编译器）
-python3 selfhost/run_staticc_py.py selfhost/tests/test_staticc_input.sp ~/iso_gen/a.scm
+cat staticpy/static_translate.static.py staticpy/parse_lib.static.py \
+    staticpy/emit_lib.static.py staticpy/emit_dump.static.py > ~/iso_gen/t.static.py
+python3 -m kernel build ~/iso_gen/t.static.py -o translator
+./dist/translator imgproc/mirror_gif.static.py | head -20   # 出 Scheme IR
+```
 
-# 环 2'：把 staticc.py 编成 ELF，再用它编译
+另外两个 dump 薄壳（`tokenize_dump.static.py` / `parse_dump.static.py`）与上面的 `emit_dump`
+同构，专供**前端形状差分**使用（见 §4）。
+
+## 3. 种子：`staticpy/static_translate.py` 已冻结
+
+`staticpy/static_translate.py`（CPython + `ast` 模块，约 19 万字符）现在是**种子**，不是待迁移品：
+
+```
+种子（CPython + ast）──起爆──► 自举翻译器（.static.py → ELF）──► 编译一切，包括自己
+        ↑                                                              │
+        └──────────────── 验收：IR 逐字节/规范化一致 ◄──────────────────┘
+```
+
+**约定（本仓的硬规矩）**：
+
+- **日常开发不碰种子**。要改语言/修翻译行为，改 `*-lib.static.py`（环 2 自举链）。
+- **种子只做最小必要修改**，且只在一种情形下允许改：发现**翻译器语义 bug** ——
+  种子与自举翻译器对同一输入给出不同 IR，**且**种子本身违背 Python 语义（照 CPython `ast` 对不上）。
+  先怀疑自举链，确认"种子算错了"再动种子。
+- **改种子 = 重走完整自举**。种子一改，它产出的 IR 就变，而自举链是照着旧种子的 IR 写的，
+  必然连带修改 `*-lib.static.py`；改完让两者重新一致。**这两件事不可分割。**
+
+> 为什么冻结：种子是信任链的起爆点，等于公理。公理动一次，下游全部要重新证明。
+> 与 [VISION.md](../VISION.md) 一致：**约定长存，实现皆耗材**——种子是"约定的一种已审计实现"。
+
+## 4. 四层验收（机器判据，逐层收窄）
+
+| 层 | 脚本 | 判据 | 挡住的错 |
+|---|---|---|---|
+| 词法 | `bash staticpy/check_tokenize.sh <f…>` | 自举词法器 vs CPython `tokenize`，**token 流逐行一致** | 缩进/字面量/转义解析偏了 |
+| 语法 | `bash staticpy/check_parse.sh <f…>` | 自举解析器 vs CPython `ast`，**规范 dump 逐字节一致** | AST 形状错、节点键漏 |
+| IR | `bash staticpy/check_translate.sh <f…>` | 自举翻译器 vs 种子，**IR 逐字节一致**（严格）；否则规范化后一致 | 代码生成跑偏 |
+| 语义 | `python3 staticpy/semantics_diff.py [-v]` | 同一份 `.static.py`：CPython 跑 vs AOT ELF 跑，**stdout 逐行 diff** | "翻过去了但算错了" |
+
+- 每个脚本默认只吃你给的文件；给全仓库的 `.static.py` 就是全量回归（当前 **fail=0**）。
+- 无 `main()` 的纯函数库自动按库模式（`--lib`）比对，不需要手写标志。
+- `check_translate.sh` 会报 `ok(严格)` 或 `ok(规范化)`：前者含 `;; file:line` 注释逐字节相同，
+  后者允许注释/空白差异——**里程碑判据是规范化一致**，严格一致是加分项。
+
+`selfcheck.sh` 把其中三层挂进了一键回归（`[0c]` 词法、`[0d]` 语义、`[4]` 环 2/3 比对 + imgproc 构建与差分）；
+**`check_parse.sh` 与 `check_translate.sh` 是显式的"改完就跑"项**——改了 `parse_lib`/`emit_lib` 之后必须手跑。
+
+## 5. 改种子后的复跑清单（一次都不能省）
+
+```bash
+# 1 词法：种子/种子对应物 vs CPython tokenize
+bash staticpy/check_tokenize.sh staticpy/static_translate.py selfhost/staticc.py imgproc/pil_lib.static.py
+# 2 语法：自举解析器 vs CPython ast
+bash staticpy/check_parse.sh $(git ls-files '*.static.py' | head -20)
+# 3 IR：种子 vs 自举翻译器，须 fail=0
+bash staticpy/check_translate.sh $(git ls-files '*.static.py')
+# 4 语义：CPython 输出 vs AOT ELF 输出
+python3 staticpy/semantics_diff.py
+# 5 一键端到端：单一真源/插件钩子/词法/语义/imgproc 构建+差分+覆盖/hashlib/zlib/自举比对
+bash selfcheck.sh
+# 6 重建环 3：staticc.py → ELF，再用 staticc.sp 验自持
+bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc
+```
+
+任何一环红了就等于没有完成——**判据只认"IR 一致 + 差分全绿"，不认"我觉得改对了"**。
+
+## 6. 信任链
+
+```
+OCaml 编译器 → ReScheme 编译器 → static_translate.py（种子，冻结）
+                              → 自举翻译器 ELF（staticpy/*.static.py）
+                              → staticc ELF → staticc.sp（~1100 行，信任根）
+                              → Chez → 机器码
+```
+
+| 角色 | 文件 | 规模/性质 |
+|---|---|---|
+| 种子 | `staticpy/static_translate.py` | 冻结；改动 = 重走自举 |
+| 自举翻译器 | `staticpy/{static_translate,parse_lib,emit_lib,emit_dump}.static.py` | 日常演化面 |
+| 信任根 | `selfhost/staticc.sp` | ~1100 行，几天可读完 |
+| 兼容垫片 | `selfhost/run_staticc_py.py` | 让 `staticc.py` 在 CPython 下直跑（比对用） |
+
+可替换性：编译器/解释器只是"约定"的实现——谁都可以另写一份（甚至自持/自举），
+需要信任的只有那一小段种子。这是"开放架构给 agent"的完整含义：**工具链可自持、可替换、可审计**。
+
+## 7. 复现环 2 / 环 3
+
+```bash
+# 环 2：staticc.py 在 CPython 下 与 编成 ELF 后，编同一份输入，输出必须一致
+python3 selfhost/run_staticc_py.py selfhost/tests/test_staticc_input.sp ~/iso_gen/a.scm
 bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc
 ./dist/staticc selfhost/tests/test_staticc_input.sp ~/iso_gen/b.scm
 diff ~/iso_gen/a.scm ~/iso_gen/b.scm     # 一致 → 环 2 成立
@@ -39,28 +128,13 @@ bash selfcheck.sh                        # 一键（其 [4/4] 就是这条比对
 ```
 
 环 3（`.sp` 信任根自持）：`staticc.py` 编 `staticc.sp` → `sc1.scm` → 编成 `staticc_self` ELF；
-`staticc_self` 再编 `staticc.sp` → `sc2.scm`；**规范化（去注释+去空白）后逐字节一致** → 环 3 成立。
+`staticc_self` 再编 `staticc.sp` → `sc2.scm`；**规范化（去注释 + 去空白）后逐字节一致** → 环 3 成立。
 
-## 4. 文件
+## 8. 文件
 
 | 文件 | 作用 |
 |---|---|
 | `staticc.py` | 用 StaticPy 子集写的编译器（证明 StaticPy 能编译自身） |
 | `staticc.sp` / `staticc_split.sp` / `staticc.sp.orig` | `.sp` 编译器（信任根）及其拆分/原始版本 |
-| `run_staticc_py.py` | CPython 兼容垫片（让 `staticc.py` 直接跑） |
+| `run_staticc_py.py` | CPython 兼容垫片（给 `staticc.py` 补 StaticPy 内建） |
 | `tests/` / `examples/` | 自举比对输入与最小示例 |
-
-## 5. 已验证的结论
-
-```
-方式 A：CPython 跑 staticc.py      → a.scm
-方式 B：staticc.py 编成 ELF 再跑   → b.scm
-diff A B                           → 一致 ✓        # 环 2：StaticPy 能编译自身
-
-.sp 环：staticc.py 编 staticc.sp  → sc1.scm → staticc_self ELF
-       staticc_self 再编 staticc.sp → sc2.scm
-       规范化比对                    → 逐字节一致 ✓  # 环 3：.sp 信任根自持
-```
-
-含义：**编译器和解释器只是"约定"的实现**；需要信任的只有那一小段可审计的种子。
-这也是"开放架构给 agent"的完整含义——工具链可自持、可替换、可审计。

@@ -99,7 +99,7 @@ $PY <lib>/difftest.py -v                     # ③ 差分测试（逐像素）
 - **入口**：函数叫 `main()`，**不要在顶层调用**（翻译器自动加 `(static_main)`，重复会跑两遍）。
 - **前可集成**：库拆成**纯函数文件**（无 `main`，如 `pil_lib.static.py`）+ 薄 CLI；
   用 `concat`（自举，StaticPy 写的）把库与用户程序拼成一个 bundle。
-- **语法扩展只走插件**（核心语法已冻结）：不要再往 `static_translate.py` 里加语法规则。
+- **语法扩展只走插件**（核心语法已冻结）：不要再往翻译器里加语法规则。
   新语法写成 `plugins/<name>/hooks.py`，用四个钩子：
   `k.rewrite(fn)` 源码预处理 / `k.expr(NodeType, fn)` 表达式 / `k.stmt(NodeType, fn)` 语句
   （顶层与函数体内都派发）/ `k.infer(fn)` 类型推断。
@@ -167,7 +167,7 @@ $PY <lib>/difftest.py -v                     # ③ 差分测试（逐像素）
 14. `03e3bb7`/`a0428eb` `Color3DLUT` / `deform` 收尾 → **覆盖 100/100、差分 100/100**
 
 **观察这条脉络**：先打通“一个算子 + 自动化闭环”，再批量铺接口面，
-然后逐个攻“精确对齐”，遇到语言瓶颈就改编译器——**广度靠自省自动化，深度靠照抄 C 源**。
+然后逐个攻“精确对齐”，遇到语言瓶颈就改**自举翻译器**——**广度靠自省自动化，深度靠照抄 C 源**。
 
 ---
 
@@ -185,11 +185,19 @@ StaticPy 不是"只能靠宿主"的：它**能自举**。上游 `/opt/ReScheme` 
 | 环 | 源语言 | 编译器实现 | 自举 |
 |---|---|---|---|
 | 1 ReSchme | 自定义(类 OCaml) | OCaml（HM 类型） | 自编译 |
-| 2 **StaticPy** | Python 子集 | Python（`static_translate.py`） | `staticc.py → ELF → 编译自身` |
+| 2 **StaticPy** | Python 子集 | **自举翻译器**（`staticpy/*.static.py` → ELF） | 翻译器编自己 + 编 `staticc.py`，再编自身 |
 | 3 `.sp` | S-表达式（极简） | Python→.sp | `staticc.sp → staticc → staticc_self` |
 
-**信任链**：OCaml 编译器 → ReSchme 编译器 → `static_translate.py`(CPython) → `staticc` ELF →
+**种子冻结**：`staticpy/static_translate.py`（CPython + `ast`）是环 2 的**起爆点**，现已冻结——
+日常改语言改 `staticpy/*-lib.static.py`，**不碰种子**；只有确认"种子自身算错了"才动它，
+且动完必须重走自举（复跑清单见 [docs/SELFHOST.md](./docs/SELFHOST.md) §5）。
+
+**信任链**：OCaml 编译器 → ReSchme 编译器 → `static_translate.py`（种子，冻结）→
+自举翻译器 ELF → `staticc` ELF →
 `staticc.sp`（**~1100 行，几天可完整审计 = 整个系统的信任根**）→ Chez → ELF。
+
+**四层机器验收**（改完必跑）：`check_tokenize.sh`（token 流）→ `check_parse.sh`（AST dump）→
+`check_translate.sh`（IR vs 种子）→ `semantics_diff.py`（CPython vs ELF 的 stdout）。
 
 含义：**编译器和解释器只是"约定"的实现**——谁都可以另写一份，甚至自持/自举；
 需要信任的只有那一小段可审计的种子。这也是"开放架构给 agent"的完整含义。
@@ -201,7 +209,13 @@ StaticPy 不是"只能靠宿主"的：它**能自举**。上游 `/opt/ReScheme` 
 bash staticpy/static_build_comfycli.sh input.static.py out_name [ffi.scm]
 
 # 库文件（无 main）：加 --lib（或 STATICPY_LIB=1），不生成 (static_main)
-python3 staticpy/static_translate.py --lib imgproc/pil_lib.static.py > lib.ss
+python3 staticpy/static_translate.py --lib imgproc/pil_lib.static.py > lib.ss   # 种子（仅作对照基准）
+
+# 翻译器自身的三层差分（改 staticpy/*-lib.static.py 之后必跑）
+bash staticpy/check_tokenize.sh imgproc/pil_lib.static.py
+bash staticpy/check_parse.sh    imgproc/pil_lib.static.py
+bash staticpy/check_translate.sh imgproc/pil_lib.static.py
+python3 staticpy/semantics_diff.py
 # 裸名产物落 dist/；带前缀的名字沿用原路径；缓存默认 ~/iso_gen/staticpy-cache
 STATICPY_CACHE=~/iso_gen/staticpy-cache  STATICPY_OUTDIR=dist
 bash staticpy/static_build_comfycli.sh --clean   # 清缓存

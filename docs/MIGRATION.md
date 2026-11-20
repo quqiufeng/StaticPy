@@ -71,7 +71,7 @@ imgproc 实战踩过的坑（照抄才对）：
 |---|---|---|
 | 目标库依赖某个成熟 C 库 | 缺库 | **运行时挂 `.so`**（`libgif`/`libwebp`/`libtiff`/`libfreetype`/`libcrypto`） |
 | 没有现成实现 | 缺实现 | **自写 C/C++ helper**（`libimgproc.so` 就是这层） |
-| Python 语法写不出来 / 回调表达不了 | 缺语言特性 | **改编译器**（补丁 7 加 lambda/一等函数 → `Image.eval`）或**写语法插件** |
+| Python 语法写不出来 / 回调表达不了 | 缺语言特性 | **改自举翻译器**（`emit_lib.static.py` 加 lambda/一等函数一类特性 → `Image.eval`；见 [SELFHOST.md](./SELFHOST.md)）或**写语法插件** |
 
 判据只有一条：**产出的 Scheme IR / 数值对不对**。IR 对了，后端 Chez 负责其余。
 

@@ -56,11 +56,11 @@ bash selfcheck.sh                  # 全量自检：构建 + 差分 + 覆盖 + �
 | **[VISION.md](./VISION.md)** | 为什么"语言是耗材、约定才是资产"；人在这个模型里拥有什么 |
 | **[AGENTS.md](./AGENTS.md)** | **agent 作业手册**：把 Python 库迁到 StaticPy 的可复制步骤与踩坑表 |
 | **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** | 编译器/内核/插件/AOT 的流水线、产物落点、缓存与环境变量 |
-| **[docs/LANGUAGE.md](./docs/LANGUAGE.md)** | Python 子集支持什么、类型系统、FFI 约定（`extern fn`）、编译器本地补丁 |
+| **[docs/LANGUAGE.md](./docs/LANGUAGE.md)** | Python 子集支持什么、类型系统、FFI 约定（`extern fn`）、种子边界与"改语法"路径 |
 | **[docs/PLUGINS.md](./docs/PLUGINS.md)** | 插件规范：`plugin.json` 字段、三种形态、语法钩子、CLI |
 | **[docs/LIBS.md](./docs/LIBS.md)** | 已集成的库与推理工具清单（含每个库的构建/运行/验证命令） |
 | **[docs/MIGRATION.md](./docs/MIGRATION.md)** | 迁移方法论：自省 → 铺桩 → 差分，以及"照抄 C 源"的坑表 |
-| **[docs/SELFHOST.md](./docs/SELFHOST.md)** | 三环自举与信任链：怎么复现、信任根是什么 |
+| **[docs/SELFHOST.md](./docs/SELFHOST.md)** | 三环自举与信任链：种子冻结约定、四层机器验收、怎么复现 |
 | **[docs/DEPLOY.md](./docs/DEPLOY.md)** | 强分发：自包含部署包（零依赖）与 glibc 下限 |
 | **[docs/THIRD_PARTY.md](./docs/THIRD_PARTY.md)** | 第三方组件、许可与归属 |
 | **[imgproc/README.md](./imgproc/README.md)** | 旗杆样板（对标 Pillow）：三层结构、覆盖面、怎么扩算子 |
@@ -71,7 +71,8 @@ bash selfcheck.sh                  # 全量自检：构建 + 差分 + 覆盖 + �
 
 ```
 staticpy/          # 语言工具链
-├── static_translate.py    # Python → Scheme 翻译器（含本地补丁，见 docs/LANGUAGE.md）
+├── static_translate.py    # 引导种子：冻结的参考翻译器（验收基准，见 docs/SELFHOST.md）
+├── *.static.py            # 自举翻译器本体（tokenize/parse/emit），日常改语言改这里
 ├── static_prelude.scm     # 运行时值类型；static_stdlib.scm 标准库
 ├── static_build_comfycli.sh  # 构建入口（translate + Chez AOT + 独立 ELF）
 └── static_build.sh        # 兼容别名（转发到上面那个，单一真源）
@@ -93,7 +94,7 @@ docs/              # 本仓文档
 
 1. **有现成 C 库** → 运行时挂 `.so`（`libgif` / `libwebp` / `libtiff` / `libfreetype` / `libcrypto`）
 2. **没有现成的** → 自写 **C/C++ helper**（如 `libimgproc.so`、`libatlas.so`）
-3. **语法不够兼容 Python** → **改编译器**，对齐 Scheme IR（如 lambda / 一等函数）
+3. **语法不够兼容 Python** → **改自举翻译器**（`staticpy/*.static.py`），对齐 Scheme IR（如 lambda / 一等函数）；种子只作验收基准
 
 > 判据只有一条：**产出的 Scheme IR / 数值对不对**；对不齐就照参照实现（如 Pillow 的 C 源）逐行搬。
 

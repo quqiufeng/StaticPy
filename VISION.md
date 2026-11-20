@@ -17,7 +17,7 @@
 
 - AI 会所有语言 → **不必为它发明新语法**；
 - AI 能读参考实现（如 Pillow 的 C 源）、照搬数值行为 → **"理解复杂"它来接**；
-- 语法不够兼容 → **改编译器**即可（本仓库给翻译器加 lambda/一等函数就是例子）。
+- 语法不够兼容 → **改自举翻译器**即可（本仓库给它加 lambda/一等函数就是例子；种子不变，差分验收）。
 
 > 人类的语法，本质是**为人类理解力做的妥协**；机器向的表示，是**为验证与协调做的妥协**。
 > **妥协不会消失**——没有可检查的固定表示，就没有信任、没有组合、没有交付。
@@ -71,10 +71,10 @@ IDL 生成 client/server、policy-as-code——**都"约定而产物可弃"**。
 | 约定 | `AGENTS.md`（迁移作业手册）+ C ABI（`imgproc.h`）+ [docs/](./docs/ARCHITECTURE.md) |
 | 参照 | **Pillow**（逐像素对齐） |
 | 证据 | `imgproc/difftest.py`、`selfcheck.sh`（机器可判） |
-| 溯源 | git 提交史 + [docs/LANGUAGE.md](./docs/LANGUAGE.md)（编译器补丁）+ [docs/THIRD_PARTY.md](./docs/THIRD_PARTY.md) |
-| 可审信任根 | `selfhost/staticc.sp`（~1100 行，可自持/可审计） |
+| 溯源 | git 提交史 + [docs/SELFHOST.md](./docs/SELFHOST.md)（自举链与种子边界）+ [docs/THIRD_PARTY.md](./docs/THIRD_PARTY.md) |
+| 可审信任根 | `selfhost/staticc.sp`（~1100 行，可自持/可审计）；`static_translate.py` 为冻结种子 |
 | 产物 | 单文件 ELF / 自包含部署包（`package.sh`） |
-| 被 AI 演化的语言 | `staticpy/static_translate.py`（agent 可改、可自举） |
+| 被 AI 演化的语言 | 自举翻译器 `staticpy/{static_translate,parse_lib,emit_lib}.static.py`（agent 可改，改完必过四层差分） |
 
 **结论**：
 > 语言不必再为"人的表达力"加东西，而要为"**agent 的作业闭环**"搭台子

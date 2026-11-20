@@ -24,7 +24,7 @@ def classify(x: int) -> str:
         return "negative"
     return "zero"
 
-# 循环（支持 break / continue，见 §4 补丁 2）
+# 循环（支持 break / continue，见 §4.1 补丁 2）
 def total(arr: list[float]) -> float:
     s: float = 0.0
     i: int = 0
@@ -37,7 +37,7 @@ for i in range(10):
     if i == 3:
         continue
 
-# lambda / 一等函数（补丁 7）：函数值可赋值、可传参、可回调
+# lambda / 一等函数（§4.1 补丁 7）：函数值可赋值、可传参、可回调
 def apply_all(img: ptr, f: fn) -> ptr:
     return img_point(img, f)
 
@@ -53,14 +53,14 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 **不支持**（也不要绕）：`class`/继承/多态、`try`/`except`/`raise`、生成器/`yield`、
 自由变量闭包、`eval`/`exec`、动态 `getattr`/`setattr`。
 
-> 能力缺口按三条路径补：挂 C 库 / 写 C++ helper / 改编译器或加语法插件（见 [PLUGINS.md](./PLUGINS.md)）。
+> 能力缺口按三条路径补：挂 C 库 / 写 C++ helper / 改自举翻译器或加语法插件（见 [PLUGINS.md](./PLUGINS.md)、[SELFHOST.md](./SELFHOST.md)）。
 
 ## 2. 类型系统
 
 | StaticPy 类型 | 内部表示 |
 |---|---|
 | `int` | 64 位整数（Chez fixnum） |
-| `float` | **32 位 float**（对齐 C ABI；见补丁 5） |
+| `float` | **32 位 float**（对齐 C ABI；见 §4.1 补丁 5） |
 | `double` | 64 位浮点（需要时显式写 `double`） |
 | `bool` | boolean |
 | `str` | Scheme string |
@@ -87,10 +87,23 @@ extern fn img_open(path: str) -> ptr from "imgproc"
    手写绑定/常量表/结构体布局放插件的 `ffi.scm`。
 7. 逻辑库名 → soname 由插件的 `libs` 映射决定，`STATICPY_LIB_<LIB>` 可覆盖。
 
-## 4. 编译器本地补丁（`staticpy/static_translate.py`）
+## 4. 编译器的两副面孔：种子（冻结）与自举翻译器（演化面）
 
-`static_translate.py` = 上游 StaticPy + 下列本地补丁。升级上游时：
-`static_prelude.scm` / `static_stdlib.scm` 可直接替换；`static_translate.py` 覆盖后**必须重放**下列补丁。
+| | 文件 | 状态 | 谁在改 |
+|---|---|---|---|
+| **种子** | `staticpy/static_translate.py`（CPython + `ast`，≈19 万字符） | **冻结**：环 2 的起爆点 | 只在"种子自身算错"时动，动完重走自举 |
+| **自举翻译器** | `staticpy/{static_translate,parse_lib,emit_lib,emit_dump}.static.py` | 演化面：词法/解析/类型/代码生成 | 日常改语言就改这里 |
+
+- **改语法 = 改自举链**：`emit_lib.static.py`（代码生成与类型）→ `parse_lib.static.py`（AST 形状）→
+  `static_translate.static.py`（token 流）。改完必跑四层差分（见 [SELFHOST.md](./SELFHOST.md) §4）。
+- 种子的作用从"生产翻译器"变成"**验收基准 + 引导器**"：自举翻译器产出的 IR 必须与它一致。
+- 种子改动的唯一合法理由：**种子违背 Python 语义**（与 CPython `ast` 对不上，或与自举链分歧且错在种子）。
+  先怀疑自举链——绝大多数"对不上"都是自举链还没跟上。
+
+### 4.1 种子里的历史补丁（为什么它不等于上游 StaticPy）
+
+`static_translate.py` = 上游 StaticPy + 下列补丁。这些补丁现在**已经搬进自举链**；
+保留此表用于审计溯源与"上游升级时该重放什么"：
 
 | # | 补丁 | 原因 |
 |---|---|---|
@@ -109,8 +122,16 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 校验：
 
 ```bash
-python3 staticpy/static_translate.py imgproc/mirror_gif.static.py | head   # 翻译器自检
-bash selfcheck.sh                                                          # 端到端回归
+# 种子单独自检（对照基准）
+python3 staticpy/static_translate.py imgproc/mirror_gif.static.py | head
+
+# 自举翻译器的四层机器验收（改完必跑，任一红=没完成）
+bash staticpy/check_tokenize.sh  imgproc/pil_lib.static.py   # token 流 vs CPython tokenize
+bash staticpy/check_parse.sh     imgproc/pil_lib.static.py   # AST dump vs CPython ast
+bash staticpy/check_translate.sh imgproc/pil_lib.static.py   # IR vs 种子（严格/规范化）
+python3 staticpy/semantics_diff.py                           # CPython 跑 vs ELF 跑，stdout 逐行
+
+bash selfcheck.sh                                            # 端到端回归
 ```
 
 ## 5. 三条铁律
@@ -118,4 +139,5 @@ bash selfcheck.sh                                                          # 端
 - **顶层不要调用 `main()`**：翻译器自动加 `(static_main)`，写了会跑两遍。
 - **函数名与 Scheme 侧一致**：插件里已在 Scheme 实现的函数必须列进 `prelude_functions`，
   否则调用会被加上 `static_` 前缀当成用户函数。
-- **新的语法只走插件**（`hooks.py`），不往 `static_translate.py` 加规则——核心语法已冻结。
+- **新的语法只走插件**（`hooks.py`），不往翻译器加规则——核心语法已冻结；
+  确需动核心语法，改自举链（`staticpy/*-lib.static.py`）并重跑四层差分，**不要动种子**。
