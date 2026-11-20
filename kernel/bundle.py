@@ -43,4 +43,14 @@ def assemble(kernel, code_ss, extra_ffi=None, header=None):
     parts.append(code_ss.rstrip())
     parts.append("")
 
-    return "\n".join(parts) + "\n", inputs
+    # load-shared-object 去重：插件 ffi、用户 -f、内核按 libs 自动生成的可能重复
+    seen = set()
+    out = []
+    for line in "\n".join(parts).splitlines():
+        st = line.strip()
+        if st.startswith("(load-shared-object"):
+            if st in seen:
+                continue
+            seen.add(st)
+        out.append(line)
+    return "\n".join(out) + "\n", inputs

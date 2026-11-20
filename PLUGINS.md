@@ -94,23 +94,32 @@ STATICPY_PLUGINS_PATH=/tmp/myplug python3 -m kernel run app.static.py -p core,he
 "prelude_functions": ["parse_json", "json_dumps"]
 ```
 `.py` 侧写法不变：`import json` + `json.loads(s)`。
-`load-shared-object` 写在插件的 `ffi.scm` 里。
+`load-shared-object` 由内核按 `libs` 映射自动生成（见 §3.5），不用手写。
 
 ### ③ 自有 `.so` + extern fn（如 `imgproc`）
 插件的 `plugin.json` 声明 `ffi` / `libs` / `build`；用户 `.py` 里：
 ```python
 extern fn img_open(path: str) -> ptr from "imgproc"
 ```
-translator 依据 `extern fn ... from "<lib>"` 生成 `foreign-procedure`，
-插件只负责在运行时把 `.so` 载入：
-
-```scheme
-;; imgproc/imgproc_ffi.scm（由 plugins/imgproc/plugin.json 的 "ffi" 引入）
-(load-shared-object "libimgproc.so")
-```
+translator 依据 `extern fn ... from "<lib>"` 生成 `foreign-procedure`，并依据
+`plugin.json` 的 `libs` 自动生成 `load-shared-object`（**插件不用手写**，见 §3.5）。
 
 > **FFI 约定（重要）**：类型只有 `str / int / float / ptr`，**没有 `void` 返回**——
 > C 侧返回 void 的函数请改成返回 `int`。多值参数（点列/调色板/LUT）用 CSV 字符串传。
+
+### ⑤ FFI 翻译分工（谁翻译什么）
+
+| 环节 | 归属 | 位置 |
+|---|---|---|
+| `extern fn name(a: int, b: str) -> ptr from "lib"` 语法解析 | **内核** | `static_translate.py: parse_extern_functions` |
+| 类型 `int/float/str/ptr` → C 类型（无 `void` 返回） | **内核** | `translate_type` / `TYPE_MAP` |
+| `(define name (foreign-procedure ...))` 生成 | **内核** | `generate_extern_ffi` |
+| 逻辑库名 → soname：`libs` 映射，`STATICPY_LIB_<LIB>` 可覆盖 | **插件声明 + 内核消费** | `plugin.json: libs` |
+| `(load-shared-object ...)` 按 libs 自动挂载（全局去重） | **内核** | `kernel/bundle.py: assemble` |
+| 手写绑定 / 常量表 / 结构体布局 | **插件** | `plugins/<name>/ffi.scm` |
+
+> `extern fn` 是 Python 子集的语法，解析与代码生成属于内核（就像 `if`/`for`）；
+> 插件只声明"我的库叫什么、soname 是什么、是否要额外手写绑定"。
 
 ### ④ 语法扩展（hooks.py）
 ```python

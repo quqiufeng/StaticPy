@@ -4,19 +4,28 @@
   "kind": "ffi",
   "order": 200,
   "description": "Pillow 对标图像库（C++ helper + extern fn 自动绑定）",
-  "requires": ["core", "libc"],
-  "ffi": ["../../imgproc/imgproc_ffi.scm"],
+  "requires": [
+    "core",
+    "libc"
+  ],
+  "ffi": [
+    "ffi.scm"
+  ],
   "libs": {
     "imgproc": "libimgproc.so"
   },
   "build": {
     "cmd": "cd ../../cpp/imgproc && bash build_cpp.sh",
-    "outputs": ["../../cpp/imgproc/build/libimgproc.so"]
+    "outputs": [
+      "../../cpp/imgproc/build/libimgproc.so"
+    ]
   },
   "env": {
     "LD_LIBRARY_PATH": "../../cpp/imgproc/build"
   },
   "provides": {
-    "modules": ["pil.*（见 imgproc/pil_lib.static.py，前端库非运行时插件）"]
+    "modules": [
+      "pil.*（见 imgproc/pil_lib.static.py，前端库非运行时插件）"
+    ]
   }
 }
