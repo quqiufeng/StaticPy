@@ -6,6 +6,9 @@ cd "$ROOT"
 fail=0
 
 PY="${PYTHON:-python3}"
+# 工作目录提前定义：[0e] 步要把判据的差分样本落盘（本仓禁止 /tmp）
+W="${STATICPY_WORK:-$HOME/iso_gen/selfcheck}"
+mkdir -p "$W"
 
 echo ">>> [0/4] 单一真源检查（plugins/ ⇄ static_prelude.scm）"
 if $PY tools/split_plugins.py --check >/dev/null 2>&1; then echo "  ok"; else
@@ -32,6 +35,25 @@ if grep -q "失败 0 项" <<<"$_sem_out"; then echo "  ok（$_sem_out）"; else
   echo "  语义差分红了：$PY staticpy/semantics_diff.py -v"; fail=1
 fi
 
+echo ">>> [0e/4] IR 规范化判据（StaticPy 自举版 vs CPython 版，逐字节）"
+# 判据本身也要防漂移：两份实现（trust/normalize_scm.py / .static.py）必须逐字节一致，
+# 否则 trust/fixpoint.sh、trust/ddc.sh 用哪份就得哪份结论。
+if bash staticpy/static_build_comfycli.sh trust/normalize_scm.static.py normscm >/dev/null 2>&1; then
+  . "$ROOT/trust/norm.sh"
+  _norm_bad=0
+  for _f in trust/normalize_scm.py trust/manifest.py selfhost/staticc.py \
+            staticpy/static_translate.py imgproc/pil_lib.static.py; do
+    $PY trust/normalize_scm.py "$_f" > "$W/norm_py.txt" 2>/dev/null
+    dist/normscm "$_f" > "$W/norm_st.txt" 2>/dev/null
+    cmp -s "$W/norm_py.txt" "$W/norm_st.txt" || { echo "  差异: $_f"; _norm_bad=1; }
+  done
+  if [ "$_norm_bad" = 0 ]; then echo "  ok（$NORM_KIND，5 个样本 token 流一致）"; else
+    echo "  判据两份实现不一致：判据本身失效"; fail=1
+  fi
+else
+  echo "  构建 dist/normscm 失败"; fail=1
+fi
+
 echo ">>> [1/4] 构建 C 库 + 前端（imgproc）"
 bash imgproc/build.sh >/dev/null 2>&1 && echo "  ok" || { echo "  失败"; fail=1; }
 
@@ -48,14 +70,11 @@ else
   echo ">>> [2-3/4] 跳过差分/覆盖（缺 Pillow/numpy，仅'测量'需要）"
 fi
 
-W="${STATICPY_WORK:-$HOME/iso_gen/selfcheck}"
-mkdir -p "$W"
-
 echo ">>> [4/4] 自举比对（环 2：staticc.py CPython vs 自举 ELF）"
 if ( cd selfhost && $PY run_staticc_py.py tests/test_staticc_input.sp "$W/sc_a.scm" >/dev/null 2>&1 ) \
    && bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc >/dev/null 2>&1 \
    && ./dist/staticc selfhost/tests/test_staticc_input.sp "$W/sc_b.scm" >/dev/null 2>&1 \
-   && $PY trust/normalize_scm.py --eq "$W/sc_a.scm" "$W/sc_b.scm" >/dev/null 2>&1; then
+   && $NORM --eq "$W/sc_a.scm" "$W/sc_b.scm" >/dev/null 2>&1; then
   echo "  ok（IR token 级一致）"
 else
   echo "  自举比对失败"; fail=1

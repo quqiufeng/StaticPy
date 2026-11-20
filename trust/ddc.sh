@@ -37,7 +37,7 @@ cd "$ROOT"
 
 PY="${PYTHON:-python3}"
 WORK="${WORK:-$HOME/iso_gen/trust/ddc}"
-NORM="$PY trust/normalize_scm.py"
+. "$ROOT/trust/norm.sh"   # NORM=IR 规范化判据（优先 StaticPy 自举 ELF）
 BUILD="bash staticpy/static_build_comfycli.sh"
 mkdir -p "$WORK"
 

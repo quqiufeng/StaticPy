@@ -162,7 +162,8 @@ stage3  g2 → E2；E2 编 staticc.sp → g3.scm
 | `trust/fixpoint.sh` | 三阶段固定点：自举链是否收敛 | `bash trust/fixpoint.sh` |
 | `trust/ddc.sh` | **异源双编译（DDC）**：`staticc.py`（Python 语法）vs `staticc.sp`（S-表达式）对同一源出 IR 是否一致 | `bash trust/ddc.sh` |
 | `trust/manifest.py` | 信任链清单：被信文件的哈希/行数；`--verify` 检测悄悄漂移 | `python3 trust/manifest.py --verify` |
-| `trust/normalize_scm.py` | IR 的 token 级规范化（E5/E6 的判据实现） | `python3 trust/normalize_scm.py --eq A B` |
+| `trust/normalize_scm.py` | IR 的 token 级规范化（E5/E6 的判据实现）——**判据自己也有 StaticPy 版**，见下行 | `python3 trust/normalize_scm.py --eq A B` |
+| `trust/normalize_scm.static.py` | 同一判据的 StaticPy 实现，编出 `dist/normscm`；`trust/norm.sh` 优先用它，于是**校验不再要求目标机有 CPython**。两份实现由 `selfcheck.sh [0e]` 逐字节比对，不一致即判据失效 | `bash staticpy/static_build_comfycli.sh trust/normalize_scm.static.py normscm` |
 
 **为什么必须有 DDC**：本仓过去只有「同源不同执行方式」的自比（`staticc.py` 用 CPython 跑
 vs 编成 ELF 跑）—— 同源自比挡不住 Thompson 攻击，因为两份产物来自同一份代码。

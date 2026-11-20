@@ -124,9 +124,9 @@
       "path": "selfcheck.sh",
       "why": "一键自检",
       "state": "present",
-      "sha256": "4bdd6f5c2101dc43c327ca8c7cbb41dd159aea56d2f0ce95a3f8e0271fad6909",
-      "bytes": 4845,
-      "lines": 100
+      "sha256": "b3cd238fe82b58a0ee4d12c00fcd044bb7c50a4111f64bc8b70e75b66636a34e",
+      "bytes": 5918,
+      "lines": 119
     },
     {
       "role": "harness",
@@ -178,8 +178,8 @@
       "path": "trust/ddc.sh",
       "why": "判据：异源双编译交叉验证（环3 抗后门）",
       "state": "present",
-      "sha256": "ea3a8cd2105415dc98c81db6576ba5d9b641fa86bdcb70ee74ec299a9e921e9d",
-      "bytes": 8057,
+      "sha256": "a61f8e5bb11ffc50373c3874c378ebf740c222b300dc29bfba5b9d3f68814082",
+      "bytes": 8107,
       "lines": 162
     },
     {
@@ -187,8 +187,8 @@
       "path": "trust/fixpoint.sh",
       "why": "判据：三阶段固定点（自举收敛）",
       "state": "present",
-      "sha256": "3706be07e6997716f5a5cbcbaa4d7e1cf8df42470f970fce6d92acb1fc5576ae",
-      "bytes": 4130,
+      "sha256": "601e4b4a03e42af8afdf8b0ef44cc1c2242d476851c570f0b0addea6c39ac08f",
+      "bytes": 4180,
       "lines": 85
     },
     {
@@ -2125,6 +2125,24 @@
       "sha256": "56da85749339d6f5c25d63451390e1cbc1ba066a2fd4c56855752d0a823f95e7",
       "bytes": 19774,
       "lines": 430
+    },
+    {
+      "role": "harness",
+      "path": "trust/norm.sh",
+      "why": "判据/证据装置（自动收录：改它=改判据，必须显式重签）",
+      "state": "present",
+      "sha256": "ed92858728483504bfbb35f0875db2843fdbbfe3d2fde4fc6541ed114ba14f50",
+      "bytes": 1152,
+      "lines": 23
+    },
+    {
+      "role": "harness",
+      "path": "trust/normalize_scm.static.py",
+      "why": "判据/证据装置（自动收录：改它=改判据，必须显式重签）",
+      "state": "present",
+      "sha256": "c65abf91c67bbd98add9dcb68dab7a395547e99c75890c6bade47e01fc9a6dc3",
+      "bytes": 4163,
+      "lines": 142
     },
     {
       "role": "lib",
