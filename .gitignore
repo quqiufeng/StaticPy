@@ -327,3 +327,6 @@ imgproc/preview_*.png
 /staticpy/spark
 /staticpy/spboot
 /pilcli_probe
+
+# 根目录 AOT 产物（编译生成的 ELF，去 .py 后缀；tokdump.static 是手写夹具、已跟踪不受影响）
+/*.static

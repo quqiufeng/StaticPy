@@ -1,0 +1,143 @@
+#!/bin/bash
+# staticpy — StaticPy 命令行入口（/usr/local/bin/staticpy -> 本文件）
+#
+# 设计原则（见 docs/SELFHOST.md §7.5）：
+#   translate  走**自举翻译器 ELF**（dist/translator），不需要 python3
+#   build/run/check  走 python3 -m kernel；若没有 python3，build 退回
+#                    「ELF 出 IR → .scm 输入通道」的无 CPython 路径
+#
+# 注意：dist/translator 按 **argv[0] 所在目录 + 编译进的 <name>.so** 找自己的运行时，
+# 所以不能用 symlink 直接指向它（argv[0] 会变成 /usr/local/bin/xxx → 找不到 .so）。
+# 必须像本脚本这样 exec **真实绝对路径**。
+set -uo pipefail
+
+ROOT=${STATICPY_ROOT:-/opt/StaticPy}
+TRANS="$ROOT/dist/translator"
+KERNEL_OUT=${STATICPY_OUTDIR:-$PWD}
+
+usage() {
+  cat <<'EOF'
+用法: staticpy <命令> [参数…]
+
+  translate FILE [--lib]      翻译 .static.py → Scheme IR（走自举 ELF，无需 python3）
+  build FILE [-o OUT] [--lib] 编译成独立 ELF
+  run FILE [-- 参数…]         编译后立刻运行
+  check FILE                  只翻译成 Scheme（调试）
+  plugins                     列出插件与依赖
+  translate --selfcheck       自检：全量 .static.py 与种子逐字节比对（需 python3 作对照）
+
+  -m kernel CMD …             等价 python3 -m kernel CMD …（可直接替换前缀）
+
+  直接给文件 = translate（例: staticpy app.static.py > app.scm）
+
+环境变量:
+  STATICPY_ROOT     仓库根（默认 /opt/StaticPy）
+  STATICPY_OUTDIR   build 产物目录（默认当前目录）
+  STATICPY_PLUGINS  插件选择（仅 kernel 路径生效）
+EOF
+}
+
+# 自举翻译器缺失时按需起爆（需要一次 python3）
+ensure_translator() {
+  [ -x "$TRANS" ] && return 0
+  command -v python3 >/dev/null || {
+    echo "staticpy: 缺 $TRANS，且没有 python3 可起爆自举翻译器" >&2; exit 127; }
+  echo "staticpy: 起爆自举翻译器 → $TRANS" >&2
+  local tmp=${TMPDIR:-$HOME/iso_gen}/staticpy_bootstrap.static.py
+  mkdir -p "$(dirname "$tmp")"
+  cat "$ROOT"/staticpy/static_translate.static.py \
+      "$ROOT"/staticpy/parse_lib.static.py \
+      "$ROOT"/staticpy/emit_lib.static.py \
+      "$ROOT"/staticpy/emit_dump.static.py > "$tmp"
+  ( cd "$ROOT" && python3 -m kernel build "$tmp" -o "$TRANS" >/dev/null ) || exit 1
+}
+
+# 用 PYTHONPATH 指回仓库即可在**调用者 cwd** 里跑 kernel：
+# 产物落在当前目录（不再污染仓库），相对路径参数也就不用改写。
+kernel() {
+  PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -m kernel "$@"
+}
+
+# kernel 在仓库目录里跑，所以把「存在的文件路径」和 -o 的值先绝对化，
+# 这样 `staticpy build app.static.py -o hello` 在任意目录下都按调用者 cwd 解释。
+
+need_py() {
+  command -v python3 >/dev/null || {
+    echo "staticpy: 该命令需要 python3（$1）；translate 不需要" >&2; exit 127; }
+}
+
+# translate：自举翻译器要求「文件在前，--lib 在后」，这里替用户摆正
+cmd_translate() {
+  ensure_translator
+  local -a files=() flags=()
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --lib|--no-lib) flags+=("$a") ;;
+      -*)
+        # 自举 ELF 翻译器只认 --lib；其它旗标（--plugins/-p/--emit-ss…）属于内核链路，
+        # 直接拒绝——转给它只会 invalid memory reference。
+        echo "staticpy: translate 只支持 --lib（自举 ELF 无插件/拼装能力）" >&2
+        echo "staticpy: 该旗标 '$a' 请改走内核: staticpy check/build ... " >&2
+        exit 2 ;;
+      *)  files+=("$a") ;;
+    esac
+  done
+  if [ ${#files[@]} -eq 0 ]; then echo "staticpy: translate 需要输入文件" >&2; exit 2; fi
+  exec "$TRANS" "${files[@]}" "${flags[@]+"${flags[@]}"}"
+}
+
+# 无 python3 的 build：IR → .scm → 兼容入口（跳过翻译阶段）
+cmd_build_nopy() {
+  ensure_translator
+  local file="" out="" flags=()
+  local -a rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -o) out=$2; shift 2 ;;
+      --lib) flags+=(--lib); shift ;;
+      -*) flags+=("$1"); shift ;;
+      *) file=$1; shift ;;
+    esac
+  done
+  [ -n "$file" ] || { echo "staticpy: build 需要输入文件" >&2; exit 2; }
+  [ -n "$out" ] || out=$(basename "$file" .static.py)
+  local scr=${TMPDIR:-$HOME/iso_gen}/staticpy_$(basename "$out").code.scm
+  mkdir -p "$(dirname "$scr")"
+  "$TRANS" "$file" "${flags[@]+"${flags[@]}"}" > "$scr" || exit 1
+  STATICPY_OUTDIR=$KERNEL_OUT bash "$ROOT/staticpy/static_build_comfycli.sh" "$scr" "$out"
+}
+
+# build：优先 kernel（python3）；没有 python3 走无 CPython 通道
+cmd_build() {
+  if command -v python3 >/dev/null; then
+    kernel build "$@"
+  else
+    cmd_build_nopy "$@"
+  fi
+}
+
+[ $# -eq 0 ] && { usage; exit 1; }
+
+# 兼容 `python3 -m kernel <cmd> ...` 的写法：staticpy -m kernel build ... / staticpy kernel build ...
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "kernel" ]; then shift 2
+elif [ "${1:-}" = "kernel" ]; then shift
+fi
+[ $# -eq 0 ] && { usage; exit 1; }
+
+cmd=$1; shift
+case "$cmd" in
+  translate) cmd_translate "$@" ;;
+  build) cmd_build "$@" ;;
+  run)     need_py run;     kernel run "$@" ;;
+  check)   need_py check;   kernel check "$@" ;;
+  plugins) need_py plugins; kernel plugins ;;
+  --selfcheck|selfcheck)
+    need_py selfcheck
+    ( cd "$ROOT" && bash staticpy/check_translate.sh $(git -C "$ROOT" ls-files '*.static.py') ) ;;
+  -h|--help|help) usage ;;
+  *)
+    if [ -f "$cmd" ]; then cmd_translate "$cmd" "$@"; else
+      echo "staticpy: 未知命令或无此文件: $cmd" >&2; usage; exit 2
+    fi ;;
+esac
