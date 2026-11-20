@@ -278,6 +278,9 @@ def common_numeric_type(t1, t2):
 # 函数签名注册表：函数名 -> ([arg_type, ...], return_type)
 FUNCTION_SIGS = {}
 
+# 模块级函数节点：函数名 -> ast.FunctionDef（调用点补默认实参用）
+FUNC_NODES = {}
+
 # 内置函数/模块函数统一返回类型表（fname/scheme_fn -> Type）
 # 查找顺序：先 BUILTIN_FN_RETURN_TYPES，再 MODULE_FN_RETURN_TYPES
 BUILTIN_FN_RETURN_TYPES = {
@@ -520,6 +523,15 @@ IMPORTED_NAMES = {}
 # 记录已定义的 dataclass 类型名 -> 字段名 -> 字段类型
 RECORD_TYPES = {}
 RECORD_FIELDS = {}
+
+# === Python class 语法支持（方法类）=========================================
+# class C:  def __init__(self, ..): self.x = x   /  def m(self): ...
+# 翻译成：define-record-type（字段=mutable）+ 构造函数 + static_C_m 普通函数
+# 调用 obj.m(a) → (static_C_m obj a)；self.x → (C-x self)
+CLASSES = {}        # 类名 -> analyze_class() 的结果
+CURRENT_CLASS = None  # 正在翻译的方法所属类（self 的类型上下文）
+SELF_PARAMS = ("self", "cls")
+TRANS_ERRORS = []   # 翻译期的“响亮失败”记录（stderr 报告）
 
 
 # 内置模块及其函数映射（模块名 -> {函数名: Scheme 函数名})
@@ -1268,10 +1280,26 @@ def translate_compare(op, left_node, right_node):
 
 
 def translate_aug_assign(node):
-    """翻译 AugAssign (i += 1, s *= 2 等)"""
+    """翻译 AugAssign (i += 1, s *= 2, self.x += 1 等)"""
     target = mangle_name(node.target.id) if isinstance(node.target, ast.Name) else None
     if target:
         return f"(set! {target} {translate_binop(type(node.op).__name__, node.target, node.value)})"
+    # self.x += v → (Cls-x-set! self (op (Cls-x self) v))
+    if isinstance(node.target, ast.Attribute):
+        acc = try_class_attr(node.target)
+        if acc:
+            setter = try_field_set(ast.Assign(targets=[node.target],
+                                              value=node.value, lineno=getattr(node, 'lineno', 0)))
+            if setter:
+                cur = acc
+                opname = type(node.op).__name__
+                OPMAP = {"Add": "+", "Sub": "-", "Mult": "*", "Div": "/",
+                         "FloorDiv": "quotient", "Mod": "modulo"}
+                op = OPMAP.get(opname, "+")
+                recv = f"({op} {acc} {translate_expr(node.value)})"
+                # 复用 setter 的结构，替换右值
+                head, _, _ = setter.rpartition(" ")
+                return head + " " + recv + ")"
     return f"(void)"
 
 def translate_type(py_type):
@@ -1320,6 +1348,9 @@ def translate_stmt(node, bindings=None):
             return f"  {target}"
         return f"  ;; annot-assign {ast.dump(node)}"
     elif isinstance(node, ast.Assign):
+        _fset = try_field_set(node)
+        if _fset is not None:
+            return f"  {_fset}"
         targets = node.targets
         if len(targets) == 1 and isinstance(targets[0], ast.Tuple) and all(isinstance(e, ast.Name) for e in targets[0].elts):
             # a, b = expr（expr 是 Scheme vector）→ 逐元素 vector-ref
@@ -1426,6 +1457,10 @@ def translate_block(stmts):
     exprs = []
     for s in stmts:
         if isinstance(s, (ast.Assign, ast.AnnAssign)):
+            _fset = try_field_set(s)
+            if _fset is not None:
+                exprs.append(_fset)
+                continue
             target = None
             val = None
             destructure_done = False
@@ -1601,7 +1636,7 @@ def typecheck_warn(node, msg):
 def collect_record_types(tree):
     """收集模块中所有 dataclass 类型定义及其字段类型"""
     for node in tree.body:
-        if isinstance(node, ast.ClassDef) and is_dataclass_class(node):
+        if isinstance(node, ast.ClassDef) and is_dataclass_class(node) and not is_enum_class(node):
             fields = []
             field_types = {}
             for item in node.body:
@@ -1613,6 +1648,9 @@ def collect_record_types(tree):
                         field_types[fname] = ft
             RECORD_TYPES[node.name] = fields
             RECORD_FIELDS[node.name] = field_types
+        elif isinstance(node, ast.ClassDef) and not is_enum_class(node):
+            # 带方法的 class：字段来自类体标注 + __init__ 里的 self.x = ... 赋值
+            register_class(node)
 
 
 def collect_function_signatures(tree):
@@ -1624,6 +1662,7 @@ def collect_function_signatures(tree):
                 arg_types.append(parse_type(arg.annotation))
             ret_type = parse_type(node.returns)
             FUNCTION_SIGS[node.name] = (arg_types, ret_type)
+            FUNC_NODES[node.name] = node
 
 
 def is_enum_class(node):
@@ -1641,6 +1680,25 @@ def is_enum_class(node):
            for item in node.body):
         return True
     return False
+
+
+_NO_TYPE = object()
+
+
+def _isinstance_guard(test):
+    """从 if 条件中识别 isinstance(x, C)，返回 (变量名, 类名)；否则 None"""
+    if not isinstance(test, ast.Call):
+        return None
+    f = test.func
+    if not (isinstance(f, ast.Name) and f.id == "isinstance"):
+        return None
+    if len(test.args) != 2:
+        return None
+    var = test.args[0]
+    cls = test.args[1]
+    if isinstance(var, ast.Name) and isinstance(cls, ast.Name):
+        return var.id, cls.id
+    return None
 
 
 def is_dataclass_class(node):
@@ -1675,13 +1733,473 @@ def translate_enum(node):
     return "\n".join(lines)
 
 
-def translate_class(node):
-    """翻译类定义（dataclass 或 enum）"""
+# ---------------------------------------------------------------------------
+# class 语法（带方法）—— 代价最小的落地方案：
+#   字段  → define-record-type 的 mutable 字段（self.x 可读写）
+#   方法  → 普通的 static_<Cls>_<method>(self, ...) 函数（零运行时开销）
+#   __init__ → static_<Cls>___init__(self, ...) 就地填字段并返回 self
+#   构造  → static_<Cls>(...) = make-Cls 后填字段（平凡 __init__ 直接 make-Cls）
+#   调用  → obj.m(a) → (static_<Cls>_m obj a)；Cls.sm(a) → (static_<Cls>_sm a)
+# ---------------------------------------------------------------------------
+
+def _decorator_names(fn):
+    out = []
+    for d in fn.decorator_list:
+        if isinstance(d, ast.Name):
+            out.append(d.id)
+        elif isinstance(d, ast.Attribute):
+            out.append(d.attr)
+    return out
+
+
+def _self_assign_target(stmt):
+    """若语句是 self.x = ... / self.x: T = ...，返回字段名"""
+    if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Attribute):
+        t = stmt.target
+        if isinstance(t.value, ast.Name) and t.value.id in SELF_PARAMS:
+            return t.attr
+    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+        t = stmt.targets[0]
+        if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id in SELF_PARAMS:
+            return t.attr
+    return None
+
+
+def analyze_class(node):
+    """收集类信息：字段（含 __init__ 中 self.x 赋值）、方法、属性种类、基类"""
+    info = {
+        "name": node.name,
+        "fields": [],          # 有序字段名
+        "field_types": {},
+        "methods": {},         # 实例方法
+        "classmethods": {},    # @classmethod
+        "staticmethods": {},   # @staticmethod
+        "mutable": set(),      # 需要 setter 的字段
+        "init": None,
+        "base": None,
+    }
+    seen = {}
+
+    def add_field(fname, ftype=None):
+        if fname not in seen:
+            seen[fname] = len(info["fields"])
+            info["fields"].append(fname)
+        if ftype:
+            info["field_types"].setdefault(fname, ftype)
+
+    for item in node.body:
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            add_field(item.target.id, parse_type(item))
+        elif isinstance(item, ast.FunctionDef):
+            decos = _decorator_names(item)
+            if item.name == "__init__":
+                info["init"] = item
+                for st in item.body:
+                    f = _self_assign_target(st)
+                    if f:
+                        add_field(f)
+            elif "classmethod" in decos:
+                info["classmethods"][item.name] = item
+            elif "staticmethod" in decos:
+                info["staticmethods"][item.name] = item
+            else:
+                info["methods"][item.name] = item
+                # 非 __init__ 里对 self.x 的写入 → 字段可变
+                for sub in ast.walk(item):
+                    if isinstance(sub, ast.Assign):
+                        for t in sub.targets:
+                            if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) \
+                               and t.value.id in SELF_PARAMS:
+                                info["mutable"].add(t.attr)
+                    elif isinstance(sub, ast.AugAssign) and isinstance(sub.target, ast.Attribute) \
+                            and isinstance(sub.target.value, ast.Name) and sub.target.value.id in SELF_PARAMS:
+                        info["mutable"].add(sub.target.attr)
+    # 基类（单继承）
+    for b in node.bases:
+        if isinstance(b, ast.Name):
+            info["base"] = b.id
+            break
+    # 字段一律可变：__init__ 在 make- 之后填值，方法里也可能 self.x = ...
+    info["mutable"] = set(info["fields"])
+    return info
+
+
+def all_fields(cls):
+    """含继承链的完整字段表（父类字段在前，记录构造顺序即此顺序）"""
+    info = CLASSES.get(cls)
+    if not info:
+        return []
+    base = info.get("base")
+    return (all_fields(base) if base in CLASSES else []) + list(info["fields"])
+
+
+def finalize_class(info):
+    """补齐继承后的完整字段表与构造策略"""
+    cls = info["name"]
+    inherited = all_fields(info.get("base")) if info.get("base") in CLASSES else []
+    info["ctor_fields"] = inherited + list(info["fields"])
+    info["ctor"] = "make" if (info["init"] is None or _is_trivial_init(info)) else "static"
+    return info
+
+
+def register_class(node):
+    """登记类：analyze → finalize → 写入 CLASSES / RECORD_TYPES / RECORD_FIELDS"""
+    info = analyze_class(node)
+    CLASSES[node.name] = info
+    finalize_class(info)
+    RECORD_TYPES[node.name] = list(info["ctor_fields"])
+    RECORD_FIELDS[node.name] = dict(info["field_types"])
+    return info
+
+
+def _lookup_member(cls, name, kind="methods"):
+    """沿单继承链查找方法/字段；返回 (owner_class, node)"""
+    cur = cls
+    seen = set()
+    while cur and cur not in seen:
+        seen.add(cur)
+        info = CLASSES.get(cur)
+        if not info:
+            return None
+        if name in info.get(kind, {}):
+            return cur, info[kind][name]
+        if kind == "fields" and name in info["fields"]:
+            return cur, name
+        cur = info.get("base")
+    return None
+
+
+def cls_field_index(cls, field):
+    """字段在记录中的位置（含继承链），找不到返回 None"""
+    cur = cls
+    seen = set()
+    while cur and cur not in seen:
+        seen.add(cur)
+        info = CLASSES.get(cur)
+        if not info:
+            return None
+        if field in info["fields"]:
+            return field
+        cur = info.get("base")
+    return None
+
+
+def _is_trivial_init(info):
+    """__init__ 是否等价于 (make-Cls 参数...) —— 位置/名字一一对应"""
+    init = info["init"]
+    if init is None:
+        return False
+    inherited = all_fields(info.get("base")) if info.get("base") in CLASSES else []
+    ctor_fields = inherited + list(info["fields"])
+    params = [a.arg for a in init.args.args]
+    if params and params[0] in SELF_PARAMS:
+        params = params[1:]          # 去掉 self
+    defaults = getattr(init.args, "defaults", []) or []
+    if defaults or init.args.vararg or init.args.kwarg or init.args.kwonlyargs:
+        return False
+    if len(params) != len(ctor_fields):
+        return False
+    stmts = [s for s in init.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+    if len(stmts) != len(ctor_fields):
+        return False
+    for st, fname, pname in zip(stmts, ctor_fields, params):
+        if _self_assign_target(st) != fname:
+            return False
+        rhs = st.value
+        if not (isinstance(rhs, ast.Name) and rhs.id == pname):
+            return False
+    return True
+
+
+def translate_method(node, cls, kind, source_file=""):
+    """翻译类中的方法为 static_<Cls>_<name> 函数"""
+    return translate_function(node, source_file, method_class=cls, method_kind=kind)
+
+
+def translate_class_methods(node, source_file=""):
+    """翻译带方法的 class：record-type + 构造函数 + 方法函数"""
+    global CURRENT_CLASS
+    info = register_class(node)
+    name = node.name
+    fields = info["fields"]
+    base = info["base"] if info["base"] in CLASSES else None
+    lines = [f";; class {name}" + (f"({info['base']})" if info["base"] else "")]
+
+    parent = f"(parent {base}) " if base else ""
+    if fields:
+        specs = " ".join(f"({'mutable' if f in info['mutable'] else 'immutable'} {f})" for f in fields)
+        lines.append(f"(define-record-type {name}")
+        lines.append(f"  {parent}(fields {specs}))")
+    else:
+        lines.append(f'(define-record-type {name} {parent}(fields))')
+
+    # __init__：就地填字段，返回 self（供子类 super().__init__() 复用）
+    init = info["init"]
+    if init is not None:
+        saved = CURRENT_CLASS
+        CURRENT_CLASS = name
+        body_lines = []
+        for st in init.body:
+            f = _self_assign_target(st)
+            if f is not None and (st.value is not None):
+                if f in fields:
+                    body_lines.append(f"  ({name}-{f}-set! self {translate_expr(st.value)})")
+                else:
+                    TRANSL_ERRORS.append(
+                        f"{source_file}:{getattr(st, 'lineno', 0)} class {name}.__init__: "
+                        f"字段 {f} 未声明（在 __init__ 中先赋值即可自动登记）")
+            else:
+                body_lines.append("  " + translate_stmt(st))
+        CURRENT_CLASS = saved
+        params = [mangle_name(a.arg) for a in init.args.args]
+        lines.append(f"(define (static_{name}___init__ {' '.join(params)})")
+        lines.append("\n".join(body_lines))
+        lines.append("  self)")
+
+    # 构造函数
+    if init is not None and not _is_trivial_init(info):
+        params = [mangle_name(a.arg) for a in init.args.args][1:]
+        call = f"(static_{name}___init__ __m {' '.join(params)})" if params else f"(static_{name}___init__ __m)"
+        blanks = " ".join("#f" for _ in info["ctor_fields"])
+        make_call = f"(make-{name} {blanks})" if blanks else f"(make-{name})"
+        lines.append(f"(define (static_{name} {' '.join(params)})")
+        lines.append(f"  (let ((__m {make_call}))")
+        lines.append(f"    {call}))")
+
+    # 普通方法
+    for mname, mnode in info["methods"].items():
+        lines.append(translate_method(mnode, name, "method", source_file))
+    for mname, mnode in info["classmethods"].items():
+        lines.append(translate_method(mnode, name, "classmethod", source_file))
+    for mname, mnode in info["staticmethods"].items():
+        lines.append(translate_method(mnode, name, "staticmethod", source_file))
+    return "\n".join(lines)
+
+
+def translate_class(node, source_file=""):
+    """翻译类定义（enum / dataclass / 带方法的 class）"""
     if is_enum_class(node):
         return translate_enum(node)
     if is_dataclass_class(node):
         return translate_dataclass(node)
-    return f";; unsupported class {node.name}"
+    return translate_class_methods(node, source_file)
+
+
+# --- class 成员解析（self.x / obj.m() / Cls.m()）---------------------------
+
+def resolve_expr_class(expr, depth=0):
+    """推断表达式的所属类名（CLASSES 中的键）；推断不出返回 None"""
+    if depth > 6 or expr is None:
+        return None
+    if isinstance(expr, ast.Name):
+        if expr.id in SELF_PARAMS:
+            return CURRENT_CLASS
+        t = TYPE_ENV.get(expr.id) or TYPE_ENV.get(mangle_name(expr.id))
+        if isinstance(t, str) and t in CLASSES:
+            return t
+        return None
+    if isinstance(expr, ast.Call):
+        f = expr.func
+        if isinstance(f, ast.Name) and f.id in CLASSES:
+            info = CLASSES[f.id]
+            if info.get("ctor") == "static" or info.get("init") is not None:
+                return f.id
+            return f.id
+        if isinstance(f, ast.Attribute):
+            owner = resolve_expr_class(f.value, depth + 1)
+            if owner:
+                hit = _lookup_member(owner, f.attr, "classmethods") or _lookup_member(owner, f.attr, "methods")
+                if hit:
+                    ret = parse_type(hit[1].returns) if hit[1].returns is not None else None
+                    if isinstance(ret, str) and ret in CLASSES:
+                        return ret
+            return None
+        ret = infer_expr_type(expr)
+        if isinstance(ret, str) and ret in CLASSES:
+            return ret
+        if isinstance(f, ast.Name):
+            sig = FUNCTION_SIGS.get(f.id)
+            if sig:
+                rt = sig[1]
+                if isinstance(rt, str) and rt in CLASSES:
+                    return rt
+        return None
+    if isinstance(expr, ast.Attribute):
+        # 链式属性：只有字段类型标注是类时才继续
+        owner = resolve_expr_class(expr.value, depth + 1)
+        if owner:
+            ft = RECORD_FIELDS.get(owner, {}).get(expr.attr)
+            if isinstance(ft, str) and ft in CLASSES:
+                return ft
+        return None
+    return None
+
+
+def _fill_defaults(fn, call_args, skip=0):
+    """调用点补默认实参，让静态 define 的元数永远对得上
+
+    - 形参写了默认值 → 用定义处的默认表达式填上
+    - 形参没写默认值 → 直接填 nil（本运行时里 None 就是 #f）
+
+    skip = 定义里前导的、未出现在 call_args 中的形参个数（self / cls）。
+    Chez 的 define 不吃 #!optional，所以缺参一律在调用点补齐。
+    """
+    a = getattr(fn, "args", None) if fn is not None else None
+    if a is None or a.vararg or a.kwarg:
+        return call_args
+    params = list(a.args)[skip:]
+    nargs = len(call_args)
+    if nargs >= len(params):
+        return call_args                       # 不缺（多给的交给类型检查报错）
+    defaults = list(getattr(a, "defaults", []) or [])
+    first_default = len(params) - len(defaults)  # 有默认值的第一个形参下标
+    filled = list(call_args)
+    for i in range(nargs, len(params)):
+        if i >= first_default:
+            filled.append(translate_expr(defaults[i - first_default]))
+        else:
+            filled.append("#f")                 # 没有默认值 → nil
+    return filled
+
+
+def _member_hit(cls, attr):
+    """在继承链上找方法，返回 (kind, owner, node)"""
+    for kind in ("methods", "classmethods", "staticmethods"):
+        hit = _lookup_member(cls, attr, kind)
+        if hit:
+            return kind[:-1], hit[0], hit[1]
+    return None
+
+
+def _field_owner(cls, attr):
+    cur, seen = cls, set()
+    while cur and cur not in seen and cur in CLASSES:
+        seen.add(cur)
+        if attr in CLASSES[cur]["fields"]:
+            return cur
+        cur = CLASSES[cur].get("base")
+    return None
+
+
+def try_class_call(node, args):
+    """obj.m(..) / Cls.m(..) / self.m(..) / super().__init__(..) → 直接函数调用"""
+    func = node.func
+    if not isinstance(func, ast.Attribute):
+        return None
+    attr = func.attr
+    recv = func.value
+    extra = [translate_expr(k.value) for k in node.keywords if k.arg is not None]
+    allargs = args + extra
+
+    # super().__init__(...) → 基类的 __init__ 就地初始化
+    if isinstance(recv, ast.Call) and isinstance(recv.func, ast.Name) and recv.func.id == "super":
+        base = CLASSES.get(CURRENT_CLASS or "", {}).get("base") if CURRENT_CLASS else None
+        if base and base in CLASSES:
+            allargs = _fill_defaults(CLASSES[base].get("init"), allargs, skip=1)
+            return f"(static_{base}___init__ self {' '.join(allargs)})".replace(" )", ")")
+        return None
+
+    # 类名调用：Cls.sm(..) / Cls.cm(..)
+    if isinstance(recv, ast.Name) and recv.id in CLASSES:
+        hit = _member_hit(recv.id, attr)
+        if hit:
+            kind, owner, mnode = hit
+            fargs = _fill_defaults(mnode, allargs, skip=0 if kind == "staticmethod" else 1)
+            return f"(static_{owner}_{attr} {' '.join(fargs)})".replace(" )", ")")
+        fld = _field_owner(recv.id, attr)
+        if fld:
+            TRANSL_ERRORS.append(f"第 {getattr(node, 'lineno', 0)} 行: {recv.id}.{attr} 是字段不是方法")
+        return None
+
+    # 实例调用：先按接收者推断类
+    cls = resolve_expr_class(recv)
+    if cls:
+        hit = _member_hit(cls, attr)
+        if hit:
+            kind, owner, mnode = hit
+            if kind in ("staticmethod", "classmethod"):
+                call_args = _fill_defaults(mnode, allargs, skip=0 if kind == "staticmethod" else 1)
+            else:
+                call_args = [translate_expr(recv)] + _fill_defaults(mnode, allargs, skip=1)
+            return f"(static_{owner}_{attr} {' '.join(call_args)})".replace(" )", ")")
+        fld = _field_owner(cls, attr)
+        if fld and not _lookup_member(cls, attr, "methods"):
+            TRANSL_ERRORS.append(
+                f"第 {getattr(node, 'lineno', 0)} 行: '{attr}' 是 {cls} 的字段，"
+                f"不是方法（若是内建方法如 str.split，请标注接收者的 Python 类型）")
+        return None
+    return None
+
+
+def try_list_method(node, args):
+    """list.append(x) -> 不可变列表模型下的重新赋值"""
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr != "append" or len(args) != 1:
+        return None
+    recv = func.value
+    # lst.append(x) -> (set! lst (py-list-append lst x))
+    if isinstance(recv, ast.Name) and recv.id not in CLASSES and resolve_expr_class(recv) is None:
+        return f"(set! {mangle_name(recv.id)} (py-list-append {mangle_name(recv.id)} {args[0]}))"
+    # self.f.append(x) / obj.f.append(x) -> 字段 setter
+    if isinstance(recv, ast.Attribute):
+        acc = try_class_attr(recv)
+        if acc:
+            setter = try_field_set(ast.Assign(targets=[recv], value=node.args[0],
+                                              lineno=getattr(node, 'lineno', 0)))
+            if setter:
+                head, _, _ = setter.rpartition(" ")
+                return head + f" (py-list-append {acc} {args[0]}))"
+    return None
+
+
+def try_class_attr(node):
+    """self.x / 已知实例.x / 方法引用 → 记录访问器或函数名"""
+    attr = node.attr
+    recv = node.value
+    if isinstance(recv, ast.Name) and recv.id in SELF_PARAMS and CURRENT_CLASS:
+        fld = _field_owner(CURRENT_CLASS, attr)
+        if fld:
+            return f"({fld}-{attr} {mangle_name(recv.id)})"
+        hit = _member_hit(CURRENT_CLASS, attr)
+        if hit:
+            return f"static_{hit[1]}_{attr}"
+        return None
+    if isinstance(recv, ast.Name) and recv.id in CLASSES:
+        hit = _member_hit(recv.id, attr)
+        if hit:
+            return f"static_{hit[1]}_{attr}"
+        return None
+    cls = resolve_expr_class(recv)
+    if cls:
+        fld = _field_owner(cls, attr)
+        if fld:
+            return f"({fld}-{attr} {translate_expr(recv)})"
+        hit = _member_hit(cls, attr)
+        if hit:
+            return f"static_{hit[1]}_{attr}"
+    return None
+
+
+def try_field_set(node_stmt):
+    """self.x = v → (Cls-x-set! self v)；返回 Scheme 或 None"""
+    if not (isinstance(node_stmt, (ast.Assign, ast.AnnAssign)) and node_stmt.value is not None):
+        return None
+    targets = node_stmt.targets if isinstance(node_stmt, ast.Assign) else [node_stmt.target]
+    if len(targets) != 1:
+        return None
+    t = targets[0]
+    if isinstance(t, ast.Attribute):
+        if isinstance(t.value, ast.Name) and t.value.id in SELF_PARAMS and CURRENT_CLASS:
+            owner = _field_owner(CURRENT_CLASS, t.attr)
+            if owner:
+                return f"({owner}-{t.attr}-set! {mangle_name(t.value.id)} {translate_expr(node_stmt.value)})"
+            return None
+        cls = resolve_expr_class(t.value)
+        if cls:
+            owner = _field_owner(cls, t.attr)
+            if owner:
+                return f"({owner}-{t.attr}-set! {translate_expr(t.value)} {translate_expr(node_stmt.value)})"
+    return None
 
 
 def typecheck_function(node, function_arities, module_env=None):
@@ -1780,7 +2298,10 @@ def typecheck_function(node, function_arities, module_env=None):
                     ft = RECORD_FIELDS[vtype.base].get(expr.attr)
                     if ft:
                         return ft
-                    typecheck_error(expr, f"record '{vtype.base}' has no field '{expr.attr}'")
+                    # 零字段基类（如 class IRExpr: pass）是鸭子类型的标记类，
+                    # 实际对象是子类，字段未知 → 不下结论，返回 None
+                    if RECORD_FIELDS[vtype.base]:
+                        typecheck_error(expr, f"record '{vtype.base}' has no field '{expr.attr}'")
             # module.attr：返回未知类型
             return None
         if isinstance(expr, ast.UnaryOp):
@@ -1854,7 +2375,23 @@ def typecheck_function(node, function_arities, module_env=None):
         if isinstance(func, ast.Name):
             fname = func.id
             # 构造函数
-            if fname in RECORD_FIELDS:
+            if fname in RECORD_FIELDS or fname in CLASSES:
+                _info = CLASSES.get(fname)
+                if _info is not None:
+                    # 带 __init__ 的普通 class：按 __init__ 形参个数校验（含默认值区间）
+                    init = _info.get("init")
+                    nargs = len(arg_types)
+                    if init is not None:
+                        nparams = len(init.args.args) - (1 if init.args.args and init.args.args[0].arg in SELF_PARAMS else 0)
+                        ndef = len(getattr(init.args, "defaults", []) or [])
+                        if init.args.vararg or init.args.kwarg:
+                            nparams = None
+                        # 缺参在调用点补 nil，只在实参过多时报错
+                        if nparams is not None and nargs > nparams:
+                            typecheck_error(expr, f"'{fname}' expects {nparams} args, got {nargs}")
+                    elif nargs != len(_info["fields"]):
+                        typecheck_error(expr, f"'{fname}' expects {len(_info['fields'])} fields, got {nargs}")
+                    return Type(fname)
                 fields = RECORD_FIELDS[fname]
                 expected_types = list(fields.values())
                 if len(arg_types) != len(expected_types):
@@ -1866,7 +2403,10 @@ def typecheck_function(node, function_arities, module_env=None):
             # 用户函数签名检查
             if fname in FUNCTION_SIGS:
                 expected_types, fret = FUNCTION_SIGS[fname]
-                if len(arg_types) != len(expected_types):
+                _fn = FUNC_NODES.get(fname)
+                _has_var = bool(_fn is not None and (_fn.args.vararg or _fn.args.kwarg))
+                # 缺参在调用点补 nil，只在实参过多时报错
+                if not _has_var and len(arg_types) > len(expected_types):
                     typecheck_error(expr, f"'{fname}' expects {len(expected_types)} args, got {len(arg_types)}")
                 for i, (at, et) in enumerate(zip(arg_types, expected_types)):
                     if at and et and not is_subtype(at, et):
@@ -1993,6 +2533,21 @@ def typecheck_function(node, function_arities, module_env=None):
             cond_t = check_expr(stmt.test)
             if cond_t and cond_t.base != "bool":
                 typecheck_error(stmt, f"if condition must be bool, got '{cond_t}'")
+            # isinstance 收窄：if isinstance(x, C): ... 体内 x 的类型为 C
+            guard = _isinstance_guard(stmt.test)
+            if guard and (guard[1] in CLASSES or guard[1] in RECORD_TYPES):
+                var, cls = guard
+                saved = env.get(var, _NO_TYPE)
+                env[var] = Type(cls)
+                for s in stmt.body:
+                    check_stmt(s)
+                if saved is _NO_TYPE:
+                    env.pop(var, None)
+                else:
+                    env[var] = saved
+                for s in stmt.orelse:
+                    check_stmt(s)
+                return
             for s in stmt.body:
                 check_stmt(s)
             for s in stmt.orelse:
@@ -2338,6 +2893,13 @@ def translate_expr(node):
     elif isinstance(node, ast.Call):
         func = node.func
         args = [translate_expr(a) for a in node.args]
+        if isinstance(func, ast.Attribute):
+            _mcall = try_class_call(node, args)
+            if _mcall:
+                return _mcall
+            _lcall = try_list_method(node, args)
+            if _lcall:
+                return _lcall
         if isinstance(func, ast.Name):
             name = func.id
             # Option/Result/Some constructors
@@ -2350,6 +2912,17 @@ def translate_expr(node):
                 return "(None)"
             # Dataclass constructors: Point(1.0, 2.0) -> (make-Point 1.0 2.0)
             if name in RECORD_TYPES:
+                # 带 __init__ 的普通 class：走构造函数（__init__ 可能有计算/默认值）
+                _info = CLASSES.get(name)
+                if _info and _info.get("ctor") == "static":
+                    args = _fill_defaults(_info.get("init"), args, skip=1)
+                    return f"(static_{name} {' '.join(args)})".replace(" )", ")")
+                # trivial __init__：直接 record 构造，缺的形参按默认值/nil 补齐
+                if _info and _info.get("init") is not None:
+                    args = _fill_defaults(_info.get("init"), args, skip=1)
+                _nfields = len(_info.get("ctor_fields", []) if _info else RECORD_TYPES[name])
+                while len(args) < _nfields:
+                    args = args + ["#f"]        # 没有默认值 → nil
                 return f"(make-{name} {' '.join(args)})"
             # 处理 from ... import 导入的裸函数名
             module, scheme_fn = resolve_imported_name(name)
@@ -2421,8 +2994,8 @@ def translate_expr(node):
             # 当前作用域的参数也可能是函数值
             if name in CURRENT_PARAMS:
                 return f"({mangle_name(name)} {' '.join(args)})"
-            # 用户自定义函数加 static_ 前缀
-            return f"(static_{name} {' '.join(args)})"
+            # 用户自定义函数加 static_ 前缀（默认实参在调用点补齐）
+            return f"(static_{name} {' '.join(_fill_defaults(FUNC_NODES.get(name), args))})"
         elif isinstance(func, ast.Attribute):
             # np.dot / torch.matmul / la.svd 等
             obj = None
@@ -2772,6 +3345,10 @@ def translate_expr(node):
             return f"(slice-string {value} {idx} (fx+ {idx} 1))"
         return f"(vector-ref {value} {idx})"
     elif isinstance(node, ast.Attribute):
+        # class 成员（self.x / 已知实例.x / 方法引用）
+        _cattr = try_class_attr(node)
+        if _cattr:
+            return _cattr
         # torch.float32 / torch.bfloat16 等 dtype 常量 → dtype 码
         if isinstance(node.value, ast.Name) and is_module_alias(node.value.id) and node.attr in TORCH_DTYPE_CONST:
             return str(TORCH_DTYPE_CONST[node.attr])
@@ -2797,6 +3374,10 @@ def translate_expr(node):
         # 记录字段访问：p.x -> (Point-x p)，若知道 p 的类型
         if isinstance(node.value, ast.Name):
             vtype = TYPE_ENV.get(node.value.id)
+            if vtype in CLASSES:
+                _owner = _field_owner(vtype, node.attr)
+                if _owner:
+                    return f"({_owner}-{node.attr} {mangle_name(node.value.id)})"
             if vtype in RECORD_TYPES and node.attr in RECORD_TYPES[vtype]:
                 return f"({vtype}-{node.attr} {node.value.id})"
         value = translate_expr(node.value)
@@ -2851,11 +3432,18 @@ def translate_expr(node):
         return f"(void)"
 
 
-def translate_function(node, source_file=""):
-    """翻译函数定义"""
-    global TYPE_ENV
+def translate_function(node, source_file="", method_class=None, method_kind="function"):
+    """翻译函数定义
+
+    method_class 非空时按“类的方法”翻译：
+      - 函数名 static_<Cls>_<name>
+      - method_kind = method：保留 self 形参（记录对象作为第一参数）
+      - method_kind = classmethod/staticmethod：去掉 self/cls 形参
+    """
+    global TYPE_ENV, CURRENT_CLASS
     # 每个函数独立的类型环境，避免嵌套函数污染
     saved_env = TYPE_ENV.copy()
+    saved_class = CURRENT_CLASS
     collect_function_types(node)
 
     # 张量变量作用域：预扫描本函数赋值，供二元运算路由
@@ -2866,8 +3454,19 @@ def translate_function(node, source_file=""):
     saved_params = CURRENT_PARAMS
     CURRENT_PARAMS = CURRENT_PARAMS | {arg.arg for arg in node.args.args}
 
-    name = f"static_{node.name}"
-    args = [mangle_name(arg.arg) for arg in node.args.args]
+    if method_class:
+        name = f"static_{method_class}_{node.name}"
+        CURRENT_CLASS = method_class
+        fn_args = [a.arg for a in node.args.args]
+        if method_kind in ("classmethod", "staticmethod") and fn_args and fn_args[0] in SELF_PARAMS:
+            fn_args = fn_args[1:]
+        args = [mangle_name(a) for a in fn_args]
+        # 方法体内的 self 指向记录对象；记下字段访问的类上下文
+        info = CLASSES.get(method_class) or {}
+        TYPE_ENV[mangle_name("self")] = method_class
+    else:
+        name = f"static_{node.name}"
+        args = [mangle_name(arg.arg) for arg in node.args.args]
 
     # 收集本层局部定义的函数名，供返回/引用时加前缀
     LOCAL_FUNCTIONS = {stmt.name for stmt in node.body if isinstance(stmt, ast.FunctionDef)}
@@ -2894,6 +3493,11 @@ def translate_function(node, source_file=""):
         elif isinstance(stmt, ast.AugAssign):
             body_exprs.append(translate_aug_assign(stmt))
         elif isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            _fset = try_field_set(stmt)
+            if _fset is not None:
+                body_exprs.append(_fset)
+                si += 1
+                continue
             target = None
             val = None
             if isinstance(stmt, ast.AnnAssign):
@@ -3082,6 +3686,7 @@ def translate_function(node, source_file=""):
     
     # 恢复外层类型环境
     TYPE_ENV = saved_env
+    CURRENT_CLASS = saved_class
     CURRENT_TENSOR_VARS = saved_tensor_vars
     CURRENT_PARAMS = saved_params
     func_ann = debug_annotation(node, source_file)
@@ -3213,6 +3818,7 @@ def _run_pipeline(input_files, plugin_arg=""):
     RECORD_TYPES = {}
     RECORD_FIELDS = {}
     FUNCTION_SIGS = {}
+    FUNC_NODES = {}
     TYPE_WARNINGS = []
     
     # 加载插件：语法扩展 / 运行时表 / C 库封装
