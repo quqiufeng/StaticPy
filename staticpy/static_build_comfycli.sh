@@ -204,6 +204,56 @@ PYEOF
 
     # --- Step 3: 独立 ELF -------------------------------------------------
     echo ">>> Step 3: Link standalone ELF"
+    # 默认走共享运行时：ELF 只留十几 KB，Chez 内核 + boot 字节都在 dist/libstaticpyrt.so
+    # STATICPY_STATIC_RT=1 回到「每个 ELF 各自内嵌一份 4.2MB」的老行为
+    RT_SO=""
+    if [ -z "${STATICPY_STATIC_RT:-}" ] && [ "${STATICPY_SHARED_RT:-1}" != "0" ]; then
+        RT_SO="$(cd "$PROJECT_DIR" && "$PYTHON" - <<'PYEOF' 2>/dev/null
+import sys
+from kernel.toolchain import runtime_so
+try:
+    print(runtime_so(quiet=True))
+except Exception:
+    print("")
+PYEOF
+)"
+    fi
+
+    if [ -n "$RT_SO" ] && [ -f "$RT_SO" ]; then
+        STUB_C="$CACHE_DIR/stub_${BUILD_HASH}.c"
+        cat > "$STUB_C" << 'CCODE'
+#include <stdio.h>
+#include <string.h>
+
+/* 由 libstaticpyrt.so 提供：初始化 Chez（全进程一次）+ 载入 prog_path */
+extern int staticpy_run(const char *prog_path, int argc, char **argv);
+
+int main(int argc, char **argv) {
+    /* stem 编译期烘死：ELF 可被改名（打包成 app），同名 .so 不变 */
+    const char *stem = "CSTEM";
+    static char prog_path[2048];
+    const char *slash = NULL;
+    if (argc >= 1 && argv[0]) slash = strrchr(argv[0], '/');
+    if (slash && (size_t)(slash - argv[0]) + 1 < sizeof prog_path) {
+        size_t n = (size_t)(slash - argv[0]) + 1;
+        memcpy(prog_path, argv[0], n);
+        prog_path[n] = 0;
+        snprintf(prog_path + n, sizeof prog_path - n, "%s.so", stem);
+    } else {
+        snprintf(prog_path, sizeof prog_path, "%s.so", stem);
+    }
+    return staticpy_run(prog_path, argc, argv);
+}
+CCODE
+        STUB_FIXED="${STUB_C%.c}_fixed.c"
+        sed "s|CSTEM|$STEM_BASE|g" "$STUB_C" > "$STUB_FIXED"
+        RT_DIR="$(dirname "$RT_SO")"
+        gcc -O2 -o "$CACHED_ELF" "$STUB_FIXED" -L"$RT_DIR" -lstaticpyrt \
+            -Wl,-rpath,"\$ORIGIN:\$ORIGIN/lib:$RT_DIR:/usr/local/lib"
+        echo "  -> built (hash ${BUILD_HASH:0:12})  [shared rt: $(basename "$RT_SO")]"
+        prune_cache
+    else
+    # --- 静态内嵌后备路径（无内核源码 / 显式 STATICPY_STATIC_RT=1）---
     BOOT_HASH="$(md5sum "$SCHEME_BOOT_DIR/petite.boot" "$SCHEME_BOOT_DIR/scheme.boot" | md5sum | cut -d' ' -f1)"
     BOOT_DIR="$CACHE_DIR/boot_${BOOT_HASH:0:12}"
     if [ ! -f "$BOOT_DIR/.stamp" ]; then
@@ -285,6 +335,7 @@ CCODE
 
     echo "  -> built (hash ${BUILD_HASH:0:12})"
     prune_cache
+    fi
 fi
 
 # --- Step 4: 发布到输出目录 ------------------------------------------------
