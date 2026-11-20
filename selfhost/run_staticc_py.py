@@ -15,6 +15,7 @@ staticc.file_read_all = lambda f: f.read()
 staticc.file_close = lambda f: f.close()
 staticc.file_write = lambda f, s: f.write(s)
 staticc.dict_get_or_empty = lambda d, k: d.get(k, "")
+staticc.exit_program = lambda code: sys.exit(code)
 
 if __name__ == "__main__":
     sys.exit(staticc.main())

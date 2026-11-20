@@ -233,6 +233,12 @@ class ECall(IRExpr):
         self.args = args
 
 
+class ELambda(IRExpr):
+    def __init__(self, params, body):
+        self.params = params
+        self.body = body
+
+
 class IRStmt:
     pass
 
@@ -363,7 +369,11 @@ def func_params_to_str(params: list):
 
 
 def known_type(ty):
-    return ty == "int" or ty == "float" or ty == "str" or ty == "bool" or ty == "any" or ty == "tuple" or ty == "ptr"
+    return ty == "int" or ty == "float" or ty == "str" or ty == "bool" or ty == "any" or ty == "tuple" or ty == "ptr" or ty == "list"
+
+
+def is_reserved(tok):
+    return tok == "end" or tok == "else" or tok == "def" or tok == "let" or tok == "set" or tok == "return" or tok == "if" or tok == "while" or tok == "for"
 
 
 def check_type(ty, what):
@@ -401,12 +411,15 @@ def parse_expr_at(tokens: str, pos: int, tok: str) -> Tuple:
                     args = list_append(args, arg)
             result = (ECall(name, args), pos)
         else:
-            if op == "not":
+            if op == "lambda":
+                result = parse_lambda(tokens, pos)
+            else:
+             if op == "not":
                 operand, pos = parse_expr(tokens, pos)
                 rparen, pos = next_token(tokens, pos)
                 expect_close(rparen, "not")
                 result = (EUnary("not", operand), pos)
-            else:
+             else:
                 left, pos = parse_expr(tokens, pos)
                 right, pos = parse_expr(tokens, pos)
                 rparen, pos = next_token(tokens, pos)
@@ -482,9 +495,64 @@ def parse_stmt(tokens: str, pos: int) -> Tuple:
                             end_tok, pos = next_token(tokens, pos)
                             result = (SFor(var, stop, body), pos)
                         else:
-                            value, pos = parse_expr_at(tokens, pos, tok)
-                            result = (SExpr(value), pos)
+                            if tok == "def":
+                                result = parse_stmt_def(tokens, pos)
+                            else:
+                                value, pos = parse_expr_at(tokens, pos, tok)
+                                result = (SExpr(value), pos)
     return result[0], result[1]
+
+
+def parse_lambda(tokens: str, pos: int):
+    lparen, pos = next_token(tokens, pos)
+    if lparen != "(":
+        parse_fail("expected '(' to open lambda parameter list, found '" + lparen + "'")
+    params, pos = parse_lambda_params(tokens, pos, [])
+    body, pos = parse_lambda_body(tokens, pos, [])
+    return ELambda(params, body), pos
+
+
+def parse_lambda_params(tokens: str, pos: int, acc: list):
+    tok, pos2 = next_token(tokens, pos)
+    if tok == ")":
+        return acc, pos2
+    if tok == "":
+        parse_fail("unexpected end of input in lambda parameter list")
+    if known_type(tok) or is_reserved(tok):
+        parse_fail("lambda parameter expected, found '" + tok + "'")
+    return parse_lambda_params(tokens, pos2, list_append(acc, tok))
+
+
+def parse_lambda_body(tokens: str, pos: int, acc: list):
+    tok, pos2 = next_token(tokens, pos)
+    if tok == ")":
+        return acc, pos2
+    if tok == "":
+        parse_fail("unexpected end of input: missing ')' to close lambda")
+    stmt, pos = parse_stmt(tokens, pos)
+    if isinstance(stmt, SReturn):
+        parse_fail("return is not allowed inside lambda (its body is an expression)")
+    return parse_lambda_body(tokens, pos, list_append(acc, stmt))
+
+
+def parse_stmt_def(tokens: str, pos: int):
+    name, pos = next_token(tokens, pos)
+    lparen, pos = next_token(tokens, pos)
+    if name == "" or is_reserved(name):
+        parse_fail("function name expected after 'def'")
+    if lparen != "(":
+        parse_fail("expected '(' after function name " + name + ", found '" + lparen + "'")
+    params, param_types, pos = parse_params(tokens, pos)
+    arrow, pos = next_token(tokens, pos)
+    if arrow != "->":
+        parse_fail("expected '->' after parameter list of " + name + ", found '" + arrow + "'")
+    ret, pos = next_token(tokens, pos)
+    check_type(ret, "return type of " + name)
+    body, pos = parse_stmts(tokens, pos)
+    end_tok, pos = next_token(tokens, pos)
+    if end_tok != "end":
+        parse_fail("expected 'end' to close nested 'def' " + name + ", found '" + end_tok + "'")
+    return SLet(name, ret, ELambda(params, body)), pos
 
 
 def parse_params(tokens: str, pos: int) -> Tuple:
@@ -597,7 +665,7 @@ def expr_type(expr, env):
                 lt = expr_type(expr.left, env)
                 rt = expr_type(expr.right, env)
                 op = expr.op
-                if op == "+" or op == "-" or op == "*" or op == "/":
+                if op == "+" or op == "-" or op == "*" or op == "/" or op == "%":
                     if lt == "float" or rt == "float":
                         result = "float"
                     else:
@@ -692,6 +760,18 @@ def emit_div(left, right, lt, rt):
             result = "(fx/ " + left + " " + right + ")"
         else:
             result = "(/ " + left + " " + right + ")"
+    return result
+
+
+def emit_mod(left, right, lt, rt):
+    result = ""
+    if lt == "float" or rt == "float":
+        result = "(flmod " + left + " " + right + ")"
+    else:
+        if lt == "int" and rt == "int":
+            result = "(fxmod " + left + " " + right + ")"
+        else:
+            result = "(mod " + left + " " + right + ")"
     return result
 
 
@@ -795,6 +875,18 @@ def escape_string(s):
     return out
 
 
+def emit_lambda(expr, env):
+    params = expr.params
+    i = 0
+    n = len(params)
+    while i < n:
+        add_env_binding(env, params[i], "Any")
+        i = i + 1
+    body_expr = emit_block(expr.body, env, "  ")
+    wrapped = "(call/cc (lambda (__return__) " + body_expr + "))"
+    return "(lambda (" + func_params_to_str(params) + ") " + wrapped + ")"
+
+
 def emit_expr(expr: IRExpr, env):
     result = ""
     if isinstance(expr, EConst):
@@ -834,14 +926,19 @@ def emit_expr(expr: IRExpr, env):
                             i = i + 1
                         result = result + ")"
                     else:
-                        parse_fail("internal: unknown expression node")
-                        result = "0"
+                        if isinstance(expr, ELambda):
+                            result = emit_lambda(expr, env)
+                        else:
+                            parse_fail("internal: unknown expression node")
+                            result = "0"
     return result
 
 
 def emit_binop(op, left, right, ln, rn, env):
     lt = expr_type(ln, env)
     rt = expr_type(rn, env)
+    if op == "%":
+        return emit_mod(left, right, lt, rt)
     result = ""
     if op == "+":
         result = emit_plus(left, right, lt, rt)
@@ -896,7 +993,10 @@ def emit_block(stmts, env, indent):
         add_env_binding(env, first.name, first.ty)
         rest = list_ref_range(stmts, 1, n)
         rest_expr = emit_block(rest, env, indent + "  ")
-        return "(let (" + binding + ")\n" + indent + "  " + rest_expr + ")"
+        head = "(let ("
+        if isinstance(first.value, ELambda):
+            head = "(letrec ("
+        return head + binding + ")\n" + indent + "  " + rest_expr + ")"
 
     return emit_raw_block(stmts, env, indent)
 

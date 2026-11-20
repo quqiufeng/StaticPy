@@ -597,7 +597,7 @@ def parse-fail (msg : str) -> int
 end
 
 def known-type? (ty : str) -> bool
-  if (or (or (= ty "int") (or (= ty "float") (= ty "str"))) (or (or (= ty "bool") (= ty "any")) (or (= ty "tuple") (= ty "ptr"))))
+  if (or (or (= ty "int") (or (= ty "float") (= ty "str"))) (or (or (= ty "bool") (= ty "any")) (or (or (= ty "tuple") (= ty "ptr")) (= ty "list"))))
     return True
   end
   return False
@@ -642,6 +642,9 @@ def parse-stmt (tokens : str pos : int) -> tuple
   let tok str (call vector-ref tmp 0)
   let tok-line int (call vector-ref tmp 2)
   set pos (call vector-ref tmp 1)
+  if (= tok "def")
+    return (call parse-stmt-def tokens pos)
+  end
   if (= tok "let")
     return (call parse-stmt-let tokens pos)
   else
@@ -679,6 +682,52 @@ def parse-stmt-let (tokens : str pos : int) -> tuple
   let value any (call vector-ref tmp 0)
   set pos (call vector-ref tmp 1)
   return (call vector (call SLet name ty value) pos)
+end
+
+# 嵌套 def → let + lambda 降糖：语句位置的函数定义不再是错误，
+# 而是绑定一个一等函数值（emit-block 见 lambda 值用 letrec，故可自递归）。
+def parse-stmt-def (tokens : str pos : int) -> tuple
+  let tmp tuple (call next-token tokens pos)
+  let name str (call vector-ref tmp 0)
+  let name-line int (call vector-ref tmp 2)
+  set pos (call vector-ref tmp 1)
+  if (or (= name "") (call is-reserved name))
+    (call parse-fail-at "function name expected after 'def'" name-line)
+  end
+  let tmp tuple (call next-token tokens pos)
+  let lparen str (call vector-ref tmp 0)
+  let lparen-line int (call vector-ref tmp 2)
+  set pos (call vector-ref tmp 1)
+  if (not (= lparen "("))
+    (call parse-fail-at (call string-append (call string-append (call string-append "expected '(' after function name " name) ", found '") (call string-append lparen "'")) lparen-line)
+  end
+  let tmp tuple (call parse-params tokens pos)
+  let params any (call vector-ref tmp 0)
+  let param-types any (call vector-ref tmp 1)
+  set pos (call vector-ref tmp 2)
+  let tmp tuple (call next-token tokens pos)
+  let arrow str (call vector-ref tmp 0)
+  let arrow-line int (call vector-ref tmp 2)
+  set pos (call vector-ref tmp 1)
+  if (not (= arrow "->"))
+    (call parse-fail-at (call string-append (call string-append (call string-append "expected '->' after parameter list of " name) ", found '") (call string-append arrow "'")) arrow-line)
+  end
+  let tmp tuple (call next-token tokens pos)
+  let ret str (call vector-ref tmp 0)
+  let ret-line int (call vector-ref tmp 2)
+  set pos (call vector-ref tmp 1)
+  (call check-type ret (call string-append "return type of " name) ret-line)
+  let tmp tuple (call parse-stmts tokens pos)
+  let body any (call vector-ref tmp 0)
+  set pos (call vector-ref tmp 1)
+  let tmp tuple (call next-token tokens pos)
+  let end-tok str (call vector-ref tmp 0)
+  let end-line int (call vector-ref tmp 2)
+  set pos (call vector-ref tmp 1)
+  if (not (= end-tok "end"))
+    (call parse-fail-at (call string-append (call string-append (call string-append "expected 'end' to close nested 'def' " name) ", found '") (call string-append end-tok "'")) end-line)
+  end
+  return (call vector (call SLet name ret (call ELambda params body)) pos)
 end
 
 def parse-stmt-ctrl (tokens : str pos : int tok : str line : int) -> tuple
@@ -944,7 +993,7 @@ def expr-type-binop (expr env) -> str
     let lt str (call expr-type (call ir-field expr "left") env)
     let rt str (call expr-type (call ir-field expr "right") env)
     let op str (call ir-field expr "op")
-    if (or (or (or (= op "+") (= op "-")) (= op "*")) (= op "/"))
+    if (or (or (or (or (= op "+") (= op "-")) (= op "*")) (= op "/")) (= op "%"))
       if (or (= lt "float") (= rt "float")) set result "float"
       else
         if (and (= lt "int") (= rt "int")) set result "int"
@@ -1222,6 +1271,18 @@ def emit-div (left right lt rt) -> str
   end
 end
 
+def emit-mod (left right lt rt) -> str
+  if (or (= lt "float") (= rt "float"))
+    return (call make-binop-str "flmod" left right)
+  else
+    if (and (= lt "int") (= rt "int"))
+      return (call make-binop-str "fxmod" left right)
+    else
+      return (call make-binop-str "mod" left right)
+    end
+  end
+end
+
 def emit-le (left right lt rt) -> str
   if (and (= lt "str") (= rt "str"))
     return (call make-binop-str "string<=?" left right)
@@ -1321,7 +1382,8 @@ def emit-lambda (expr env) -> str
     set i (+ i 1)
   end
   let body-expr str (call emit-block (call ir-field expr "body") env "  ")
-  return (call build5 "(lambda (" (call func-params-to-str params) ") " body-expr ")")
+  let wrapped str (call string-append "(call/cc (lambda (__return__) " (call string-append body-expr "))"))
+  return (call build5 "(lambda (" (call func-params-to-str params) ") " wrapped ")")
 end
 
 def emit-expr-call (expr env) -> str
@@ -1339,6 +1401,8 @@ end
 def emit-binary (op left right ln rn env) -> str
   let lt str (call expr-type ln env)
   let rt str (call expr-type rn env)
+  if (= op "%") return (call emit-mod left right lt rt)
+  end
   if (= op "+") return (call emit-plus left right lt rt)
   else
     if (= op "-") return (call emit-minus left right lt rt)
@@ -1395,7 +1459,11 @@ def emit-block (stmts env indent) -> str
     (call add-env-binding env (call ir-field first "name") (call ir-field first "ty"))
     let rest any (call list-ref-range stmts 1 n)
     let rest-expr str (call emit-block rest env (call string-append indent "  "))
-    let r0 str (call string-append "(let (" binding ")\n")
+    let head str "(let ("
+    if (call ir-tag? (call ir-field first "value") "ELambda")
+      set head "(letrec ("
+    end
+    let r0 str (call string-append head (call string-append binding ")\n"))
   set r0 (call string-append r0 indent)
   set r0 (call string-append r0 "  ")
   set r0 (call string-append r0 rest-expr)
