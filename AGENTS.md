@@ -231,6 +231,13 @@ LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/pil <op> IN OUT [args...]
 # 用库构建用户程序（concat 自举 + AOT）
 bash imgproc/build_app.sh my_app.static.py my_app
 
+# Scheme 层热点（计数归因，零地址；详见 docs/SPROF.md）
+STATICPY_PROFILE=source bash staticpy/static_build_comfycli.sh app.static.py app
+./dist/app && ./dist/sprof --top=15          # 次数爆炸的 py 行 = 该改的 IR
+# PGO 闭环：采 block 画像 → 回灌重编（代码须逐字一致）
+STATICPY_PROFILE=block bash staticpy/static_build_comfycli.sh app.static.py app && ./dist/app
+STATICPY_PROFILE=block STATICPY_PGO=1 bash staticpy/static_build_comfycli.sh app.static.py app
+
 # 验证
 PY=python3
 $PY tools/split_plugins.py --check    # plugins/ ⇄ static_prelude.scm 单一真源（防漂移）

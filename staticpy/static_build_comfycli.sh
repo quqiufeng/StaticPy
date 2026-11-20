@@ -30,6 +30,8 @@ STDLIB="${STATICPY_STDLIB:-static_stdlib.scm}"
 CACHE_DIR="${STATICPY_CACHE:-$HOME/iso_gen/staticpy-cache}"
 CACHE_KEEP="${STATICPY_CACHE_KEEP:-24}"
 LIB_MODE="${STATICPY_LIB:-0}"
+# STATICPY_PROFILE=source|block → Scheme 层剖析构建（Chez compile-profile 插计数器）
+PROFILE_MODE="${STATICPY_PROFILE:-}"
 
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <input.static.py|input.scm> [output-name] [ffi.scm]"
@@ -100,10 +102,13 @@ fingerprint() {
     # 插件（语法重写 + 运行时 .scm/.py）与内核：改了插件必须重编，不能命中旧 .so
     files+=($(find "$PROJECT_DIR/plugins" "$PROJECT_DIR/kernel" \
                 -type f \( -name '*.py' -o -name '*.scm' -o -name '*.lua' \) 2>/dev/null | sort))
+    [ -f "$STATICPY_DIR/static_prof.scm" ] && files+=("$STATICPY_DIR/static_prof.scm")
     {
         echo "STATICPY_STDLIB=$STDLIB"
         echo "STATICPY_PLUGINS=${STATICPY_PLUGINS:-}"
         echo "STATICPY_LIB=$LIB_MODE"
+        echo "STATICPY_PROFILE=$PROFILE_MODE"
+        echo "STATICPY_PGO=${STATICPY_PGO:-0}"
         md5sum "${files[@]}" 2>/dev/null
     } | md5sum | cut -d' ' -f1
 }
@@ -159,13 +164,37 @@ PYEOF
     {
         cat static_prelude.scm; echo
         cat "$STDLIB"; echo
+        if [ -n "$PROFILE_MODE" ] && [ -f static_prof.scm ]; then
+            # Scheme 层剖析运行时：报告函数 + 本次 merged.ss 的路径（供 sprof 反查源码行）
+            cat static_prof.scm; echo
+            printf '(define static-merged-ss "%s")\n' "$MERGED_SS"
+            printf '(define static-prof-baked-mode "%s")\n' "$PROFILE_MODE"
+        fi
         if [ -n "$FFI_SCM" ] && [ -f "$FFI_SCM" ]; then cat "$FFI_SCM"; echo; fi
         for pscm in $PLUGIN_SCM_LIST; do cat "$pscm"; echo; done
         cat "$CODE_SS"
+        # 入口跑完再落盘；库模式（无 static_main）不插
+        if [ -n "$PROFILE_MODE" ] && [ "$LIB_MODE" != "1" ]; then
+            echo; echo ";; -- profiling: 落盘表达式执行计数 --"; echo "(static-prof-report)"
+        fi
     } > "$MERGED_SS"
 
-    printf '(import (chezscheme))\n(compile-file "%s")\n' "$MERGED_SS" \
-        > "$CACHE_DIR/compile_${BUILD_HASH}.ss"
+    if [ -n "$PROFILE_MODE" ]; then
+        # 列好编译驱动：可选 PGO 回灌（把上一轮 block 画像喂回编译器）再编译
+        {
+            echo '(import (chezscheme))'
+            PD_FILE="${STATICPY_PD:-$HOME/iso_gen/prof/${STEM_BASE}.pd}"
+            if [ "${STATICPY_PGO:-0}" = "1" ] && [ -f "$PD_FILE" ]; then
+                echo ";; PGO: 回灌 block 画像 $PD_FILE"
+                printf '(profile-load-data "%s")\n' "$PD_FILE"
+            fi
+            printf '(compile-profile (quote %s))\n' "$PROFILE_MODE"
+            printf '(compile-file "%s")\n' "$MERGED_SS"
+        } > "$CACHE_DIR/compile_${BUILD_HASH}.ss"
+    else
+        printf '(import (chezscheme))\n(compile-file "%s")\n' "$MERGED_SS" \
+            > "$CACHE_DIR/compile_${BUILD_HASH}.ss"
+    fi
     $SCHEME --quiet "$CACHE_DIR/compile_${BUILD_HASH}.ss" 2>&1
     # Chez 把 foo.ss 编到 foo.so（就是 CACHED_SO 本身）；缺了说明编译失败
     if [ ! -f "$CACHED_SO" ]; then
