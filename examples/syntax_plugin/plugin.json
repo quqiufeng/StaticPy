@@ -1,0 +1,9 @@
+{
+  "name": "syntax_plugin",
+  "version": "0.1.0",
+  "kind": "syntax",
+  "order": 50,
+  "requires": ["core"],
+  "syntax": "hooks.py",
+  "description": "语法扩展模板：rewrite / expr / stmt / infer 四个钩子的最小可用示例"
+}

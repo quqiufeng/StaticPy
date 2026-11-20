@@ -122,6 +122,7 @@ class Kernel:
         self.available = available if available is not None else scan()
         self._expr_handlers = []
         self._stmt_handlers = []
+        self._infer_handlers = []
         self._rewriters = []
         self.api = {}          # 由翻译器 bind() 注入：translate_expr / infer_expr_type / ...
         self.diagnostics = []
@@ -229,6 +230,10 @@ class Kernel:
     def stmt(self, node_type, handler):
         self._stmt_handlers.append((node_type, handler))
 
+    def infer(self, handler):
+        """注册类型推断钩子：handler(node) -> 类型名字符串 / None。"""
+        self._infer_handlers.append(handler)
+
     def rewrite(self, fn):
         self._rewriters.append(fn)
 
@@ -238,6 +243,17 @@ class Kernel:
                 out = fn(node, self)
                 if out:
                     return out
+        return None
+
+    @property
+    def has_infer(self):
+        return bool(self._infer_handlers)
+
+    def dispatch_infer(self, node):
+        for fn in self._infer_handlers:
+            out = fn(node)
+            if out:
+                return out
         return None
 
     def dispatch_stmt(self, node):

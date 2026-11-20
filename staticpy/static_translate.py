@@ -1017,6 +1017,10 @@ def infer_expr_type(node):
     """基于 TYPE_ENV 推断表达式类型（仅用于代码生成优化，不参与类型检查）"""
     if node is None:
         return None
+    if KERNEL is not None and KERNEL.has_infer:
+        _h = KERNEL.dispatch_infer(node)
+        if _h:
+            return _h
     if isinstance(node, ast.List):
         return "list"
     if isinstance(node, ast.Constant):
@@ -4016,6 +4020,12 @@ def _run_pipeline(input_files, plugin_arg="", lib_mode=False):
     for node in tree.body:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
+        # 插件语句钩子优先（顶层与函数体内一致）
+        if KERNEL is not None:
+            _hs = KERNEL.dispatch_stmt(node)
+            if _hs:
+                output_parts.append(_hs)
+                continue
         if isinstance(node, ast.ClassDef):
             output_parts.append(translate_class(node))
         elif isinstance(node, ast.FunctionDef):

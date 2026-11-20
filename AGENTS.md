@@ -58,7 +58,7 @@ $PY <lib>/difftest.py -v                     # ③ 差分测试（逐像素）
 |---|---|---|
 | 有现成的 C 库 | **运行时挂 `.so`**（`load-shared-object` / `DT_NEEDED`） | `libgif.so.7`、`libwebp.so.7`、`libtiff.so.6`、`libfreetype.so.6` |
 | 没有现成的 | **自己写 C++ helper** 集成 | `libimgproc.so`（对标 `libImaging`+编解码） |
-| 语法不够兼容 Python | **改编译器**，对齐 Scheme IR | 给 `static_translate.py` 加 **lambda / 一等函数** → `Image.eval`、`deform` |
+| 语法不够兼容 Python | **写语法插件**（核心已冻结，不再改翻译器） | `examples/syntax_plugin/`：rewrite/expr/stmt/infer 四钩子模板 |
 
 > 遇到“做不了”时，先问：是缺库（→1）、缺实现（→2）、还是缺语言特性（→3）？
 
@@ -94,8 +94,14 @@ $PY <lib>/difftest.py -v                     # ③ 差分测试（逐像素）
 - **入口**：函数叫 `main()`，**不要在顶层调用**（翻译器自动加 `(static_main)`，重复会跑两遍）。
 - **前可集成**：库拆成**纯函数文件**（无 `main`，如 `pil_lib.static.py`）+ 薄 CLI；
   用 `concat`（自举，StaticPy 写的）把库与用户程序拼成一个 bundle。
-- **编译器可改**：语法不够兼容就改 `static_translate.py`，**让 IR 正确**即可
-  （例：lambda → `(lambda (args) body)`；参数是函数值时调用不加 `static_` 前缀）。
+- **语法扩展只走插件**（核心语法已冻结）：不要再往 `static_translate.py` 里加语法规则。
+  新语法写成 `plugins/<name>/hooks.py`，用四个钩子：
+  `k.rewrite(fn)` 源码预处理 / `k.expr(NodeType, fn)` 表达式 / `k.stmt(NodeType, fn)` 语句
+  （顶层与函数体内都派发）/ `k.infer(fn)` 类型推断。
+  回调 `fn(node, kernel)` 返回 Scheme 字符串，**返回 `None` 交回内核**；递归翻译子节点用
+  `kernel.api["translate_expr"]`（别 import 翻译器）。
+  模板见 `examples/syntax_plugin/`，守卫见 `selfcheck.sh` 的 `[0b/4]`。
+  注意：自举环 2（`selfhost/staticc.py`）不带插件，**插件语法只在插件链路上有效**。
 - **临时文件**：一律放 `~/iso_gen/`，**禁止 `/tmp`**。
 - **不引 pip 依赖**：能 `dlopen` 就别 `pip install`。
 
@@ -215,5 +221,5 @@ $PY imgproc/difftest.py -v
 ## 9. 一句话总结
 
 > **广度**用 Python 自省一键枚举；**深度**靠照抄目标库的 C 源；**判据**交给自动化差分；
-> **缺什么补什么**——挂 `.so` / 写 C++ helper / 改编译器。
+> **缺什么补什么**——挂 `.so` / 写 C++ helper / 写语法插件。
 > 人（或 agent）只做两件事：**读源对齐** + **改实现**，然后重跑差分到全绿。

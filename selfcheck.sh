@@ -12,6 +12,14 @@ if $PY tools/split_plugins.py --check >/dev/null 2>&1; then echo "  ok"; else
   echo "  漂移：跑 python3 tools/split_plugins.py 重新生成"; fail=1
 fi
 
+echo ">>> [0b/4] 插件语法钩子（rewrite/expr/stmt/infer）"
+_hook_out=$(STATICPY_PLUGINS_PATH="$ROOT/examples" $PY staticpy/static_translate.py \
+  --plugins syntax_plugin examples/syntax_plugin/demo.static.py 2>/dev/null)
+if grep -qF "(define TAG 7)" <<<"$_hook_out" && grep -qF "(* 2 i)" <<<"$_hook_out" \
+   && grep -qF "(not (fx>= i 3))" <<<"$_hook_out"; then echo "  ok"; else
+  echo "  插件钩子失效（rewrite/expr/stmt）"; fail=1
+fi
+
 echo ">>> [1/4] 构建 C 库 + 前端（imgproc）"
 bash imgproc/build.sh >/dev/null 2>&1 && echo "  ok" || { echo "  失败"; fail=1; }
 
