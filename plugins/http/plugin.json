@@ -1,0 +1,31 @@
+{
+  "name": "http",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 30,
+  "requires": [
+    "core",
+    "libc"
+  ],
+  "libs": {
+    "curl": "libcurl.so.4"
+  },
+  "description": "HTTP 客户端（libcurl）",
+  "modules": {
+    "urllib": {
+      "request": {
+        "urlopen": "http_get_simple"
+      }
+    }
+  },
+  "return_types": {
+    "http_get_simple": "str"
+  },
+  "prelude_functions": [
+    "http_get",
+    "http_get_simple"
+  ],
+  "runtime": [
+    "runtime.scm"
+  ]
+}

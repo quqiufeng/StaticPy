@@ -1,0 +1,20 @@
+{
+  "name": "regex",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 70,
+  "requires": [
+    "core"
+  ],
+  "libs": {
+    "pcre2": "libpcre2-8.so.0"
+  },
+  "description": "正则表达式（libpcre2）",
+  "prelude_functions": [
+    "re_match",
+    "re_search"
+  ],
+  "runtime": [
+    "runtime.scm"
+  ]
+}

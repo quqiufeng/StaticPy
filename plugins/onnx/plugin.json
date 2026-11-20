@@ -1,0 +1,17 @@
+{
+  "name": "onnx",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 170,
+  "requires": [
+    "core",
+    "np"
+  ],
+  "libs": {
+    "onnxruntime": "libonnxruntime.so"
+  },
+  "description": "ONNX Runtime 推理",
+  "runtime": [
+    "runtime.scm"
+  ]
+}

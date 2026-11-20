@@ -1,0 +1,30 @@
+{
+  "name": "json",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 50,
+  "requires": [
+    "core"
+  ],
+  "libs": {
+    "jansson": "libjansson.so.4"
+  },
+  "description": "JSON 解析/序列化（libjansson）",
+  "modules": {
+    "json": {
+      "loads": "parse_json",
+      "dumps": "json_dumps"
+    }
+  },
+  "return_types": {
+    "parse_json": "dict",
+    "json_dumps": "str"
+  },
+  "prelude_functions": [
+    "json_dumps",
+    "parse_json"
+  ],
+  "runtime": [
+    "runtime.scm"
+  ]
+}

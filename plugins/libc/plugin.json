@@ -1,0 +1,79 @@
+{
+  "name": "libc",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 20,
+  "requires": [
+    "core"
+  ],
+  "libs": {
+    "c": "libc.so.6"
+  },
+  "description": "libc 能力：文件 I/O、时间/日期、命令行参数、环境变量",
+  "modules": {
+    "time": {
+      "time": "clock",
+      "sleep": "sleep",
+      "strftime": "format_time"
+    },
+    "os": {
+      "listdir": "os_list_dir",
+      "mkdir": "os_mkdir",
+      "rmdir": "os_rmdir",
+      "getenv": "os_getenv",
+      "getcwd": "os_cwd",
+      "rename": "os_move_file",
+      "remove": "os_delete_file",
+      "system": "os_shell"
+    }
+  },
+  "nested_modules": {
+    "os.path": {
+      "exists": "os_file_exists",
+      "getsize": "os_file_size"
+    }
+  },
+  "return_types": {
+    "clock": "float",
+    "sleep": "none",
+    "format_time": "str",
+    "os_list_dir": "list[str]",
+    "os_mkdir": "none",
+    "os_rmdir": "none",
+    "os_getenv": "str",
+    "os_cwd": "str",
+    "os_move_file": "none",
+    "os_delete_file": "none",
+    "os_shell": "int",
+    "os_file_exists": "bool",
+    "os_file_size": "int"
+  },
+  "prelude_functions": [
+    "argv",
+    "clock",
+    "exit",
+    "exit_program",
+    "file_close",
+    "file_exists",
+    "file_open",
+    "file_read_all",
+    "file_write",
+    "format_time",
+    "now_ts",
+    "os_cwd",
+    "os_delete_file",
+    "os_file_exists",
+    "os_file_size",
+    "os_getcwd",
+    "os_getenv",
+    "os_list_dir",
+    "os_mkdir",
+    "os_move_file",
+    "os_rmdir",
+    "os_shell",
+    "sleep"
+  ],
+  "runtime": [
+    "runtime.scm"
+  ]
+}

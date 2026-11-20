@@ -1,0 +1,38 @@
+{
+  "name": "random",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 80,
+  "requires": [
+    "core",
+    "libc"
+  ],
+  "description": "随机数（libc rand）",
+  "modules": {
+    "random": {
+      "seed": "random_seed",
+      "random": "random_float",
+      "randint": "random_randint",
+      "uniform": "random_uniform",
+      "choice": "random_choice"
+    }
+  },
+  "return_types": {
+    "random_seed": "none",
+    "random_float": "float",
+    "random_randint": "int",
+    "random_uniform": "float",
+    "random_choice": "?"
+  },
+  "prelude_functions": [
+    "random_choice",
+    "random_float",
+    "random_int",
+    "random_range",
+    "random_seed",
+    "random_uniform"
+  ],
+  "runtime": [
+    "runtime.scm"
+  ]
+}

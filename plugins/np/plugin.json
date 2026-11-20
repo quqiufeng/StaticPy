@@ -1,0 +1,71 @@
+{
+  "name": "np",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 120,
+  "requires": [
+    "openblas",
+    "lapack"
+  ],
+  "description": "numpy/scipy 风格数组 API（tagged array）",
+  "modules": {
+    "np": {
+      "array": "np-array",
+      "dot": "np-dot",
+      "daxpy": "np-daxpy",
+      "copy": "np-copy",
+      "scal": "np-scal",
+      "gemv": "np-gemv",
+      "gemm": "np-gemm",
+      "matmul": "np-gemm",
+      "sum": "np-sum",
+      "mean": "np-mean",
+      "max": "np-max",
+      "min": "np-min",
+      "zeros": "np-zeros",
+      "ones": "np-ones",
+      "sqrt": "np-sqrt",
+      "exp": "np-exp",
+      "abs": "np-abs",
+      "argmax": "np-argmax",
+      "arange": "np-arange",
+      "linspace": "np-linspace",
+      "concatenate": "np-concatenate",
+      "clip": "np-clip"
+    },
+    "la": {
+      "solve": "la-solve",
+      "svd": "la-svd",
+      "eigvals": "la-eigvals"
+    }
+  },
+  "return_types": {
+    "np-array": "list[float]",
+    "np-zeros": "list[float]",
+    "np-ones": "list[float]",
+    "np-dot": "float",
+    "np-daxpy": "list[float]",
+    "np-copy": "list[float]",
+    "np-scal": "list[float]",
+    "np-gemv": "list[float]",
+    "np-gemm": "list[float]",
+    "np-sum": "float",
+    "np-mean": "float",
+    "np-max": "float",
+    "np-min": "float",
+    "np-sqrt": "float",
+    "np-exp": "float",
+    "np-abs": "float",
+    "np-argmax": "int",
+    "np-arange": "list[int]",
+    "np-linspace": "list[float]",
+    "np-concatenate": "list[float]",
+    "np-clip": "list[float]",
+    "la-solve": "list[float]",
+    "la-svd": "list[float]",
+    "la-eigvals": "list[float]"
+  },
+  "runtime": [
+    "runtime.scm"
+  ]
+}

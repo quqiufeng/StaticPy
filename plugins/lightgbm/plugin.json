@@ -1,0 +1,14 @@
+{
+  "name": "lightgbm",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 160,
+  "requires": [
+    "core",
+    "np"
+  ],
+  "description": "LightGBM 树模型",
+  "runtime": [
+    "runtime.scm"
+  ]
+}

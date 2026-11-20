@@ -1,0 +1,13 @@
+{
+  "name": "ir",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 90,
+  "requires": [
+    "core"
+  ],
+  "description": "自举编译器 IR 节点标签谓词",
+  "runtime": [
+    "runtime.scm"
+  ]
+}

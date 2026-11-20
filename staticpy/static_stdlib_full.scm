@@ -1,10 +1,6 @@
-;; static_stdlib.scm — StaticPy 标准库
-;; 默认包含: OpenBLAS, LAPACK, libTorch (aoti)
-;; Python 风格包装: np.*, torch.*, la.*, ml.*
-;;
-;; 在 static_build.sh 中自动并入每个编译
+;; static_stdlib_full.scm — StaticPy 全量扩展（由 plugins/ 自动拼装，勿手改）
+;; 单一事实来源: plugins/<name>/runtime.scm；按需选用，默认不合并
 
-(import (chezscheme))
 
 ;; ============================================================
 ;; Part 1: OpenBLAS (numpy 底层) — 可选加载，不可用时跳过
@@ -45,6 +41,7 @@
   (set! cblas-sgemm (foreign-procedure "cblas_sgemm" (int int int int int int float void* int void* int float void* int) void))
   (set! cblas-dgemm (foreign-procedure "cblas_dgemm" (int int int int int int double void* int void* int double void* int) void)))
 
+
 ;; ============================================================
 ;; Part 2: LAPACK — 可选加载
 ;; ============================================================
@@ -71,6 +68,7 @@
   (set! lapack-sgesdd (foreign-procedure "LAPACKE_sgesdd" (int int int int void* int void* void* int void* int) int))
   (set! lapack-dsyevd (foreign-procedure "LAPACKE_dsyevd" (int int int int void* int void*) int))
   (set! lapack-dgeqrf (foreign-procedure "LAPACKE_dgeqrf" (int int int void* int void*) int)))
+
 
 ;; ============================================================
 ;; Part 3: CUDA cuBLAS — GPU 矩阵运算
@@ -196,65 +194,6 @@
           (set! cudnn-batchnorm-forward (foreign-procedure "cudnnBatchNormalizationForwardTraining"
             (void* int void* void* void* void* void* void* void* void* void* void* void* double) int)))))))
 
-;; ============================================================
-;; Part 6: libcurl — HTTP 数据获取
-;; ============================================================
-(define *curl-available* #f)
-(call-with-current-continuation
-  (lambda (return)
-    (with-exception-handler
-      (lambda (e) #f (return))
-      (lambda ()
-        (load-shared-object "libcurl.so.4")
-        (set! *curl-available* #t)))))
-
-(define curl-easy-init #f)
-(define curl-easy-setopt #f)
-(define curl-easy-perform #f)
-(define curl-easy-cleanup #f)
-(define curl-slist-append #f)
-
-(when *curl-available*
-  (set! curl-easy-init (foreign-procedure "curl_easy_init" () void*))
-  (set! curl-easy-setopt (foreign-procedure "curl_easy_setopt" (void* int void*) int))
-  (set! curl-easy-perform (foreign-procedure "curl_easy_perform" (void*) int))
-  (set! curl-easy-cleanup (foreign-procedure "curl_easy_cleanup" (void*) void))
-  (set! curl-slist-append (foreign-procedure "curl_slist_append" (void* string) void*)))
-
-;; ============================================================
-;; Part 7: libcjson — JSON 解析
-;; ============================================================
-(define *cjson-available* #f)
-(call-with-current-continuation
-  (lambda (return)
-    (with-exception-handler
-      (lambda (e) #f (return))
-      (lambda ()
-        (load-shared-object "libcjson.so.1")
-        (set! *cjson-available* #t)))))
-
-(define cjson-parse #f)
-(define cjson-print #f)
-(define cjson-delete #f)
-(define cjson-get-object-item #f)
-(define cjson-get-array-item #f)
-(define cjson-get-array-size #f)
-(define cjson-is-number #f)
-(define cjson-is-string #f)
-(define cjson-get-number #f)
-(define cjson-get-string #f)
-
-(when *cjson-available*
-  (set! cjson-parse (foreign-procedure "cJSON_Parse" (string) void*))
-  (set! cjson-print (foreign-procedure "cJSON_Print" (void*) string))
-  (set! cjson-delete (foreign-procedure "cJSON_Delete" (void*) void))
-  (set! cjson-get-object-item (foreign-procedure "cJSON_GetObjectItem" (void* string) void*))
-  (set! cjson-get-array-item (foreign-procedure "cJSON_GetArrayItem" (void* int) void*))
-  (set! cjson-get-array-size (foreign-procedure "cJSON_GetArraySize" (void*) int))
-  (set! cjson-is-number (foreign-procedure "cJSON_IsNumber" (void*) int))
-  (set! cjson-is-string (foreign-procedure "cJSON_IsString" (void*) int))
-  (set! cjson-get-number (foreign-procedure "cJSON_GetNumberValue" (void*) double))
-  (set! cjson-get-string (foreign-procedure "cJSON_GetStringValue" (void*) string)))
 
 ;; ============================================================
 ;; Part 8: XGBoost — 树模型训练/推理
@@ -286,6 +225,7 @@
   (set! xgb-dmatrix-set-float (foreign-procedure "XGDMatrixSetFloatInfo"
     (void* string void* int) int)))
 
+
 ;; ============================================================
 ;; Part 9: LightGBM — 树模型（替代方案）
 ;; ============================================================
@@ -313,6 +253,7 @@
   (set! lgbm-load (foreign-procedure "LGBM_BoosterLoadModel"
     (string void*) int)))
 
+
 ;; ============================================================
 ;; Part 10: ONNX Runtime — 模型推理部署
 ;; ============================================================
@@ -338,6 +279,8 @@
             (void* string void* void*) int))
           (set! onnx-run (foreign-procedure "OrtRun"
             (void* void* void* void* int void* void* int) int)))))))
+
+
 ;; ============================================================
 ;; Part 4: Python 风格包装 — numpy 兼容层（需要 OpenBLAS）
 ;; ============================================================
@@ -572,6 +515,7 @@
 (define (la-eigvals n a w)
   "特征值分解 (对称矩阵)"
   (lapack-dsyevd 101 78 78 n a n w))
+
 
 ;; ============================================================
 ;; Part 11: libTorch Standard API — 通过 libtorch_std_helper.so
@@ -2690,3 +2634,4 @@ cast-to-float16: 非零则输出转为 float16"
     ((nn-sequential? model) (nn-sequential-call model x))
     ((procedure? model) (model x))
     (else (display "nn-call: unsupported model type\n") x)))
+

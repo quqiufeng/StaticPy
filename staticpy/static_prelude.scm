@@ -1,8 +1,5 @@
-;; static_prelude.scm — StaticPy 值类型运行时
-;; 
-;; 值类型: int=fixnum, float=flonum, bool=boolean
-;; 数组类型: float[] = foreign-alloc 分配的 C double*
-;;           GC 自动回收（通过 guardian），无需手动 free
+;; static_prelude.scm — StaticPy 核心运行时（由 plugins/ 自动拼装，勿手改）
+;; 单一事实来源: plugins/<name>/runtime.scm；改插件后跑 python3 tools/split_plugins.py
 
 (import (chezscheme))
 
@@ -78,6 +75,273 @@
       (hashtable-cells d))
     copy))
 
+;; ====== 字符串工具（纯 Scheme，不依赖 Chez 扩展） ======
+
+(define (string-split s sep-char)
+  "按字符拆分字符串"
+  (let ((len (string-length s)))
+    (let loop ((i 0) (start 0) (result '()))
+      (cond ((>= i len)
+             (reverse (if (< start len)
+                         (cons (substring s start len) result)
+                         result)))
+            ((char=? (string-ref s i) sep-char)
+             (loop (+ i 1) (+ i 1)
+                   (cons (substring s start i) result)))
+            (else (loop (+ i 1) start result))))))
+
+(define (str-find s sub . start)
+  "查找子串位置（返回 #f 或索引），可选 start 参数"
+  (let ((start-idx (if (pair? start) (car start) 0))
+        (s-len (string-length s))
+        (sub-len (string-length sub)))
+    (let loop ((i start-idx))
+      (cond ((> i (- s-len sub-len)) #f)
+            ((string=? (substring s i (+ i sub-len)) sub) i)
+            (else (loop (+ i 1)))))))
+
+(define (string-any pred s)
+  "检查是否有任意字符满足谓词"
+  (let loop ((i 0))
+    (and (< i (string-length s))
+         (or (pred (string-ref s i))
+             (loop (+ i 1))))))
+
+(define (string-join parts sep)
+  "连接字符串列表"
+  (if (null? parts) ""
+      (let loop ((rest (cdr parts)) (result (car parts)))
+        (if (null? rest) result
+            (loop (cdr rest) (string-append result sep (car rest)))))))
+
+(define (string-replace s old new)
+  "替换所有子串"
+  (let ((old-len (string-length old)))
+    (let loop ((i 0) (result '()))
+      (let ((pos (str-find s old i)))
+        (if pos
+            (loop (+ pos old-len)
+                  (cons new (cons (substring s i pos) result)))
+            (apply string-append
+                   (reverse (cons (substring s i (string-length s)) result))))))))
+
+;; ====== 字符串工具（对外的简单包装） ======
+(define (str-split s sep)
+  "按分隔符拆分字符串"
+  (let ((sep-len (string-length sep)))
+    (let loop ((i 0) (result '()))
+      (let ((pos (str-find s sep i)))
+        (if pos
+            (loop (+ pos sep-len)
+                  (cons (substring s i pos) result))
+            (reverse (cons (substring s i (string-length s)) result)))))))
+
+(define (str-join parts sep)
+  "用分隔符连接字符串列表或 vector"
+  (if (vector? parts)
+      (let ((n (vector-length parts)))
+        (let loop ((i 0) (result ""))
+          (if (>= i n)
+              result
+              (loop (+ i 1)
+                    (if (= i 0)
+                        (vector-ref parts i)
+                        (string-append result sep (vector-ref parts i)))))))
+      (string-join parts sep)))
+
+(define (str-trim s)
+  "去除首尾空白"
+  (let ((len (string-length s)))
+    (let ((start (do ((i 0 (+ i 1))) ((or (>= i len) (not (char-whitespace? (string-ref s i)))) i)))
+          (end (do ((i (- len 1) (- i 1))) ((or (< i 0) (not (char-whitespace? (string-ref s i)))) (+ i 1)))))
+      (if (>= start end) "" (substring s start end)))))
+
+(define (str-lower s)
+  "转小写"
+  (string-downcase s))
+
+(define (str-upper s)
+  "转大写"
+  (string-upcase s))
+
+(define (str-replace s old new)
+  "替换所有子串"
+  (let loop ((i 0) (result '()))
+    (let ((pos (str-find s old i)))
+      (if pos
+          (loop (+ pos (string-length old))
+                (cons new (cons (substring s i pos) result)))
+          (apply string-append (reverse (cons (substring s i (string-length s)) result)))))))
+
+(define (str-contains? s sub)
+  "检查是否包含子串"
+  (not (not (str-find s sub))))
+
+(define (str-starts-with? s prefix)
+  "检查是否以 prefix 开头"
+  (and (>= (string-length s) (string-length prefix))
+       (string=? (substring s 0 (string-length prefix)) prefix)))
+
+(define (str-ends-with? s suffix)
+  "检查是否以 suffix 结尾"
+  (and (>= (string-length s) (string-length suffix))
+       (string=? (substring s (- (string-length s) (string-length suffix)) (string-length s)) suffix)))
+
+;; ====== 字符串转数字（用于读取数据文件） ======
+(define (string_to_float s)
+  (let ((n (string->number s)))
+    (if n (inexact n) 0.0)))
+
+(define (string_to_int s)
+  (or (string->number s) 0))
+
+(define (string_of_int n)
+  (number->string (exact n)))
+
+;; formats a float to fixed decimal places
+(define (format_float f digits)
+  (format "~,vf" digits (inexact f)))
+
+(define (list_length v)
+  (cond ((string? v) (string-length v))
+        ((vector? v) (vector-length v))
+        (else (length v))))
+
+(define (list_ref v i)
+  (cond ((string? v) (string-ref v i))
+        ((vector? v) (vector-ref v i))
+        (else (list-ref v i))))
+
+(define (vec_ref v i)
+  (vector-ref v i))
+(define re_match (lambda (p s) (re-match p s)))
+(define re_search (lambda (p s) (re-search p s)))
+(define exit_program (lambda (code) (exit-program code)))
+(define json_loads (lambda (s) (json-loads s)))
+(define json_dumps (lambda (obj) (json->string obj)))
+(define parse_json (lambda (s) (parse-json s)))
+(define now_ts (lambda () (datetime-now)))
+(define format_time (lambda (ts fmt) (datetime-format ts fmt)))
+(define csv_parse (lambda (s) (csv-parse s)))
+(define csv_encode (lambda (fields) (csv-encode fields)))
+(define str_split (lambda (s sep) (str-split s sep)))
+(define str_join (lambda (parts sep) (str-join parts sep)))
+(define str_trim (lambda (s) (str-trim s)))
+(define str_lower (lambda (s) (str-lower s)))
+(define str_upper (lambda (s) (str-upper s)))
+(define str_replace (lambda (s old new) (str-replace s old new)))
+(define str_contains (lambda (s sub) (str-contains? s sub)))
+(define str_starts_with (lambda (s prefix) (str-starts-with? s prefix)))
+(define str_ends_with (lambda (s suffix) (str-ends-with? s suffix)))
+(define str_length (lambda (s) (string-length s)))
+(define str_slice (lambda (s start end) (slice-string s start end)))
+
+(define (slice-array src start end)
+  "从 tagged-array 或 vector 切片 [start, end)，返回新 vector"
+  (let* ((len (- end start))
+         (dst (make-vector len)))
+    (do ((i 0 (+ i 1))) ((= i len) dst)
+      (vector-set! dst i (if (vector? src)
+                             (vector-ref src (+ start i))
+                             (float-array-ref src (+ start i)))))))
+
+(define (slice-string s start end)
+  "字符串切片 [start, end)"
+  (substring s start end))
+
+;; ====== 通用打印 ======
+
+(define (print x)
+  (cond ((number? x) (display x) (newline))
+        ((boolean? x) (display (if x "True" "False")) (newline))
+        ((string? x) (display x) (newline))
+        ((hashtable? x) (display (json->string x)) (newline))
+        ((list? x) (display (json->string (list->vector x))) (newline))
+        ((vector? x) (display (json->string x)) (newline))
+        ((null? x) (display "None") (newline))
+        (else (display x) (newline))))
+
+;; ====== 类型化数组/vector 工具 ======
+(define (make_int_array n)
+  "创建 n 个 int32 的 C 数组，自动 GC 回收"
+  (let ((ptr (foreign-alloc (if (fx= n 0) 4 (fx* n 4)))))
+    (do ((i 0 (+ i 1))) ((= i n))
+      (foreign-set! 'integer-32 ptr (* i 4) 0))
+    (gc-register-ptr ptr)
+    ptr))
+
+(define (int_array_set ptr i val)
+  (foreign-set! 'integer-32 ptr (* i 4) val))
+
+(define (int_array_ref ptr i)
+  (foreign-ref 'integer-32 ptr (* i 4)))
+
+;; ====== Option / Result 类型 ======
+
+(define (Ok v) (vector 'ok v))
+(define (Error e) (vector 'error e))
+(define (Some v) (vector 'some v))
+(define (None) (vector 'none))
+
+(define (is_ok r) (eq? (vector-ref r 0) 'ok))
+(define (is_error r) (eq? (vector-ref r 0) 'error))
+(define (is_some o) (eq? (vector-ref o 0) 'some))
+(define (is_none o) (eq? (vector-ref o 0) 'none))
+
+(define (unwrap r)
+  (if (is_ok r)
+      (vector-ref r 1)
+      (error 'unwrap "called on Error")))
+
+(define (unwrap_or r default)
+  (if (is_ok r)
+      (vector-ref r 1)
+      default))
+
+(define (unwrap_error r)
+  (if (is_error r)
+      (vector-ref r 1)
+      (error 'unwrap-error "called on Ok")))
+
+;; ====== 通用 Pythonic 列表（ heterogeneous vector/list ） ======
+
+(define (py-list . elems)
+  "通用列表：可存放任意对象，对应 Python list"
+  (list->vector elems))
+
+(define (py-list-append lst val)
+  "在通用列表末尾追加元素，返回新列表"
+  (list->vector (append (vector->list lst) (list val))))
+
+(define (py-list-concat a b)
+  "列表拼接（对应 python list + list），返回新列表"
+  (list->vector (append (vector->list a) (vector->list b))))
+
+(define (py-list-ref lst i)
+  "读取通用列表第 i 个元素"
+  (vector-ref lst i))
+
+(define (py-list-length lst)
+  "通用列表长度"
+  (vector-length lst))
+
+(define (list->py-list lst)
+  "把 Scheme list 转为通用列表"
+  (list->vector lst))
+
+;; ====== 兼容 py-list 的 append 方法调用 ======
+(define (py-list-append-mut! lst val)
+  "错误：通用列表当前实现不可变；请使用 py-list-append 返回新列表"
+  (error 'py-list-append-mut! "mutable py-list not supported yet"))
+
+;; 为 translator 生成的 object-vector 预留别名
+(define obj-list py-list)
+(define obj-list-append py-list-append)
+(define obj-list-ref py-list-ref)
+(define obj-list-length py-list-length)
+(define list_append_str py-list-append)
+(define tuple_ref vector-ref)
+
 ;; ====== 文件 I/O ======
 
 ;; 加载 libc
@@ -137,6 +401,156 @@
   (let ((fp (libc-fopen path "r")))
     (when fp (libc-fclose fp))
     (not (not fp))))
+
+;; ====== 日期时间（libc） ======
+(define libc-time
+  (foreign-procedure "time" (void*) unsigned-64))
+(define libc-localtime
+  (foreign-procedure "localtime" (void*) void*))
+(define libc-strftime
+  (foreign-procedure "strftime" (void* unsigned-64 string void*) unsigned-64))
+(define libc-mktime
+  (foreign-procedure "mktime" (void*) unsigned-64))
+
+(define (datetime-now)
+  "当前时间（Unix 时间戳）"
+  (libc-time 0))
+
+(define (datetime-format timestamp fmt)
+  "格式化时间戳，fmt 如 '%Y-%m-%d %H:%M:%S'"
+  (let* ((t (foreign-alloc 8))
+         (_ (foreign-set! 'unsigned-64 t 0 timestamp))
+         (tm (libc-localtime t))
+         (buf-size 256)
+         (buf (foreign-alloc buf-size)))
+    (let ((n (libc-strftime buf buf-size fmt tm)))
+      (let ((bv (make-bytevector n 0)))
+        (do ((i 0 (+ i 1))) ((= i n))
+          (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 buf i)))
+        (foreign-free buf)
+        (foreign-free t)
+        (utf8->string bv)))))
+
+(define (datetime-str->ts s fmt)
+  "解析时间字符串 → 时间戳，fmt 如 '%Y-%m-%d'"
+  ;; 简化为 strptime 的 FFI
+  ;; 当前返回当前时间戳
+  (libc-time 0))
+
+;; ====== 操作系统接口（libc） ======
+
+(define libc-opendir (foreign-procedure "opendir" (string) void*))
+(define libc-readdir (foreign-procedure "readdir" (void*) void*))
+(define libc-closedir (foreign-procedure "closedir" (void*) int))
+(define libc-mkdir (foreign-procedure "mkdir" (string int) int))
+(define libc-rmdir (foreign-procedure "rmdir" (string) int))
+(define libc-unlink (foreign-procedure "unlink" (string) int))
+(define libc-rename (foreign-procedure "rename" (string string) int))
+(define libc-getcwd (foreign-procedure "getcwd" (void* unsigned-64) void*))
+(define libc-chdir (foreign-procedure "chdir" (string) int))
+(define libc-getenv (foreign-procedure "getenv" (string) void*))
+(define libc-stat (foreign-procedure "stat" (string void*) int))
+(define libc-system (foreign-procedure "system" (string) int))
+(define libc-access (foreign-procedure "access" (string int) int))
+
+(define (os-list-dir path)
+  (let ((dir (libc-opendir path)))
+    (if dir
+        (let loop ((acc '()))
+          (let ((entry (libc-readdir dir)))
+            (if (not (eq? entry 0))
+                ;; d_name is at offset 19 in struct dirent on Linux x86_64
+                (let ((name (c-str->string (+ entry 19))))
+                  (loop (cons name acc)))
+                (begin (libc-closedir dir) (reverse acc)))))
+        '())))
+
+(define (c-str->string ptr)
+  "将 C 字符串（null-terminated）转为 Scheme string"
+  (let loop ((i 0) (chars '()))
+    (let ((c (foreign-ref 'unsigned-8 ptr i)))
+      (if (= c 0)
+          (list->string (map integer->char (reverse chars)))
+          (loop (+ i 1) (cons c chars))))))
+
+(define (os-getenv name)
+  (let ((ptr (libc-getenv name)))
+    (if (not (eq? ptr 0))
+        (c-str->string ptr)
+        "")))
+
+(define (os-getcwd)
+  (let ((buf (foreign-alloc 4096)))
+    (let ((ptr (libc-getcwd buf 4096)))
+      (if (not (eq? ptr 0))
+          (let ((result (c-str->string buf)))
+            (foreign-free buf)
+            result)
+          (begin (foreign-free buf) #f)))))
+
+(define (os-file-size path)
+  (let ((buf (foreign-alloc 128)))
+    (let ((res (libc-stat path buf)))
+      (if (= res 0)
+          (let ((size (foreign-ref 'unsigned-64 buf 48)))
+            (foreign-free buf) size)
+          (begin (foreign-free buf) -1)))))
+
+(define (os-file-exists? path) (= (libc-access path 0) 0))
+(define (os-move-file src dst) (= (libc-rename src dst) 0))
+(define (os-delete-file path) (= (libc-unlink path) 0))
+(define (os-mkdir path) (= (libc-mkdir path 511) 0))
+(define (os-rmdir path) (= (libc-rmdir path) 0))
+(define (os-shell cmd) (libc-system cmd))
+(define (os_shell cmd) (os-shell cmd))
+(define (os_cwd) (os-getcwd))
+(define (os_list_dir path) (os-list-dir path))
+(define (os_getenv name) (os-getenv name))
+(define (os_file_size path) (os-file-size path))
+(define (os_file_exists path) (os-file-exists? path))
+(define (os_move_file src dst) (os-move-file src dst))
+(define (os_delete_file path) (os-delete-file path))
+(define (os_mkdir path) (os-mkdir path))
+(define (os_rmdir path) (os-rmdir path))
+
+;; ====== 时间（libc） ======
+(define libc-nanosleep
+  (foreign-procedure "nanosleep" (void* void*) int))
+
+(define (sleep seconds)
+  "休眠 seconds 秒"
+  (let* ((sec (inexact->exact (floor seconds)))
+         (nsec (inexact->exact (* (- seconds (floor seconds)) 1e9)))
+         (ts (foreign-alloc 16)))
+    (foreign-set! 'unsigned-64 ts 0 sec)
+    (foreign-set! 'unsigned-64 ts 8 nsec)
+    (libc-nanosleep ts 0)
+    (foreign-free ts)))
+
+(define (clock) (libc-time 0))
+
+;; ====== 命令行参数 ======
+(define True #t)
+(define False #f)
+(define (argv)
+  "返回命令行参数列表"
+  (command-line))
+
+(define libc-exit (foreign-procedure "exit" (int) void))
+
+(define (exit-program code)
+  "退出程序"
+  (libc-exit code))
+
+;; C ABI 包装（下划线风格，供 StaticPy 调用）
+(define http_get_simple (lambda (url) (http-get-simple url)))
+(define random_float (lambda () (random-float)))
+(define random_int (lambda () (random-int)))
+(define random_range (lambda (low high) (random-range low high)))
+(define random_randint (lambda (low high) (random-randint low high)))
+(define random_uniform (lambda (low high) (random-uniform low high)))
+(define random_choice (lambda (seq) (random-choice seq)))
+(define random_seed (lambda (seed) (random-seed seed)))
 
 ;; ====== HTTP 客户端（基于 libcurl） ======
 
@@ -406,43 +820,6 @@
           ((#\return) (loop (+ i 1) (cons #\\ (cons #\r acc))))
           (else (loop (+ i 1) (cons c acc))))))))
 
-
-
-;; ====== 日期时间（libc） ======
-(define libc-time
-  (foreign-procedure "time" (void*) unsigned-64))
-(define libc-localtime
-  (foreign-procedure "localtime" (void*) void*))
-(define libc-strftime
-  (foreign-procedure "strftime" (void* unsigned-64 string void*) unsigned-64))
-(define libc-mktime
-  (foreign-procedure "mktime" (void*) unsigned-64))
-
-(define (datetime-now)
-  "当前时间（Unix 时间戳）"
-  (libc-time 0))
-
-(define (datetime-format timestamp fmt)
-  "格式化时间戳，fmt 如 '%Y-%m-%d %H:%M:%S'"
-  (let* ((t (foreign-alloc 8))
-         (_ (foreign-set! 'unsigned-64 t 0 timestamp))
-         (tm (libc-localtime t))
-         (buf-size 256)
-         (buf (foreign-alloc buf-size)))
-    (let ((n (libc-strftime buf buf-size fmt tm)))
-      (let ((bv (make-bytevector n 0)))
-        (do ((i 0 (+ i 1))) ((= i n))
-          (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 buf i)))
-        (foreign-free buf)
-        (foreign-free t)
-        (utf8->string bv)))))
-
-(define (datetime-str->ts s fmt)
-  "解析时间字符串 → 时间戳，fmt 如 '%Y-%m-%d'"
-  ;; 简化为 strptime 的 FFI
-  ;; 当前返回当前时间戳
-  (libc-time 0))
-
 ;; ====== CSV 读写 ======
 (define (csv-parse-line line)
   "解析一行 CSV（支持引号转义）"
@@ -484,194 +861,6 @@
                  s)))
          fields)
     ","))
-
-;; ====== 字符串工具（纯 Scheme，不依赖 Chez 扩展） ======
-
-(define (string-split s sep-char)
-  "按字符拆分字符串"
-  (let ((len (string-length s)))
-    (let loop ((i 0) (start 0) (result '()))
-      (cond ((>= i len)
-             (reverse (if (< start len)
-                         (cons (substring s start len) result)
-                         result)))
-            ((char=? (string-ref s i) sep-char)
-             (loop (+ i 1) (+ i 1)
-                   (cons (substring s start i) result)))
-            (else (loop (+ i 1) start result))))))
-
-(define (str-find s sub . start)
-  "查找子串位置（返回 #f 或索引），可选 start 参数"
-  (let ((start-idx (if (pair? start) (car start) 0))
-        (s-len (string-length s))
-        (sub-len (string-length sub)))
-    (let loop ((i start-idx))
-      (cond ((> i (- s-len sub-len)) #f)
-            ((string=? (substring s i (+ i sub-len)) sub) i)
-            (else (loop (+ i 1)))))))
-
-(define (string-any pred s)
-  "检查是否有任意字符满足谓词"
-  (let loop ((i 0))
-    (and (< i (string-length s))
-         (or (pred (string-ref s i))
-             (loop (+ i 1))))))
-
-(define (string-join parts sep)
-  "连接字符串列表"
-  (if (null? parts) ""
-      (let loop ((rest (cdr parts)) (result (car parts)))
-        (if (null? rest) result
-            (loop (cdr rest) (string-append result sep (car rest)))))))
-
-(define (string-replace s old new)
-  "替换所有子串"
-  (let ((old-len (string-length old)))
-    (let loop ((i 0) (result '()))
-      (let ((pos (str-find s old i)))
-        (if pos
-            (loop (+ pos old-len)
-                  (cons new (cons (substring s i pos) result)))
-            (apply string-append
-                   (reverse (cons (substring s i (string-length s)) result))))))))
-
-;; ====== 字符串工具（对外的简单包装） ======
-(define (str-split s sep)
-  "按分隔符拆分字符串"
-  (let ((sep-len (string-length sep)))
-    (let loop ((i 0) (result '()))
-      (let ((pos (str-find s sep i)))
-        (if pos
-            (loop (+ pos sep-len)
-                  (cons (substring s i pos) result))
-            (reverse (cons (substring s i (string-length s)) result)))))))
-
-(define (str-join parts sep)
-  "用分隔符连接字符串列表或 vector"
-  (if (vector? parts)
-      (let ((n (vector-length parts)))
-        (let loop ((i 0) (result ""))
-          (if (>= i n)
-              result
-              (loop (+ i 1)
-                    (if (= i 0)
-                        (vector-ref parts i)
-                        (string-append result sep (vector-ref parts i)))))))
-      (string-join parts sep)))
-
-(define (str-trim s)
-  "去除首尾空白"
-  (let ((len (string-length s)))
-    (let ((start (do ((i 0 (+ i 1))) ((or (>= i len) (not (char-whitespace? (string-ref s i)))) i)))
-          (end (do ((i (- len 1) (- i 1))) ((or (< i 0) (not (char-whitespace? (string-ref s i)))) (+ i 1)))))
-      (if (>= start end) "" (substring s start end)))))
-
-(define (str-lower s)
-  "转小写"
-  (string-downcase s))
-
-(define (str-upper s)
-  "转大写"
-  (string-upcase s))
-
-(define (str-replace s old new)
-  "替换所有子串"
-  (let loop ((i 0) (result '()))
-    (let ((pos (str-find s old i)))
-      (if pos
-          (loop (+ pos (string-length old))
-                (cons new (cons (substring s i pos) result)))
-          (apply string-append (reverse (cons (substring s i (string-length s)) result)))))))
-
-(define (str-contains? s sub)
-  "检查是否包含子串"
-  (not (not (str-find s sub))))
-
-(define (str-starts-with? s prefix)
-  "检查是否以 prefix 开头"
-  (and (>= (string-length s) (string-length prefix))
-       (string=? (substring s 0 (string-length prefix)) prefix)))
-
-(define (str-ends-with? s suffix)
-  "检查是否以 suffix 结尾"
-  (and (>= (string-length s) (string-length suffix))
-       (string=? (substring s (- (string-length s) (string-length suffix)) (string-length s)) suffix)))
-
-;; ====== 操作系统接口（libc） ======
-
-(define libc-opendir (foreign-procedure "opendir" (string) void*))
-(define libc-readdir (foreign-procedure "readdir" (void*) void*))
-(define libc-closedir (foreign-procedure "closedir" (void*) int))
-(define libc-mkdir (foreign-procedure "mkdir" (string int) int))
-(define libc-rmdir (foreign-procedure "rmdir" (string) int))
-(define libc-unlink (foreign-procedure "unlink" (string) int))
-(define libc-rename (foreign-procedure "rename" (string string) int))
-(define libc-getcwd (foreign-procedure "getcwd" (void* unsigned-64) void*))
-(define libc-chdir (foreign-procedure "chdir" (string) int))
-(define libc-getenv (foreign-procedure "getenv" (string) void*))
-(define libc-stat (foreign-procedure "stat" (string void*) int))
-(define libc-system (foreign-procedure "system" (string) int))
-(define libc-access (foreign-procedure "access" (string int) int))
-
-(define (os-list-dir path)
-  (let ((dir (libc-opendir path)))
-    (if dir
-        (let loop ((acc '()))
-          (let ((entry (libc-readdir dir)))
-            (if (not (eq? entry 0))
-                ;; d_name is at offset 19 in struct dirent on Linux x86_64
-                (let ((name (c-str->string (+ entry 19))))
-                  (loop (cons name acc)))
-                (begin (libc-closedir dir) (reverse acc)))))
-        '())))
-
-(define (c-str->string ptr)
-  "将 C 字符串（null-terminated）转为 Scheme string"
-  (let loop ((i 0) (chars '()))
-    (let ((c (foreign-ref 'unsigned-8 ptr i)))
-      (if (= c 0)
-          (list->string (map integer->char (reverse chars)))
-          (loop (+ i 1) (cons c chars))))))
-
-(define (os-getenv name)
-  (let ((ptr (libc-getenv name)))
-    (if (not (eq? ptr 0))
-        (c-str->string ptr)
-        "")))
-
-(define (os-getcwd)
-  (let ((buf (foreign-alloc 4096)))
-    (let ((ptr (libc-getcwd buf 4096)))
-      (if (not (eq? ptr 0))
-          (let ((result (c-str->string buf)))
-            (foreign-free buf)
-            result)
-          (begin (foreign-free buf) #f)))))
-
-(define (os-file-size path)
-  (let ((buf (foreign-alloc 128)))
-    (let ((res (libc-stat path buf)))
-      (if (= res 0)
-          (let ((size (foreign-ref 'unsigned-64 buf 48)))
-            (foreign-free buf) size)
-          (begin (foreign-free buf) -1)))))
-
-(define (os-file-exists? path) (= (libc-access path 0) 0))
-(define (os-move-file src dst) (= (libc-rename src dst) 0))
-(define (os-delete-file path) (= (libc-unlink path) 0))
-(define (os-mkdir path) (= (libc-mkdir path 511) 0))
-(define (os-rmdir path) (= (libc-rmdir path) 0))
-(define (os-shell cmd) (libc-system cmd))
-(define (os_shell cmd) (os-shell cmd))
-(define (os_cwd) (os-getcwd))
-(define (os_list_dir path) (os-list-dir path))
-(define (os_getenv name) (os-getenv name))
-(define (os_file_size path) (os-file-size path))
-(define (os_file_exists path) (os-file-exists? path))
-(define (os_move_file src dst) (os-move-file src dst))
-(define (os_delete_file path) (os-delete-file path))
-(define (os_mkdir path) (os-mkdir path))
-(define (os_rmdir path) (os-rmdir path))
 
 ;; ====== 正则表达式（libpcre2） ======
 (load-shared-object "libpcre2-8.so.0")
@@ -765,200 +954,6 @@
 
 (define pi 3.141592653589793)
 (define e 2.718281828459045)
-
-;; ====== 时间（libc） ======
-(define libc-nanosleep
-  (foreign-procedure "nanosleep" (void* void*) int))
-
-(define (sleep seconds)
-  "休眠 seconds 秒"
-  (let* ((sec (inexact->exact (floor seconds)))
-         (nsec (inexact->exact (* (- seconds (floor seconds)) 1e9)))
-         (ts (foreign-alloc 16)))
-    (foreign-set! 'unsigned-64 ts 0 sec)
-    (foreign-set! 'unsigned-64 ts 8 nsec)
-    (libc-nanosleep ts 0)
-    (foreign-free ts)))
-
-(define (clock) (libc-time 0))
-
-;; ====== 命令行参数 ======
-(define True #t)
-(define False #f)
-(define (argv)
-  "返回命令行参数列表"
-  (command-line))
-
-(define libc-exit (foreign-procedure "exit" (int) void))
-
-(define (exit-program code)
-  "退出程序"
-  (libc-exit code))
-
-;; C ABI 包装（下划线风格，供 StaticPy 调用）
-(define http_get_simple (lambda (url) (http-get-simple url)))
-(define random_float (lambda () (random-float)))
-(define random_int (lambda () (random-int)))
-(define random_range (lambda (low high) (random-range low high)))
-(define random_randint (lambda (low high) (random-randint low high)))
-(define random_uniform (lambda (low high) (random-uniform low high)))
-(define random_choice (lambda (seq) (random-choice seq)))
-(define random_seed (lambda (seed) (random-seed seed)))
-
-;; ====== 字符串转数字（用于读取数据文件） ======
-(define (string_to_float s)
-  (let ((n (string->number s)))
-    (if n (inexact n) 0.0)))
-
-(define (string_to_int s)
-  (or (string->number s) 0))
-
-(define (string_of_int n)
-  (number->string (exact n)))
-
-;; formats a float to fixed decimal places
-(define (format_float f digits)
-  (format "~,vf" digits (inexact f)))
-
-(define (list_length v)
-  (cond ((string? v) (string-length v))
-        ((vector? v) (vector-length v))
-        (else (length v))))
-
-(define (list_ref v i)
-  (cond ((string? v) (string-ref v i))
-        ((vector? v) (vector-ref v i))
-        (else (list-ref v i))))
-
-(define (vec_ref v i)
-  (vector-ref v i))
-(define re_match (lambda (p s) (re-match p s)))
-(define re_search (lambda (p s) (re-search p s)))
-(define exit_program (lambda (code) (exit-program code)))
-(define json_loads (lambda (s) (json-loads s)))
-(define json_dumps (lambda (obj) (json->string obj)))
-(define parse_json (lambda (s) (parse-json s)))
-(define now_ts (lambda () (datetime-now)))
-(define format_time (lambda (ts fmt) (datetime-format ts fmt)))
-(define csv_parse (lambda (s) (csv-parse s)))
-(define csv_encode (lambda (fields) (csv-encode fields)))
-(define str_split (lambda (s sep) (str-split s sep)))
-(define str_join (lambda (parts sep) (str-join parts sep)))
-(define str_trim (lambda (s) (str-trim s)))
-(define str_lower (lambda (s) (str-lower s)))
-(define str_upper (lambda (s) (str-upper s)))
-(define str_replace (lambda (s old new) (str-replace s old new)))
-(define str_contains (lambda (s sub) (str-contains? s sub)))
-(define str_starts_with (lambda (s prefix) (str-starts-with? s prefix)))
-(define str_ends_with (lambda (s suffix) (str-ends-with? s suffix)))
-(define str_length (lambda (s) (string-length s)))
-(define str_slice (lambda (s start end) (slice-string s start end)))
-
-(define (slice-array src start end)
-  "从 tagged-array 或 vector 切片 [start, end)，返回新 vector"
-  (let* ((len (- end start))
-         (dst (make-vector len)))
-    (do ((i 0 (+ i 1))) ((= i len) dst)
-      (vector-set! dst i (if (vector? src)
-                             (vector-ref src (+ start i))
-                             (float-array-ref src (+ start i)))))))
-
-(define (slice-string s start end)
-  "字符串切片 [start, end)"
-  (substring s start end))
-
-;; ====== 通用打印 ======
-
-(define (print x)
-  (cond ((number? x) (display x) (newline))
-        ((boolean? x) (display (if x "True" "False")) (newline))
-        ((string? x) (display x) (newline))
-        ((hashtable? x) (display (json->string x)) (newline))
-        ((list? x) (display (json->string (list->vector x))) (newline))
-        ((vector? x) (display (json->string x)) (newline))
-        ((null? x) (display "None") (newline))
-        (else (display x) (newline))))
-
-;; ====== 类型化数组/vector 工具 ======
-(define (make_int_array n)
-  "创建 n 个 int32 的 C 数组，自动 GC 回收"
-  (let ((ptr (foreign-alloc (if (fx= n 0) 4 (fx* n 4)))))
-    (do ((i 0 (+ i 1))) ((= i n))
-      (foreign-set! 'integer-32 ptr (* i 4) 0))
-    (gc-register-ptr ptr)
-    ptr))
-
-(define (int_array_set ptr i val)
-  (foreign-set! 'integer-32 ptr (* i 4) val))
-
-(define (int_array_ref ptr i)
-  (foreign-ref 'integer-32 ptr (* i 4)))
-
-;; ====== Option / Result 类型 ======
-
-(define (Ok v) (vector 'ok v))
-(define (Error e) (vector 'error e))
-(define (Some v) (vector 'some v))
-(define (None) (vector 'none))
-
-(define (is_ok r) (eq? (vector-ref r 0) 'ok))
-(define (is_error r) (eq? (vector-ref r 0) 'error))
-(define (is_some o) (eq? (vector-ref o 0) 'some))
-(define (is_none o) (eq? (vector-ref o 0) 'none))
-
-(define (unwrap r)
-  (if (is_ok r)
-      (vector-ref r 1)
-      (error 'unwrap "called on Error")))
-
-(define (unwrap_or r default)
-  (if (is_ok r)
-      (vector-ref r 1)
-      default))
-
-(define (unwrap_error r)
-  (if (is_error r)
-      (vector-ref r 1)
-      (error 'unwrap-error "called on Ok")))
-
-;; ====== 通用 Pythonic 列表（ heterogeneous vector/list ） ======
-
-(define (py-list . elems)
-  "通用列表：可存放任意对象，对应 Python list"
-  (list->vector elems))
-
-(define (py-list-append lst val)
-  "在通用列表末尾追加元素，返回新列表"
-  (list->vector (append (vector->list lst) (list val))))
-
-(define (py-list-concat a b)
-  "列表拼接（对应 python list + list），返回新列表"
-  (list->vector (append (vector->list a) (vector->list b))))
-
-(define (py-list-ref lst i)
-  "读取通用列表第 i 个元素"
-  (vector-ref lst i))
-
-(define (py-list-length lst)
-  "通用列表长度"
-  (vector-length lst))
-
-(define (list->py-list lst)
-  "把 Scheme list 转为通用列表"
-  (list->vector lst))
-
-;; ====== 兼容 py-list 的 append 方法调用 ======
-(define (py-list-append-mut! lst val)
-  "错误：通用列表当前实现不可变；请使用 py-list-append 返回新列表"
-  (error 'py-list-append-mut! "mutable py-list not supported yet"))
-
-;; 为 translator 生成的 object-vector 预留别名
-(define obj-list py-list)
-(define obj-list-append py-list-append)
-(define obj-list-ref py-list-ref)
-(define obj-list-length py-list-length)
-(define list_append_str py-list-append)
-(define tuple_ref vector-ref)
 
 ;; ====== IR 节点标签判断（StaticPy 自举编译器用） ======
 ;; Python 的 isinstance(x, EConst) 在 Scheme 里对应 (ir-tag? x 'EConst)

@@ -1,0 +1,32 @@
+{
+  "name": "cuda",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 130,
+  "requires": [
+    "core"
+  ],
+  "libs": {
+    "cublas": "libcublas.so.12",
+    "cudnn": "libcudnn.so.9"
+  },
+  "description": "CUDA GPU 原语（由 libTorch 内部加载）",
+  "modules": {
+    "cuda": {
+      "gemm": "cuda-gemm"
+    }
+  },
+  "return_types": {
+    "cuda-gemm": "list[float]"
+  },
+  "prelude_functions": [
+    "cuda_axpy",
+    "cuda_copy",
+    "cuda_dot",
+    "cuda_gemm",
+    "cuda_gemm_tn"
+  ],
+  "runtime": [
+    "runtime.scm"
+  ]
+}

@@ -294,3 +294,31 @@ imgproc/preview_*.png
 /cpp/whisper/libwhisper.so
 /cpp/llm/libllm.so
 /cpp/whisper/thirdparty/ctranslate2/lib/
+
+# ==== kernel 插件化：根目录散落的临时构建产物（只留源码）====
+/align_head
+/cutout
+/flatten
+/flip
+/flip_test
+/hstack
+/seg
+/sheetalign
+/split_grid
+/hello0
+/hello1
+/pi_legacy
+/feat_legacy
+/app.static
+/args.static
+/feat.static
+/walk6/
+/anim/frames_to_gif
+/anim/pack_sprites
+/anim/pose_walk
+/anim/split_sheet
+
+# lite 会话记忆
+/mem.bin
+/mem.idx
+/mem.lock

@@ -501,6 +501,13 @@ MODULE_FN_RETURN_TYPES = {
     "la-eigvals": Type("list", [Type("float")]),
 }
 
+# ====== 插件内核（kernel/）======
+# 语法扩展、运行时增强、C 库封装都来自 plugins/<name>/plugin.json。
+# 翻译器本身只保留 Python 子集 → Scheme IR 的内核规则。
+KERNEL = None
+KERNEL_LIBS = {}      # 逻辑库名 -> soname/绝对路径（由插件 manifest 的 libs 提供）
+
+
 # ====== 外部 FFI 函数注册表 ======
 EXTERN_FUNCTIONS = {}
 
@@ -1296,6 +1303,10 @@ def translate_stmt(node, bindings=None):
     """
     if bindings is None:
         bindings = []
+    if KERNEL is not None:
+        _h = KERNEL.dispatch_stmt(node)
+        if _h:
+            return _h
     if isinstance(node, ast.FunctionDef):
         return translate_function(node, bindings)
     elif isinstance(node, ast.Return):
@@ -2272,6 +2283,11 @@ def translate_expr(node):
     """翻译一个表达式"""
     if node is None:
         return "#f"
+    if KERNEL is not None:
+        # 插件语法扩展优先（返回 None 表示交回内核规则）
+        _h = KERNEL.dispatch_expr(node)
+        if _h:
+            return _h
     if isinstance(node, ast.Constant):
         if node.value is True:
             return "#t"
@@ -2759,6 +2775,12 @@ def translate_expr(node):
         # torch.float32 / torch.bfloat16 等 dtype 常量 → dtype 码
         if isinstance(node.value, ast.Name) and is_module_alias(node.value.id) and node.attr in TORCH_DTYPE_CONST:
             return str(TORCH_DTYPE_CONST[node.attr])
+        # 模块常量：math.pi / math.e 等 → 插件的模块表
+        if isinstance(node.value, ast.Name) and is_module_alias(node.value.id):
+            _mod = MODULE_ALIASES.get(node.value.id, node.value.id)
+            _map = BUILTIN_MODULES.get(_mod)
+            if _map and isinstance(_map.get(node.attr), str):
+                return _map[node.attr]
         # 张量属性：<tensor>.dtype / .shape / .ndim / .T → 运行时查询函数
         if node.attr in TENSOR_ATTR_FN:
             return f"({TENSOR_ATTR_FN[node.attr]} {translate_expr(node.value)})"
@@ -3067,6 +3089,49 @@ def translate_function(node, source_file=""):
     return f"{header}(define ({name} {' '.join(args)})\n{body})"
 
 
+def load_kernel(plugin_arg=""):
+    """加载插件集合（默认 legacy：全部内置插件，等价旧行为）。
+
+    --plugins a,b  >  STATICPY_PLUGINS  >  全部内建插件（legacy）
+    """
+    global KERNEL
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from kernel import Kernel
+    except ImportError:
+        KERNEL = None
+        return None
+
+    k = Kernel.discover()
+    names = []
+    if plugin_arg:
+        names = [n.strip() for n in plugin_arg.split(",") if n.strip()]
+    else:
+        env = os.environ.get("STATICPY_PLUGINS", "")
+        names = [n.strip() for n in env.split(",") if n.strip()]
+    if not names:
+        names = sorted(k.available)          # legacy：全量
+    if "core" not in names:
+        names.insert(0, "core")
+
+    k.resolve(names, auto=False)
+    me = sys.modules[__name__]
+    k.bind(T=me, translate_expr=translate_expr, translate_binop=translate_binop,
+           translate_compare=translate_compare, infer_expr_type=infer_expr_type,
+           mangle_name=mangle_name, schemes=scheme_name,
+           gen_error=lambda node, msg: f'#f ;; error: {msg}')
+    k.load_hooks()
+    k.merge_into(me)
+    # manifest 里返回类型是字符串，内核统一换成 Type 对象
+    for _fn, _ty in list(MODULE_FN_RETURN_TYPES.items()):
+        if not isinstance(_ty, Type):
+            MODULE_FN_RETURN_TYPES[_fn] = type_from_str(_ty)
+    KERNEL = k
+    return k
+
+
 def generate_extern_ffi():
     """生成 extern fn 的 Scheme foreign-procedure 声明"""
     lines = []
@@ -3076,15 +3141,10 @@ def generate_extern_ffi():
         # 加载库（每种库只加载一次）。仅用 soname，不写死绝对路径；
         # 可用环境变量 STATICPY_LIB_<LIB> 覆盖，未知库默认 "lib<lib>.so"。
         if lib not in loaded_libs:
-            _soname_map = {
-                "openblas": "libopenblas.so.0",
-                "lapack": "liblapacke.so",
-                "cublas": "libcublas.so.12",
-                "cudnn": "libcudnn.so.9",
-                "onnxruntime": "libonnxruntime.so",
-                "xgboost": "libxgboost.so",
-            }
-            soname = os.environ.get("STATICPY_LIB_" + lib.upper(), _soname_map.get(lib, "lib" + lib + ".so"))
+            # 逻辑库名 -> soname：插件 manifest 的 libs 优先，其次环境变量覆盖
+            soname = os.environ.get(
+                "STATICPY_LIB_" + lib.upper(),
+                KERNEL_LIBS.get(lib, "lib" + lib + ".so"))
             lines.append('(load-shared-object "' + soname + '")')
         loaded_libs.add(lib)
         
@@ -3110,6 +3170,7 @@ def main():
 
     # 检查命令行参数
     typecheck_mode = "strict"
+    plugin_arg = ""
     input_files = []
     i = 1
     while i < len(sys.argv):
@@ -3118,6 +3179,9 @@ def main():
             typecheck_mode = "warn"
         elif arg == "--strict":
             typecheck_mode = "strict"
+        elif arg == "--plugins":
+            i += 1
+            plugin_arg = sys.argv[i] if i < len(sys.argv) else ""
         elif not arg.startswith("-"):
             input_files.append(arg)
         i += 1
@@ -3126,12 +3190,12 @@ def main():
     TYPE_WARNINGS = []
 
     try:
-        _run_pipeline(input_files)
+        _run_pipeline(input_files, plugin_arg)
     except StaticPyTypeError as e:
         sys.exit(1)
 
 
-def _run_pipeline(input_files):
+def _run_pipeline(input_files, plugin_arg=""):
     global TYPE_ENV, EXTERN_FUNCTIONS, IMPORTED_NAMES, RECORD_TYPES, RECORD_FIELDS, FUNCTION_SIGS, TYPE_WARNINGS
 
     if input_files:
@@ -3151,6 +3215,11 @@ def _run_pipeline(input_files):
     FUNCTION_SIGS = {}
     TYPE_WARNINGS = []
     
+    # 加载插件：语法扩展 / 运行时表 / C 库封装
+    kernel = load_kernel(plugin_arg)
+    if kernel is not None:
+        code = kernel.rewrite_source(code)
+
     # 提取 extern fn 声明
     code = parse_extern_functions(code)
     

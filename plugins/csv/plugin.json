@@ -1,0 +1,17 @@
+{
+  "name": "csv",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "order": 60,
+  "requires": [
+    "core"
+  ],
+  "description": "CSV 读写（纯 Scheme）",
+  "prelude_functions": [
+    "csv_encode",
+    "csv_parse"
+  ],
+  "runtime": [
+    "runtime.scm"
+  ]
+}
