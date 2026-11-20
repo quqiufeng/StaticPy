@@ -124,9 +124,9 @@
       "path": "selfcheck.sh",
       "why": "一键自检",
       "state": "present",
-      "sha256": "fc057ac498096926bda50a9bb29994976cdc04ea25c19e48883250843488c94f",
-      "bytes": 4470,
-      "lines": 93
+      "sha256": "4bdd6f5c2101dc43c327ca8c7cbb41dd159aea56d2f0ce95a3f8e0271fad6909",
+      "bytes": 4845,
+      "lines": 100
     },
     {
       "role": "harness",
@@ -199,6 +199,2154 @@
       "sha256": "4fbcd70dcc31a765c6fa55de99ab823ea4fa75d734f66678aa97357aa44e8162",
       "bytes": 2631,
       "lines": 45
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/annot/annot.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "9bc5966bb5a1dafbeea311ce85cdf67088f32413edab490447acc5b03af9cb44",
+      "bytes": 3106,
+      "lines": 56
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/annot/annot.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "3842c08aaceb9d2d536e547a6ecd28196b5881f3179579d9352d72ca2d80ed20",
+      "bytes": 253,
+      "lines": 11
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/annot/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/annot/stb_image_resize.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "61eae65326d981113cc7ff9906ea1fcf154108671a66dae96d95410c230c0726",
+      "bytes": 246,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/annot/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/atlas/atlas.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "0b49343bfc5c3cf0107e7753a519ac4519ff6482b62ef3a7def96a4f840e7b31",
+      "bytes": 3380,
+      "lines": 86
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/atlas/atlas.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "3e121037cc5c805b897ee5c126f74687aeb6c9ac17b926a001269c3b4a30fee8",
+      "bytes": 388,
+      "lines": 13
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/birefnet/bgremove.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "5ac4024241d76cff325f886db9a319058b7d5e4f2f691b24abe8a850c2180306",
+      "bytes": 4343,
+      "lines": 114
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/birefnet/birefnet.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "b53f01764793c39b9c89315ce5c20a9680ad392f16552d74f16d28195b140292",
+      "bytes": 7308,
+      "lines": 187
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/birefnet/birefnet.hpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "90b451f5aeba89e18fdbce47da5b3d16e1a8c525020853a0c9b605e98af8daba",
+      "bytes": 1291,
+      "lines": 39
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/birefnet/birefnet_capi.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "967df1b9174c0820dfed84934560fbf72492e42da56dae53f8eea9010dc3807c",
+      "bytes": 1830,
+      "lines": 56
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/birefnet/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/birefnet/stb_image_resize.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "61eae65326d981113cc7ff9906ea1fcf154108671a66dae96d95410c230c0726",
+      "bytes": 246,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/birefnet/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/codeformer/cf.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "bd51106b2b0f3b57472e20974d11613f254e43a7fb96c5b94959fdfe0d3588fa",
+      "bytes": 2609,
+      "lines": 57
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/codeformer/cf.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d574b2e8efa694a3a438d1916c805e1c2160c3a61f8fc4d25c9d836044a12981",
+      "bytes": 270,
+      "lines": 11
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/codeformer/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/codeformer/stb_image_resize.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "61eae65326d981113cc7ff9906ea1fcf154108671a66dae96d95410c230c0726",
+      "bytes": 246,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/codeformer/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/colorize/cl.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d834e6628b3f68fb70e20abb25dca71b9d447c0414cc7e114c81f07b619654b8",
+      "bytes": 3058,
+      "lines": 61
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/colorize/cl.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d937dafede5e2e590fa5b6d81882a2a463d2df5257a43d40f4efc399b5db060d",
+      "bytes": 222,
+      "lines": 11
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/colorize/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/colorize/stb_image_resize.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "61eae65326d981113cc7ff9906ea1fcf154108671a66dae96d95410c230c0726",
+      "bytes": 246,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/colorize/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/cvops/cvops.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "829a31c04e6e4ad0018727b92ea2bc4dec8cd08f2bb93398e397363d47379f9c",
+      "bytes": 5824,
+      "lines": 120
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/cvops/cvops.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "8f8ae2b1ef7c2ad6ae65da0b76c87cef62c010656483b3fd85e64b094e58a240",
+      "bytes": 937,
+      "lines": 19
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/cvops/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/cvops/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/det/det.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "bee84371f924d46d115fdbfaee6e623b133ced8890511db6c091337f1f24204e",
+      "bytes": 4918,
+      "lines": 66
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/det/det.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "c848515e579c58b215520c36f223bb9aa16c4b59da5231bd98e6a315fd2593a8",
+      "bytes": 263,
+      "lines": 11
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/det/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/det/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/easing/easing.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "ad0c24924b0fc2374ad35ea9bcf795d86c48a7d690dffcdc6fc9ae845663d04a",
+      "bytes": 2623,
+      "lines": 68
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/easing/easing.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "3888a35d6dd692d6675c866235b17e1d719da9422a5afe6e4534a6b77676af16",
+      "bytes": 286,
+      "lines": 12
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/face/face.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "ae5546745cd0be70e0e0884e6e751401370dd676f13f325ebc31df2822445cac",
+      "bytes": 12106,
+      "lines": 288
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/face/face.hpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "7ce586306f3b6fa5521722926bfbf67a983d0fbf522c896e3e20f0654725c342",
+      "bytes": 1767,
+      "lines": 53
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/face/face_capi.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "03eedbe9defee264375772cc63bd997f3fcc18c0d3a0924f7a293c106179be56",
+      "bytes": 1953,
+      "lines": 68
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/face/facecli.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "2ed6f3c3a2d16f70da46567f37b85fb5f6ce80e6a8237a9546ac9b37e72a611c",
+      "bytes": 3881,
+      "lines": 90
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/face/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/face/stb_image_resize.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "61eae65326d981113cc7ff9906ea1fcf154108671a66dae96d95410c230c0726",
+      "bytes": 246,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/face/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/florence2/florence2.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "f87470915e56404748872aa9e1f790042ebbb5e604d746878fe036e20ee2e697",
+      "bytes": 15890,
+      "lines": 399
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/florence2/florence2.hpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "068944ddc29a6d4fbf96138b6c7cae141d81fc270817fbc1f2dab2269c224ee5",
+      "bytes": 1008,
+      "lines": 38
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/florence2/florence2_capi.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "1b4d9f3d3f44bda7f0af779db425138aba8195cfcaf2aa19e6b9119497feae66",
+      "bytes": 1744,
+      "lines": 53
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/florence2/img2prompt.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "603392f937a62220b8024159ddc212bd7814a3623e22370d14d612963b5bea86",
+      "bytes": 2708,
+      "lines": 72
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/florence2/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/florence2/stb_image_resize.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "61eae65326d981113cc7ff9906ea1fcf154108671a66dae96d95410c230c0726",
+      "bytes": 246,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/font/font.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "bd35c3894228951d50dfd2fda6470c2683b9ad569cb474e06c9ffcaa3be34f82",
+      "bytes": 3629,
+      "lines": 85
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/font/font.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "220576e5b007aeea8e554059a574ff88fc38111da2a2bee9a943bb3aaa56c310",
+      "bytes": 471,
+      "lines": 14
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/font/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/hashlib/hashlib.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "68e8089f223609a51bf8109898007ebbfc2c74613d01b9c2864dd24c7dc52232",
+      "bytes": 2482,
+      "lines": 77
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/hashlib/hashlib.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "7de65ecee63e720753b285a27809f80a5945271b1af0ad43fcd942c7e66ec752",
+      "bytes": 709,
+      "lines": 18
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/color.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d1b7d5e98ef0452e789dc8694cba0e14220722fc138563ee3e5b5f4b273053d9",
+      "bytes": 17405,
+      "lines": 320
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/core.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "4f1e65cbb6144e473c7a077b5d78936befe1e4aac5fa4284575d392018f01006",
+      "bytes": 19249,
+      "lines": 379
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/draw.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "9fbb8c0b7fa16c27480f76d14fda4f4e656016770a6fd96131e13333d25243cf",
+      "bytes": 15683,
+      "lines": 288
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/effects.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "1d644c9236fee24be2a4751680e2d89657faa7137919cef46414cd4dd79f5b8a",
+      "bytes": 2924,
+      "lines": 78
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/filters.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "8cdbcd22884893e94f4062d4c84b1fa48956ce0207c32bf7bda20ff109476945",
+      "bytes": 11075,
+      "lines": 205
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/geom.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "a90aa912bcd8686bde23d816faa4414007fc6d8a3a25f4aa262dc5dc67d980dc",
+      "bytes": 23394,
+      "lines": 467
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/imgproc.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "1016c5809eb0aa9d2a6cdd922d552305b674b41441f2a38d871c53a1f3bee622",
+      "bytes": 9881,
+      "lines": 153
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/imgproc_internal.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "96862f5bac9526e49512b56d367817cb43bd7b680f4580ad3a9ef9019787fbc9",
+      "bytes": 2479,
+      "lines": 69
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/lut.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "bdd40f3a6295078fdaff1fa354b4ca16696e2f06ca7436e77a610b5e026afa75",
+      "bytes": 3203,
+      "lines": 57
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/ops.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e9a75452170d85f9a9a41cff74d7e722a0853a5f934cdd893b2dea07d4874fce",
+      "bytes": 12778,
+      "lines": 225
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/imgproc/quant.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "146423a6d09c3cb97c30289cf1633a5bf1a19502c0a5f03ac39cc992bbc272f6",
+      "bytes": 17460,
+      "lines": 339
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/imgproc/thirdparty/giflib/gif_lib.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "172c2ffaa51ec1569ab78958253626a5b18eb15e46968ba5693050eb1ddb22e9",
+      "bytes": 13142,
+      "lines": 301
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/imgproc/thirdparty/stb/stb_image.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "4780abb74438932cd31c296f101142715ba351494ba9f004a7a355625b305241",
+      "bytes": 224,
+      "lines": 5
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/imgproc/thirdparty/stb/stb_image_write.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "c8f084bb34fc6477e93f1ece52e7d4226814141c9d74ff7941ef1e04b1a1bd2f",
+      "bytes": 248,
+      "lines": 5
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/imgproc/thirdparty/stb/stb_truetype.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "69eda137f02a17607784f9cf2365a911e1485b9cb2091171039cdf42c853054d",
+      "bytes": 236,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/llm/llm.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "03d7cd45f5d5cc63f8cfc476f5ee9c43ff4ae293c143e252a1a20d76c37faeb6",
+      "bytes": 831,
+      "lines": 25
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/llm/llm_capi.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "cd94b06c56472071e3953efddc10cb5dcbd4fbf5612a723e28a276fdc7476b81",
+      "bytes": 21144,
+      "lines": 654
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/llm/thirdparty/nlohmann/json.hpp",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "665fa14b8af3837966949e8eb0052d583e2ac105d3438baba9951785512cf921",
+      "bytes": 907858,
+      "lines": 24596
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/ocr/imgsocr.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "fab9737523e9388e28777cf6b3e077a35faee4e82a048e14d2b73fc49707ae97",
+      "bytes": 2004,
+      "lines": 58
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/ocr/ocr.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "26878ede0bf23ac40c19b3ab7814c6d403e1f76d25cd4ff46b2967dc0d7420f4",
+      "bytes": 11425,
+      "lines": 284
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/ocr/ocr.hpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "b94c5cf7670d63f43cbf233fd015e44c90dc73b392ee4eca541b5336086eb546",
+      "bytes": 692,
+      "lines": 33
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/ocr/ocr_capi.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "3fd5a4b83a8f3eab751aecc49f954ba99fdbdceaf40c1391f61451c5abda6fa1",
+      "bytes": 2323,
+      "lines": 80
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/ocr/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/ocr/stb_image_resize.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "61eae65326d981113cc7ff9906ea1fcf154108671a66dae96d95410c230c0726",
+      "bytes": 246,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/pathfind/pathfind.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "981f1b8c4dc681694333dedb6414c2f1ab9c5a482eafdc508eb19144f7167d50",
+      "bytes": 3597,
+      "lines": 90
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/pathfind/pathfind.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "f8ed4a779d9fddfb56ef10a21afe696a874919cfe3dfa39e1a5eec7f1917a751",
+      "bytes": 555,
+      "lines": 15
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/pose/pose.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "55130237d50e67d567ff3588e4a4e105ce15890e4b4fabd8ab8d97d491b52dfe",
+      "bytes": 5380,
+      "lines": 98
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/pose/pose.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "c91eac1cea9a2c034188d9894f2ee76bc2ed03cdb0045a330f3d1058ded9e802",
+      "bytes": 424,
+      "lines": 14
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/pose/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/pose/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/sr/sr.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e0e5ec54e0d0f443de3241a1abd26566149bb0facb998c3b829d17ae27955c5a",
+      "bytes": 2392,
+      "lines": 51
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/sr/sr.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d7db69ce4a16077ed416ea04d5c08a7f8a00cbb299229c707e9ffda6c8522e89",
+      "bytes": 237,
+      "lines": 11
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/sr/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/sr/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/thirdparty/stb/stb_image.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "38e08c1c5ab8869ae8d605ddaefa85ad3fea24a2964fd63a099c0c0f79c70bcc",
+      "bytes": 284733,
+      "lines": 7987
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/thirdparty/stb/stb_image_resize.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8b430895b231a541c234cb7441756e9f4c857ea140dbf3275dfdf12f92b83082",
+      "bytes": 113565,
+      "lines": 2585
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/thirdparty/stb/stb_image_write.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "683e15c6dfdc2d57b06b9e166ba27665328e0854a9c1130c2ba9958afaf2f8da",
+      "bytes": 72926,
+      "lines": 1759
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/thirdparty/stb/stb_truetype.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "ecd30b05e0dd4fea3a13c26810dd9e1992dc379049482c393d5a19e6b5090aab",
+      "bytes": 199192,
+      "lines": 5079
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/upscale/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/upscale/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/upscale/upscale.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "ed3ec861ffdf564d214c55b46e3bc1a351ffd419556839a8099933b81c263860",
+      "bytes": 1937,
+      "lines": 46
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/upscale/upscale.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "0b786292301eb5a8f045edf630d85707196c6588a3e92b0cfecd87f13976bc6f",
+      "bytes": 236,
+      "lines": 11
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/warp3d/stb_image.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d4c52f1af20a9e6a1675bdf94d48d09925ba2999570c44194b7238c87637c92c",
+      "bytes": 218,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/warp3d/stb_image_write.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "e3af6172537e8eda7c253fa11f973c113c065699b5428c7828401240933b1b38",
+      "bytes": 242,
+      "lines": 5
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/warp3d/warp3d.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "0a2d8a93e29d24b74caa9cc4a41fdfe0774f5d91b3ac3ed48dcb8d77a06a520c",
+      "bytes": 4702,
+      "lines": 104
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/warp3d/warp3d.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "3aad73756b246e986cf998d72a7dd361b10979549e07dbd412bc725528aecb4a",
+      "bytes": 671,
+      "lines": 15
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/whisper/feat.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "0d78fe9bcc48e78ad349f24991965ae7ffec7a4bde3f09c578bf10efb5238998",
+      "bytes": 6268,
+      "lines": 190
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/whisper/feat.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "7044cfa1db94cbf3a9e3a702ff1e32d1cc9c1e31f74fa0140e250456aaf893c8",
+      "bytes": 671,
+      "lines": 24
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/whisper/whisper.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "4e410f20baadbb1c2ea9b6f8730503b068a804bbb7fbf6482a14536d936d7178",
+      "bytes": 2279,
+      "lines": 49
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/whisper/whisper_capi.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "8d86b06a463c4e7c814f0cb293aaeb57578217e262a05e028aad513ea400812e",
+      "bytes": 29119,
+      "lines": 755
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/allocator.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "eb4d3982c632d4d59c894c251c16c2c501cd0824a0067e71584b14806f8cb90f",
+      "bytes": 515,
+      "lines": 28
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/batch_reader.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "18b191db94097ab6ec627641c5aa9048bc7cfad6d309f72d7e2982ea2825adc1",
+      "bytes": 3976,
+      "lines": 161
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/bfloat16.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "916af543a4a9447987e49c5d423ae2182a33a2ec552d98b1b493b704bed17edc",
+      "bytes": 1710,
+      "lines": 69
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/buffered_translation_wrapper.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "98324a56b51ded6f073ff4606163647c3dfc88680ba1c9f70885ae05906661fd",
+      "bytes": 1769,
+      "lines": 48
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/decoding.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "28e715bd0d82c9db8f323cd3f0e23682e79fbefe7c2f99f54d7aeb99a9012f43",
+      "bytes": 5967,
+      "lines": 175
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/decoding_utils.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "3e06d0471f2119c9f8633b5005c56ea99537d2e2d59018f61789a0d52213d823",
+      "bytes": 5783,
+      "lines": 181
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/devices.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "d0e62731752e5da3499aef8145a61a2adbdc32cc73da00408ca966ec15c9ca06",
+      "bytes": 1718,
+      "lines": 81
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/encoder.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "af2b87562f7764b4c3c2b4b973f70fd4c803b2700b4b35706b2ebbb3423d3240",
+      "bytes": 886,
+      "lines": 27
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/encoding.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "035e0dd22c0444343fd67c0dc7a05639e1c8e3bf5b579598f052f531c9b57581",
+      "bytes": 209,
+      "lines": 15
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/filesystem.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "b1f57b9297dbc6bb702d1763834236e8899952c459287af1ea4f4d045987aff5",
+      "bytes": 461,
+      "lines": 16
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/generation.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "0ad1f72e2d35706eef8ae13417ce28e4de2bc4fe91e981b25fd5dd98b979af27",
+      "bytes": 5362,
+      "lines": 164
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/generator.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "25b90a2c81885ba6a1e1def909f0ccb11ee63f706dc1ccb0b622fcc5c5708f7e",
+      "bytes": 1506,
+      "lines": 40
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/logging.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "2100dbe1389dcf39940cbaed56b528f536ef553eb9b4391179d90b5da8567739",
+      "bytes": 276,
+      "lines": 19
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/padder.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "4eb8306753a9832dc1b97dce3733e1cd096ed4c18fb185543af61e863173cae9",
+      "bytes": 1073,
+      "lines": 36
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/primitives.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "7e43dcb0ff4a7276632913c4571b0e31aa295dea11ec3e5db46aabebb994ad12",
+      "bytes": 8039,
+      "lines": 241
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/profiler.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "ef4284f20791bfbddf4cc828f3afd8d9b9d9d3f397a37cc99916c768ba264917",
+      "bytes": 840,
+      "lines": 35
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/random.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "308921a948388ccad09d1ec42ebf587e302210a5761571f17622e0ad3efdabad",
+      "bytes": 184,
+      "lines": 11
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/replica_pool.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "a71e355a2e87567743786796a4cf4e71988eefccdc1d6f0b67dce8096c29ccee",
+      "bytes": 12888,
+      "lines": 384
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/sampling.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "c133c30329490274a6a4de29adfad75f6b27d4b2d0bcfdebbcdbca30d2c0abee",
+      "bytes": 1307,
+      "lines": 48
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/scoring.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "1d03471a039c5d792d65c1f4663470b642e3613d068b857c6e79b0c2f45e208b",
+      "bytes": 1287,
+      "lines": 45
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/storage_view.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "0f36d7f935cdc5a98318722a098a6f6193c698966026410b3099485732248613",
+      "bytes": 7560,
+      "lines": 252
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/thread_pool.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8a11c1257afda711e10a6489b8d16521110ec5732cb1798c89d4fe54c30ec9a1",
+      "bytes": 2851,
+      "lines": 117
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/translation.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "051a4709eb7ba27f0477bd7acfd02e39edf3f6d1eeebbbbc97d7b99d02d00a5b",
+      "bytes": 5481,
+      "lines": 148
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/translator.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "448a1270d5e190bd4ee6c5b01dc41c378dcfd05d2817ddef3134c15a091c9ea4",
+      "bytes": 17151,
+      "lines": 347
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/types.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "80fda2a3736d8936b4829c5c8e44ed7cbc465a1ade3808671037dda6e81ef02e",
+      "bytes": 2093,
+      "lines": 68
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/utils.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "bc5fd5a3c703340b245bbb2c7ce7697e0002187b97dd3b09f916c7399bee4a18",
+      "bytes": 3843,
+      "lines": 103
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/vocabulary.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "514235a50052d1a9850f33a87233a0bb36efe50256c621b8295ba37942d3b468",
+      "bytes": 2151,
+      "lines": 73
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/vocabulary_map.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "7a894ac185ad8340f6a2b9dd140c7a640131e3869b2579ea380318f2fd2be23e",
+      "bytes": 940,
+      "lines": 34
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/attention.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "f3d9fef313b85fdd97f9a1e64714d75805ddea80250bb76f4872150126f2d34a",
+      "bytes": 4946,
+      "lines": 113
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/attention_layer.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "88621014512a079efca659ddf2fb61b4c3c22e7354663256e310109b89a18973",
+      "bytes": 5242,
+      "lines": 152
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/common.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "0337bf74ed41c6d0c742c70bafdb7f29cfef5fc44ede29e2b69b44b43a3b9dc3",
+      "bytes": 6686,
+      "lines": 192
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/decoder.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8ac459d3109e07818e88c924013955379fe8f6f48e10b4838c04f192143ecc70",
+      "bytes": 3738,
+      "lines": 113
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/encoder.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "9ce34eb83e1248931f03fcc1dc778095c0e2084de67c90c57d59b316b2a9fa66",
+      "bytes": 1113,
+      "lines": 40
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/flash_attention.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "2f804210dc62cc3a6ee4096514d30439db871507b1499b9f93661509324c6715",
+      "bytes": 1912,
+      "lines": 53
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/layers.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "90966ae139ff9e6c3bf15ee8e68821c7e49b91e2c7ed68acf81a6925eaf6b13d",
+      "bytes": 111,
+      "lines": 6
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/transformer.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "67ecee4a9e3a981fcabdc0e83af3d611db39c7c81426ef9af7c6c5c0db284c40",
+      "bytes": 9249,
+      "lines": 242
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/wav2vec2.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "d4da522535b0dff8a39b252768addd203935a56f5517be26f643b78ba61e1cb1",
+      "bytes": 2703,
+      "lines": 101
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/wav2vec2bert.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "76660566144201ab1dd1d5f270b8dc7267bd39806011205f3d07ace148799e1c",
+      "bytes": 4163,
+      "lines": 138
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/layers/whisper.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "d6f265b4c61f8425d98dbdc069496f2e71a0829411f263e8368d5883a4bff76d",
+      "bytes": 2106,
+      "lines": 73
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/language_model.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "f35e5941ecabc73c9cae274182426464402ff0c5b89ff1f6f2d8ad77c263c625",
+      "bytes": 5785,
+      "lines": 165
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/model.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "1e12b138057d619a6a7f87ad387cad2016039903ffe59e5d9a897124c328647a",
+      "bytes": 8743,
+      "lines": 249
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/model_factory.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8d184658945381dcc0e7327f53043ff3e8d478c71030639c1f9278fd45846453",
+      "bytes": 1244,
+      "lines": 43
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/model_reader.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "76c948f71ce4a0aee278aae38dd8f2d81ae56fb748ae2db6ff194c27172a8f68",
+      "bytes": 2066,
+      "lines": 62
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/sequence_to_sequence.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "fb946f6d37dbad2be7faf4224e2d5f7d28a5eb76af940d9a5a10ce9a26cf95bb",
+      "bytes": 5895,
+      "lines": 159
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/transformer.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "3d734f4b4ec9f50ed121662a59dfba17c120a16f48aa948818892c76e805245e",
+      "bytes": 1630,
+      "lines": 52
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/wav2vec2.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "a970cbae39413006f28ddd5af44ac9c068e738476e3b4077cd08633f46ecfdda",
+      "bytes": 2076,
+      "lines": 70
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/wav2vec2bert.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "05634c30d52735af5899d6de46d3b34ae33268e646ff140396dee8c5758c4193",
+      "bytes": 2137,
+      "lines": 71
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/models/whisper.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "ee3ae7a77c107fa8a6756dfa32340f3d4e1cc1d6e247786580d40dd810058312",
+      "bytes": 6025,
+      "lines": 191
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/activation.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "d2e6c71d736fb94377db64eebae0c43291c612afaaa1f5f86e4d0c7370c0da57",
+      "bytes": 323,
+      "lines": 22
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/add.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "dde2095e5db935560676ac87afa8a340d2b4b4296431be52a44418baab30e0b6",
+      "bytes": 620,
+      "lines": 25
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/alibi_add.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "2ad200c85fa45124b5887361ad00f5a0b9b76a66bab7d1587d78913b92fdd72c",
+      "bytes": 631,
+      "lines": 27
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/bias_add.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "eeffdb2b8a224d1137e633e337ba5222731eb5e1896544f7417ec3ff387f15c5",
+      "bytes": 775,
+      "lines": 31
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/concat.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "6f70151adbc9866fbce92ae759047b6b05cf9a1b566cdd851371f5bb92ce296a",
+      "bytes": 438,
+      "lines": 22
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/conv1d.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8e45561d32114b4f297d1b6a470fcdbe6fe64d6ee661d0d64c2339028f6bf58b",
+      "bytes": 1744,
+      "lines": 55
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/cos.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "0cc164bdb34ebd6211a9ce50d59a3d2cd99df5874900b16f537bdc09ec80b2cb",
+      "bytes": 200,
+      "lines": 14
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/dequantize.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "c20e3562236992ba1ae5f736a8bb2b9456072a290421dc2a9a95e727db2233d5",
+      "bytes": 1501,
+      "lines": 45
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash_attention.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "3764eedf25e7474ec156630b868f1341938aab87f1373a765aca2f164f2fcb38",
+      "bytes": 1529,
+      "lines": 45
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/gather.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "9cf296741919e88aa961ae9a6763c44cfccb12f27f1dec855ae3813c65d95cf1",
+      "bytes": 789,
+      "lines": 31
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/gelu.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "4f9930cae91cae767e0b8a9ccc1d0dde840b0b22633e2111dafc1208be9d9eae",
+      "bytes": 950,
+      "lines": 40
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/gemm.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "74608b4637528ef49af7c59426410865abe5ea8967cca6c1bd2874cc5eab651f",
+      "bytes": 2266,
+      "lines": 64
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/gumbel_max.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "f4e83d756f32fcebae6e44c373dd8915d4eaa77baa4189650709fd9b9fefb6d9",
+      "bytes": 525,
+      "lines": 24
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/identity.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "1cd6a3e43d9ad1a9b1c593e021e8996d9938e3702084aa4c6e49a76bf000ade6",
+      "bytes": 267,
+      "lines": 17
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/layer_norm.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "cbbc1e72173a803fd557591f0ca5eecfbd7576293305ebbd5a3548b4d80847c5",
+      "bytes": 1210,
+      "lines": 42
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/log.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "6b0fbd55b808a5e1477692ee2edd059b606773728582739334ddb3a9e2a7ec5d",
+      "bytes": 413,
+      "lines": 21
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/matmul.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "902953c4dcfa78302bc8fd4122bd5a138f957ee52d20b763f2b55c720ef38696",
+      "bytes": 502,
+      "lines": 23
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/mean.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "199cffd08c3e2a7b6f87821a241d730e53561beea51e3f4136ce25608b4d311a",
+      "bytes": 589,
+      "lines": 27
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/median_filter.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "995eb633a43d1036637462872efab253990518e99b548845320dfb2b3c9586c4",
+      "bytes": 426,
+      "lines": 20
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/min_max.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "b0ffde868f330d134ffe9928515fcb23a69c4b265ec0714f0b5eba92d8821dc0",
+      "bytes": 1160,
+      "lines": 41
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/mul.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "40200ac9947bd3bd5c7aff3dc843e8c76319ce88a4c8f4277fcaae19bea87fab",
+      "bytes": 620,
+      "lines": 25
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/multinomial.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "f5722fa184a358e3d0c584ee71989e3a58e706f611bd1710576cb6896076a147",
+      "bytes": 552,
+      "lines": 24
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/nccl_ops.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "9f5e06f1d4db0e358d771aa73285a8f068b9b02770754cca7fc0845c3a9a902d",
+      "bytes": 791,
+      "lines": 35
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/op.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8ed29ae08d16dcbbad5ed2e46de5671480b6e659f2d959625fd1a9e908b0622b",
+      "bytes": 892,
+      "lines": 40
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/ops.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "136e8052be024c1b2eccae4184abdb134518647aa670c1e2b955da102c8fc8c8",
+      "bytes": 958,
+      "lines": 48
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/quantize.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "575bbbd6d42cf7f558d08e9a76238d3c515bfc64188fd489a624875aff8bc7a4",
+      "bytes": 898,
+      "lines": 38
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/relu.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8bb8568493edcda8c4be81ac37b1e9bb565cf8d7bb803058b46396e0edf79da0",
+      "bytes": 424,
+      "lines": 21
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/rms_norm.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "08fd2631bcdbda73a47088bd08b3e3e8e82a90449b3e249fb97b04268dc3b4f8",
+      "bytes": 605,
+      "lines": 27
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/rotary.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "d135717a72bd7320673527075dc13f83779930df1799a024771d984416b25c6e",
+      "bytes": 749,
+      "lines": 31
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/sigmoid.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "997f63fd0f50c85e24ecf6d653a3e1a9da0bd73d94ad2ceca195ce12edef56fc",
+      "bytes": 430,
+      "lines": 21
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/sin.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "3df60e97f7d135601f88dd3825ff0452549c2a7df4fc73865a1ecd23eda790af",
+      "bytes": 200,
+      "lines": 14
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/slide.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "d8b648d04fa68b7fe1750e8d3922d3324799fd12ee37085a4622c257e29a6402",
+      "bytes": 554,
+      "lines": 26
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/softmax.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "b6d6a3278d32f2ce6145d69a0fdf0eb61b6d971ed49451832204e34d629d2412",
+      "bytes": 767,
+      "lines": 32
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/split.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "34d9141d37c1109d68cf81e2655cf6eb97035f4512d6359dabb16a289741452b",
+      "bytes": 907,
+      "lines": 32
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/squeeze.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "0453efa29f013c8d3b98c130493ddc5595d63c6d579365716be571827e72d9c0",
+      "bytes": 1312,
+      "lines": 49
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/sub.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "041033542fb635c4d91b88e350171a98e0087080eaf9941b1f625d0c0756cdb5",
+      "bytes": 620,
+      "lines": 25
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/sum.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "b8dc087d039dd0c42999959c202c0b249a523ab99d75b08ffd412340d2508b8f",
+      "bytes": 263,
+      "lines": 17
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/swish.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "74efdf88153c3b73c726251d28298964453330fdf2e1745128d61da788f2e66e",
+      "bytes": 426,
+      "lines": 21
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/tanh.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8c6daaadb3ee96f36c1aae5cafe89b28d4d106c5e8cf8b2835bf383028ba7934",
+      "bytes": 201,
+      "lines": 14
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/tile.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "05da08be345dfcef5b764889e5a2b79b30cf375b6d6a653b90a734f6c47d4d5a",
+      "bytes": 608,
+      "lines": 27
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/topk.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "e1e032aec83ecb9cada04b40c8dad574cf90709f73adbb926738cd073900ca44",
+      "bytes": 487,
+      "lines": 24
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/topp_mask.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "0a95452f0dfbc3a923c5b1bca2040f1c2cea810d3b5c9c78be8164b3a6957860",
+      "bytes": 654,
+      "lines": 30
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/transpose.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "4506bca19ffb2204261cedb5b2f5a4c3bc6497d0e192adb992049df427294743",
+      "bytes": 1260,
+      "lines": 36
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/unsqueeze.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "6c2081c4b4411bbd09e6a344779984dfe1d2411df55dce447816f84563e9e61b",
+      "bytes": 1064,
+      "lines": 44
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/awq/dequantize_awq.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "85bb01a56f87553e4475e41bc8495d02060cbac9af265446a84add6188bcc0d7",
+      "bytes": 622,
+      "lines": 26
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/awq/gemm.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "0f7172fc05f20c49226220fa7cfa971968d628790a694c62f3018db7fd6eeed9",
+      "bytes": 813,
+      "lines": 28
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/awq/gemv.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "e34ce528b4eda37bdb7c2d6137e01ddf3a689d47f348646e3435b5002e6737c5",
+      "bytes": 1110,
+      "lines": 34
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/alibi.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "04b6a655480162fa7a067e32c1f824b8c7ad94cacb6665eceb933fb3e496238a",
+      "bytes": 2824,
+      "lines": 74
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/block_info.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "dc4173a0b55fadfb7f386fb8f8b5c2722c3d425b28e034756c312ce84d72f413",
+      "bytes": 2260,
+      "lines": 46
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/flash.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "b276445ef706aadff38ad11794236b27b22da7022ca3d69f974cb53122c6e984",
+      "bytes": 5387,
+      "lines": 178
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/flash_fwd_kernel.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "bd01f8e5003a69c766be9ed06d20a62dca61da4bb6894a842f4333a025c494a9",
+      "bytes": 69684,
+      "lines": 1207
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/flash_fwd_launch_template.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "61b60b428d3846b99a7cb0564dea72e5bb41640a531408be911a0dd36416da0e",
+      "bytes": 19449,
+      "lines": 334
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/kernel_traits.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "e0812fffe2cec2904ab7d80cc9c4673bc8a7f9c466f8078aefeddccfe960e3f7",
+      "bytes": 7617,
+      "lines": 160
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/mask.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "a5ba3f2b8ea12e659bd7d3c602d32b99b0f1572e44f8326868c609839ad3505d",
+      "bytes": 11224,
+      "lines": 213
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/rotary.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "3bf75a787d85b7ea5768a03a3d8b59d2acc7a519c7cc314b883191e218b67a53",
+      "bytes": 8960,
+      "lines": 152
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/softmax.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "d2afbed701fa6ed910732bf7296eb2755bff07c5f590862b111578a8da87cc78",
+      "bytes": 8929,
+      "lines": 184
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/static_switch.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "0d7ad441a1c3fe872958d331391fe0aa2c6492783b6e38acead11be0e3681eec",
+      "bytes": 3802,
+      "lines": 108
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/ctranslate2/ops/flash-attention/utils.h",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "6f4ffdecf2ed14a881020407409820ee5d54676d8f663d11a0c238865bc9aba0",
+      "bytes": 17699,
+      "lines": 395
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/half_float/half.hpp",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "8f37fbc82d45c141e3c068c83893e7fc2b3696b8f4dbb863ff8a61ab779abf4b",
+      "bytes": 211605,
+      "lines": 4601
+    },
+    {
+      "role": "vendored",
+      "path": "cpp/whisper/thirdparty/ctranslate2/include/nlohmann/json.hpp",
+      "why": "随仓库带入的第三方源码（非我们写）",
+      "state": "present",
+      "sha256": "665fa14b8af3837966949e8eb0052d583e2ac105d3438baba9951785512cf921",
+      "bytes": 907858,
+      "lines": 24596
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/zlib/zlib.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "db9cc17ef65699d5d7f3bb70c5b2f12bfea85824a919cefc320fac1ad67b8d65",
+      "bytes": 2745,
+      "lines": 71
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/zlib/zlib.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "218d33a22e9e90e17db0a50ab485d73fac7e2346524e1a5b2c64d7e5462bb814",
+      "bytes": 650,
+      "lines": 16
+    },
+    {
+      "role": "lib",
+      "path": "libc.so.6",
+      "why": "平台 ABI（记录但不判漂移）",
+      "state": "present",
+      "sha256": "755a371e86cc9f564ab54f66140747700fb0a103f698f659f2060f707897e09a",
+      "bytes": 2129424,
+      "lines": 6753,
+      "resolved": "/lib/x86_64-linux-gnu/libc.so.6",
+      "exists": true,
+      "policy": "platform"
+    },
+    {
+      "role": "lib",
+      "path": "libcjson.so.1",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "31e0b2f4647bc62ec2f64cd61607b7c7fdf988c94a7c496f473e1d5afa76ad32",
+      "bytes": 35000,
+      "lines": 86,
+      "resolved": "/lib/x86_64-linux-gnu/libcjson.so.1",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libcrypt.so",
+      "why": "平台 ABI（记录但不判漂移）",
+      "state": "present",
+      "sha256": "1502636e3be8232c9cf801dfb533694aea985d449904f3e1295db26d7b348946",
+      "bytes": 198664,
+      "lines": 536,
+      "resolved": "/lib/x86_64-linux-gnu/libcrypt.so",
+      "exists": true,
+      "policy": "platform"
+    },
+    {
+      "role": "lib",
+      "path": "libcrypto.so.3",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "6866ed711dab8927e1bf82bf1cd30e828bdfc34f3cc1e83b1c9eb01ce6c37d9a",
+      "bytes": 5309400,
+      "lines": 12946,
+      "resolved": "/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libcublas.so.12",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "d9343511e1d2ed51e4d65fa94a25cb8f73b0ebc5ae5487da794e18e6950c98dc",
+      "bytes": 108244960,
+      "lines": 1019027,
+      "resolved": "/usr/local/cuda/targets/x86_64-linux/lib/libcublas.so.12",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libcudnn.so.9",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "34379ddf71df9a2e118a6362d62ba6c6748ab7f9f89b478648c745e7b344a0bd",
+      "bytes": 133336,
+      "lines": 462,
+      "resolved": "/lib/x86_64-linux-gnu/libcudnn.so.9",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libcurl.so.4",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "3e51df20a6b52879ee83a207115a9bc6891092741ce2f5ec791606e6caf859fa",
+      "bytes": 786336,
+      "lines": 3994,
+      "resolved": "/lib/x86_64-linux-gnu/libcurl.so.4",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libfreetype.so.6",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "992dac80abe3a3854f3eb2668da4207c029664ceca5f122ddb46e2a8169e9499",
+      "bytes": 833608,
+      "lines": 2547,
+      "resolved": "/lib/x86_64-linux-gnu/libfreetype.so.6",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libgif.so.7",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "70ac81372d0ddbdf03dbdd7a9f994df625928cedf794b7c0a06c9eac27a4edc3",
+      "bytes": 38904,
+      "lines": 90,
+      "resolved": "/lib/x86_64-linux-gnu/libgif.so.7",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libjansson.so.4",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "c49935a4b3ac599064281b1f257576087806d0dad7ec46f353bd983b052c5e26",
+      "bytes": 64008,
+      "lines": 159,
+      "resolved": "/lib/x86_64-linux-gnu/libjansson.so.4",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "liblapacke.so",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "338d499937368efce3563b6de51c0dd01b9694fdd2eb20684c22b105e646ee40",
+      "bytes": 2181120,
+      "lines": 4417,
+      "resolved": "/lib/x86_64-linux-gnu/liblapacke.so",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "liblapacke.so.3",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "338d499937368efce3563b6de51c0dd01b9694fdd2eb20684c22b105e646ee40",
+      "bytes": 2181120,
+      "lines": 4417,
+      "resolved": "/lib/x86_64-linux-gnu/liblapacke.so.3",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libm.so",
+      "why": "平台 ABI（记录但不判漂移）",
+      "state": "present",
+      "sha256": "36529536787e99f9d135f7871c768898a47d7aaf8ad17571c5d4f6affa3d4dac",
+      "bytes": 1074632,
+      "lines": 1962,
+      "resolved": "/lib32/libm.so",
+      "exists": true,
+      "policy": "platform"
+    },
+    {
+      "role": "lib",
+      "path": "libm.so.6",
+      "why": "平台 ABI（记录但不判漂移）",
+      "state": "present",
+      "sha256": "5dcc4d25466e29ca390ed6fabb371c69b65dff6fa4e91c34561057a020d6994a",
+      "bytes": 952616,
+      "lines": 2876,
+      "resolved": "/lib/x86_64-linux-gnu/libm.so.6",
+      "exists": true,
+      "policy": "platform"
+    },
+    {
+      "role": "lib",
+      "path": "libmvec.so",
+      "why": "平台 ABI（记录但不判漂移）",
+      "state": "present",
+      "sha256": "0d658201b7db51447c7b860f3d9eddb04017439955f7b13d28541d609012c32d",
+      "bytes": 1018144,
+      "lines": 2867,
+      "resolved": "/lib/x86_64-linux-gnu/libmvec.so",
+      "exists": true,
+      "policy": "platform"
+    },
+    {
+      "role": "lib",
+      "path": "libonnxruntime.so.1",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "add8e0506fac2b323350ef403465c03bfa0e4fbc7e0eeed39645a3e33627af94",
+      "bytes": 19750400,
+      "lines": 45303,
+      "resolved": "/usr/local/lib/libonnxruntime.so.1",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libopenblas.so.0",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "bfc7492adbf84a8f567720a9e1fae2afc18f3d817da233e7f4d453683485308e",
+      "bytes": 37555760,
+      "lines": 35708,
+      "resolved": "/lib/x86_64-linux-gnu/libopenblas.so.0",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libpcre2-8.so.0",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "6075a70c30fd7216b9214ae50f2def0ce835092b034088ed9bd64c6a376c740f",
+      "bytes": 625344,
+      "lines": 977,
+      "resolved": "/lib/x86_64-linux-gnu/libpcre2-8.so.0",
+      "exists": true,
+      "policy": "pin"
+    },
+    {
+      "role": "lib",
+      "path": "libresolv.so",
+      "why": "平台 ABI（记录但不判漂移）",
+      "state": "present",
+      "sha256": "4dcb01645dbeea5d17f28fd96a730430a808d828b3b7d6a097cfbc311501f69f",
+      "bytes": 64008,
+      "lines": 159,
+      "resolved": "/lib/x86_64-linux-gnu/libresolv.so",
+      "exists": true,
+      "policy": "platform"
+    },
+    {
+      "role": "lib",
+      "path": "libz.so.1",
+      "why": "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）",
+      "state": "present",
+      "sha256": "f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242",
+      "bytes": 113000,
+      "lines": 344,
+      "resolved": "/lib/x86_64-linux-gnu/libz.so.1",
+      "exists": true,
+      "policy": "pin"
     }
   ]
 }

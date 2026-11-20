@@ -7,10 +7,14 @@
   impl        实现（staticpy/*.static.py，环 2 自举编译器）
   tool        .sp 工具链二进制（spark / spboot_self）—— 不可读，只能靠 DDC 兜住
   harness     判定装置（check_*.sh / semantics_diff.py / trust/*）—— 判据本身也要防漂移
+  cpp         我们手写的 C/C++（imgproc/ocr/face/…）—— 可审计，但以前没归因
+  vendored    随仓库带进来的第三方源码（cpp/thirdparty/stb）—— 可审计，但非我们写
+  lib         dlopen/DT_NEEDED 吃进来的系统 .so —— 可审计（有源码），本仓只能锁哈希
 
 用法:
     python3 trust/manifest.py --write            # 重新生成 trust/manifest.json
     python3 trust/manifest.py --verify           # 校验，漂移则退出码 1
+    python3 trust/manifest.py --verify-libs      # 只校验系统 .so 的 soname→哈希
     python3 trust/manifest.py --show             # 只看清单
 
 --verify 是给 CI / selfcheck 用的：任何“被信任的文件”被改动，都必须显式重新签清单。
@@ -20,6 +24,7 @@
 import hashlib
 import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +73,133 @@ ENTRIES = [
 ]
 
 
+# ── 自动发现：C/C++ 源码 与 系统 .so ─────────────────────────────────────────
+CPP_EXTS = (".c", ".cc", ".cpp", ".h", ".hpp")
+CPP_ROOTS = ["cpp"]
+SKIP_DIRS = {"build", ".git", "node_modules", ".cache"}
+VENDOR_MARK = "/thirdparty/"
+# 我们自己产出的 .so（构建物，不入清单）
+OWN_LIB_PREFIXES = ("libimgproc", "libocr", "libcvops", "libface", "libpathfind",
+                    "libeasing", "libfont", "libhashlib", "libzlib", "libpyarr",
+                    "libflorence2", "libbirefnet", "libwhisper", "libtorch_std",
+                    "libllm", "libwarp", "libpose", "libeasing")
+# 平台 ABI（glibc/libstdc++/…）：算不上「约定的一部分」，升级是常态。
+# 我们只记录、提示版本变化，不判漂移；其余库按 pin 处理（哈希不符 = 拒）。
+LIB_PLATFORM = ("libc.so", "libm.so", "libdl.so", "libpthread.so", "librt.so",
+                "libstdc++.so", "libgcc_s.so", "libresolv.so", "libmvec.so",
+                "ld-linux", "libutil.so", "libnsl.so", "libcrypt.so")
+# 扫描库名时看的扩展名
+SCAN_EXTS = (".scm", ".py", ".sh", ".cpp", ".h", ".hpp")
+_LIB_RE = None
+
+
+def discover_cpp():
+    """枚举 cpp/ 下的 C/C++ 源码；thirdparty 归 vendored，其余归 cpp。"""
+    out = []
+    for r in CPP_ROOTS:
+        base = os.path.join(ROOT, r)
+        if not os.path.isdir(base):
+            continue
+        for dp, dn, fn in os.walk(base):
+            dn[:] = sorted(d for d in dn if d not in SKIP_DIRS)
+            for f in sorted(fn):
+                if not f.endswith(CPP_EXTS):
+                    continue
+                rel = os.path.relpath(os.path.join(dp, f), ROOT)
+                role = "vendored" if VENDOR_MARK in "/" + rel else "cpp"
+                out.append((role, rel,
+                            "随仓库带入的第三方源码（非我们写）" if role == "vendored"
+                            else "我们手写的 C/C++（可审计）"))
+    return out
+
+
+def _arch_tags():
+    """ldconfig 的架构标签写法（x86_64 机器上印的是 libc6,x86-64）。"""
+    import platform
+    m = platform.machine().lower()
+    table = {
+        "x86_64": ("x86-64", "x86_64", "amd64"),
+        "aarch64": ("aarch64", "arm64"),
+        "armv7l": ("arm", "armhf"),
+        "i686": ("i686", "i386"),
+        "riscv64": ("riscv64",),
+        "ppc64le": ("ppc64le",),
+    }
+    return table.get(m, (m,))
+
+
+def _ldconfig_map():
+    """soname → 本机架构下的真实路径（避开 /libx32、/lib32 这类同名多架构条目）。"""
+    try:
+        out = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True).stdout
+    except OSError:
+        return {}
+    tags = _arch_tags()
+    cand = {}   # soname → [(rank, path)]
+    for ln in out.splitlines():
+        ln = ln.strip()
+        if "=>" not in ln:
+            continue
+        left, path = ln.split("=>", 1)
+        left, path = left.strip(), path.strip()
+        if "(" in left and ")" in left:
+            soname = left[:left.index("(")].strip()
+            tag = left[left.index("(") + 1:left.index(")")].lower()
+        else:
+            soname, tag = left, ""
+        rank = 1
+        if any(t in tag for t in tags):
+            rank = 0
+        elif tag and all(t not in tag for t in tags) and soname in cand:
+            rank = 2       # 别的架构（/lib32、/libx32），只有当同名项唯一时才采用
+        cand.setdefault(soname, []).append((rank, path))
+    amap = {}
+    for soname, lst in cand.items():
+        best = min(r for r, _ in lst)
+        if best == 2 and len(lst) > 1:
+            continue       # 多个候选且都不是本机架构 → 放弃（宁可 absent 也不错认）
+        amap[soname] = next(p for r, p in lst if r == best)
+    return amap
+
+
+def discover_libs(resolved=None):
+    """扫源码里出现的 lib*.so 名字，标出可解析的系统库。
+
+    只认「名字在本机 ldconfig 里能解析」的，所以我们自己的构建产物天然被排除；
+    可选依赖（libonnxruntime 等）装了才算一条，不装不占位。
+    """
+    import re
+    names = set()
+    for dp, dn, fn in os.walk(ROOT):
+        dn[:] = [d for d in dn if d not in SKIP_DIRS and not d.startswith(".git")]
+        for f in fn:
+            if not f.endswith(SCAN_EXTS):
+                continue
+            p = os.path.join(dp, f)
+            try:
+                with open(p, encoding="utf-8", errors="ignore") as fh:
+                    t = fh.read()
+            except OSError:
+                continue
+            for m in re.finditer(r"\blib[A-Za-z0-9_+.\-]+\.so(?:\.[0-9]+)*\b", t):
+                n = m.group(0)
+                if n.startswith(OWN_LIB_PREFIXES):
+                    continue
+                names.add(n)
+    if resolved is None:
+        resolved = _ldconfig_map()
+    out = []
+    for n in sorted(names):
+        p = resolved.get(n)
+        if not p or not os.path.exists(p):
+            continue
+        policy = "platform" if n.startswith(LIB_PLATFORM) else "pin"
+        why = ("平台 ABI（记录但不判漂移）" if policy == "platform"
+               else "dlopen/DT_NEEDED 依赖的系统 .so（源码可得；本仓锁 soname→哈希）")
+        out.append(("lib", n, why, policy))
+    return out
+
+
 def digest(path):
     h = hashlib.sha256()
     n = 0
@@ -89,20 +221,34 @@ def count_lines(path):
         return -1
 
 
-def snapshot():
+def _entry(role, rel, why, target, resolved=None):
+    """target = 真正要算哈希的文件；rel = 清单里记的名字（系统库记 soname）。"""
+    if not os.path.exists(target):
+        e = {"role": role, "path": rel, "why": why, "state": "MISSING"}
+    else:
+        sha, size = digest(target)
+        e = {"role": role, "path": rel, "why": why, "state": "present",
+             "sha256": sha, "bytes": size, "lines": count_lines(target)}
+    if resolved:
+        e["resolved"] = resolved
+        e["exists"] = os.path.exists(resolved)
+    return e
+
+
+def snapshot(with_libs=True):
     out = {"_about": "StaticPy 信任链清单 — 由 trust/manifest.py --write 生成",
            "root": ROOT, "entries": []}
     for role, rel, why in ENTRIES:
-        p = os.path.join(ROOT, rel)
-        if not os.path.exists(p):
-            out["entries"].append({"role": role, "path": rel, "why": why,
-                                   "state": "MISSING"})
-            continue
-        sha, size = digest(p)
-        out["entries"].append({
-            "role": role, "path": rel, "why": why, "state": "present",
-            "sha256": sha, "bytes": size, "lines": count_lines(p),
-        })
+        out["entries"].append(_entry(role, rel, why, os.path.join(ROOT, rel)))
+    for role, rel, why in discover_cpp():
+        out["entries"].append(_entry(role, rel, why, os.path.join(ROOT, rel)))
+    if with_libs:
+        cmap = _ldconfig_map()
+        for role, name, why, policy in discover_libs(cmap):
+            real = cmap.get(name)
+            e = _entry(role, name, why, real or "", real)
+            e["policy"] = policy
+            out["entries"].append(e)
     return out
 
 
@@ -132,27 +278,53 @@ def main(argv):
                   % (e["role"], e["path"], e["bytes"], e["lines"], e["sha256"][:16]))
         return 0
 
-    if mode == "--verify":
+    if mode in ("--verify", "--verify-libs"):
+        only_libs = mode == "--verify-libs"
         if not os.path.exists(MANIFEST):
             print("缺少 %s —— 先跑 --write" % MANIFEST)
             return 2
         with open(MANIFEST, encoding="utf-8") as f:
             old = json.load(f)
         prev = {e["path"]: e for e in old["entries"]}
-        drift = []
-        for e in snap["entries"]:
-            p = prev.get(e["path"])
-            if p is None:
-                drift.append(("新增未签", e["path"], "-", "-"))
+        cur = {e["path"]: e for e in snap["entries"]}
+        drift, absent, soft = [], [], []
+        for path, p in prev.items():
+            if p.get("role") != "lib" and only_libs:
                 continue
-            if e["state"] != "present":
-                drift.append(("文件缺失", e["path"], "-", "-")); continue
-            if p.get("sha256") != e["sha256"]:
-                drift.append(("内容漂移", e["path"],
-                              str(p.get("sha256", "?"))[:12], e["sha256"][:12]))
-        for path in prev:
-            if path not in {e["path"] for e in snap["entries"]}:
-                drift.append(("清单有、规则无", path, "-", "-"))
+            c = cur.get(path)
+            if c is None:
+                drift.append(("清单有、规则无", path, "-", "-")); continue
+            # 系统库：装了就必须哈希一致；没装是「本机没有」，不算漂移（可选依赖）
+            if p.get("role") == "lib":
+                if not c.get("exists"):
+                    absent.append(path); continue
+                if p.get("sha256") != c.get("sha256"):
+                    item = ("库被换掉", path,
+                            str(p.get("sha256", "?"))[:12], c["sha256"][:12])
+                    # 平台 ABI 升级是常态：记账但不判漂移（STRICT_LIBS=1 才当错）
+                    if p.get("policy") == "platform" and not os.environ.get("STRICT_LIBS"):
+                        soft.append(item)
+                    else:
+                        drift.append(item)
+                elif p.get("resolved") != c.get("resolved"):
+                    drift.append(("库路径变了", path,
+                                  p.get("resolved", "?"), c.get("resolved", "?")))
+                continue
+            if c["state"] != "present":
+                drift.append(("文件缺失", path, "-", "-")); continue
+            if p.get("sha256") != c["sha256"]:
+                drift.append(("内容漂移", path,
+                              str(p.get("sha256", "?"))[:12], c["sha256"][:12]))
+        if not only_libs:
+            for path, c in cur.items():
+                if path in prev:
+                    continue
+                if c.get("role") == "lib":
+                    continue  # 新装的可选库不干扰仓库漂移判定
+                drift.append(("新增未签", path, "-", "-"))
+        for kind, path, a, b in soft:
+            print("  [提示] %s %s  %s → %s（平台 ABI，升级属正常）"
+                  % (kind, path, a, b))
         if drift:
             print("信任链漂移 %d 项：" % len(drift))
             for kind, path, a, b in drift:
@@ -160,7 +332,15 @@ def main(argv):
             print("\n如果这是**有意的**改动：跑 python3 trust/manifest.py --write 重新签，"
                   "\n并在提交信息里说明改了哪一环（改信任根 = 重走完整自举）。")
             return 1
-        print("信任链无漂移（%d 项全部一致）" % len(snap["entries"]))
+        n_lib = sum(1 for e in prev.values() if e.get("role") == "lib")
+        checked = n_lib if only_libs else len(cur)
+        msg = "信任链无漂移（%d 项一致" % checked
+        if only_libs:
+            msg += "，系统 .so soname→sha256 全对"
+        if absent:
+            msg += "；%d 个可选库本机未装：%s" % (
+                len(absent), ", ".join(absent[:4]) + ("…" if len(absent) > 4 else ""))
+        print(msg + "）")
         return 0
 
     print(__doc__, file=sys.stderr)

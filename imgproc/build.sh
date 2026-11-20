@@ -3,6 +3,17 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
+# 信任闸门：被 pin 的系统 .so 若与 trust/manifest.json 不符，拒绝构建（不是静默换库）。
+# 跳过：STATICPY_NO_LIB_GATE=1。重签：python3 trust/manifest.py --write
+if [ "${STATICPY_NO_LIB_GATE:-0}" != 1 ] && [ -f "$ROOT/trust/manifest.json" ]; then
+  if ! python3 "$ROOT/trust/manifest.py" --verify-libs >/dev/null 2>&1; then
+    echo "!!! 系统 .so 与信任链清单不符，拒绝构建：" >&2
+    python3 "$ROOT/trust/manifest.py" --verify-libs 2>&1 | sed 's/^/    /' >&2
+    echo "    确认是新库就重签：python3 trust/manifest.py --write；临时绕过：STATICPY_NO_LIB_GATE=1" >&2
+    exit 1
+  fi
+fi
+
 echo ">>> [1/2] libimgproc.so"
 bash "$ROOT/cpp/imgproc/build_cpp.sh"
 echo ">>> [2/2] mirror_gif (StaticPy)"

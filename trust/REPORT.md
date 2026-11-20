@@ -51,6 +51,7 @@ staticc.sp（1653 行，人审计对象 = 信任根）
 | E7 | 算子级差分（Pillow/zlib/hashlib） | 真实程序的输出正确 | 已证（在各自覆盖内） | `python3 imgproc/difftest.py -v` 等 |
 | E8 | 信任链清单 | 被信的文件没有悄悄漂移 | 已证 | `python3 trust/manifest.py --verify` |
 | E9 | 单一真源一致性（`prelude ⇄ plugins`） | 生成物与插件切片同步 | 已证 | `python3 tools/split_plugins.py --check` |
+| E10 | 原生面归因（C/C++ 源 + 依赖的系统 `.so`） | 手写/vendored 源码与 dlopen 的库都在账上，被换库即响 | 已证（哈希层） | `python3 trust/manifest.py --verify-libs` |
 
 ### E5 实测（2026-11-20）
 
@@ -131,9 +132,23 @@ vs 由自己编译成 ELF 跑）——**同源自比挡不住 Thompson**，因�
    注意：重编解决的是**来路**，不是**可读性**——它仍是 4.3 MB 无 .sp 源可逐行读的 ELF，
    这一节的粗度不变。另外 `staticpy/spark` 曾并列于此，属**误记**：那是示例程序
    （`.spark` 矢量图 DSL → SVG）的产物，不在构建链上、且被 .gitignore，已从清单摘除。
-4. **清单不是签名**。`trust/manifest.json` 是明文哈希，能被一起改。它防的是"悄悄漂移"，
+4. **原生面已入账（E10）**。清单原只覆盖 Scheme/Python 层；`cpp/` 下 95 个手写
+   C/C++、117 个 vendored 源（`cpp/thirdparty/stb`）以及 dlopen/DT_NEEDED 的 20 个系统
+   `.so` 过去**不在账上**——那意味着"imgproc 的输出对不对"里有一半字节无人担保。
+   现在它们都在 `trust/manifest.json` 里（soname→解析路径→sha256）：
+   - `--verify` 覆盖仓库内文件（含 cpp/vendored），漂移退出码 1；
+   - `--verify-libs` 只校验系统库：**装了就必须哈希一致**（`libgif`/`libwebp`/`libtiff`/
+     `libfreetype`/`onnxruntime`… 按 pin 处理，不符即红）；没装算"本机没有"（可选依赖），
+     不判漂移——所以换机器不会假红。
+   - 平台 ABI（`libc`/`libm`/`libstdc++`/`ld-linux`…）只记账提示，升级是常态；
+     `STRICT_LIBS=1` 才当错。
+   闸门落在**构建**上：`imgproc/build.sh` 开编前先跑 `--verify-libs`，库被换就拒绝构建
+   （`STATICPY_NO_LIB_GATE=1` 可临时绕过）。**未做**的是"运行时拒绝 load"：
+   `load-shared-object` 在信任根里，为它塞一条哈希校验会改动被审计的那一小段，
+   收益不抵代价——真要防运行期换库，走强分发包（`package.sh` 打包自带 `.so`）更实在。
+5. **清单不是签名**。`trust/manifest.json` 是明文哈希，能被一起改。它防的是"悄悄漂移"，
    不防"恶意重构"。要防后者，得把清单哈希抄进提交信息 / 外部链（未做）。
-5. **非确定性未系统探测**：固定点跑一次通过，但没有反复跑/换环境（locale、字典序、
+6. **非确定性未系统探测**：固定点跑一次通过，但没有反复跑/换环境（locale、字典序、
    绝对路径、并行度）来验证确定性。
 
 ---
@@ -151,6 +166,7 @@ bash trust/fixpoint.sh        # 固定点：g1/g2/g3 + token 级比对
 bash trust/ddc.sh             # 异源双编译：两组实现逐文件互比
 python3 trust/manifest.py --show     # 谁被信、多大、多少行、什么哈希
 python3 trust/manifest.py --verify   # 漂移检测（CI 用，漂移退出码 1）
+python3 trust/manifest.py --verify-libs  # 系统 .so 是否被换（含在 --verify 的 selfcheck 步骤里）
 ```
 
 中间产物一律落 `~/iso_gen/trust/`（本仓禁止 `/tmp`，AGENTS.md §4）。

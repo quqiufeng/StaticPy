@@ -67,6 +67,13 @@ if grep -q "无漂移" <<<"$_mf"; then echo "  ok（$_mf）"; else
   echo "  漂移：$_mf"; echo "    有意改动就跑 $PY trust/manifest.py --write 重签"; fail=1
 fi
 
+echo ">>> [5b/7] 依赖的系统 .so（soname→sha256；被换库即红）"
+_lb=$($PY trust/manifest.py --verify-libs 2>&1 | tail -1)
+if grep -q "无漂移" <<<"$_lb"; then echo "  ok（$_lb）"; else
+  echo "  库被换掉：$_lb"; echo "    查：$PY trust/manifest.py --verify-libs";
+  echo "    系统真升级了就跑 $PY trust/manifest.py --write 重签"; fail=1
+fi
+
 echo ">>> [6/7] DDC 异源双编译（trust/ddc.sh；慢，TRUST_SLOW=0 可跳）"
 if [ "${TRUST_SLOW:-1}" = 0 ]; then echo "  跳过（TRUST_SLOW=0）"; else
   # 判据用退出码，不靠文案：0=全通过，1=IR 分叉，2=环境/构建失败，3=C2 覆盖不全（都不算通过）
