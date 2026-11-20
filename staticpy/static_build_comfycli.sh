@@ -288,6 +288,21 @@ CCODE
 fi
 
 # --- Step 4: 发布到输出目录 ------------------------------------------------
+# --- Step 3.5: 记账（不 gate，只留证据）-----------------------------------
+# 目的：让「换掉后端看差分会不会红」这类验证将来可复现。
+# 没有它，Chez/gcc 的版本就是传闻；有了它，谁都能拿同一组版本重跑。
+{
+    printf '{\n'
+    printf '  "product": "%s",\n' "$(basename "$OUTPUT_BASE")"
+    printf '  "built_at": "%s",\n' "$(date -Iseconds)"
+    printf '  "chez_version": "%s",\n' "$("$SCHEME" --version 2>/dev/null | head -1 || echo unknown)"
+    printf '  "chez_dir": "%s",\n' "$SCHEME_DIR"
+    printf '  "chez_boot_md5": "%s",\n' "${BOOT_HASH:-unknown}"
+    printf '  "gcc_version": "%s",\n' "$(gcc -dumpfullversion 2>/dev/null || echo unknown)"
+    printf '  "build_inputs_md5": "%s"\n' "${BUILD_HASH:-unknown}"
+    printf '}\n'
+} > "$OUTPUT_BASE.build-info.json"
+
 cp -L "$CACHED_SO" "$OUTPUT_BASE.so"
 cp -L "$CACHED_ELF" "$OUTPUT_BASE"
 chmod +x "$OUTPUT_BASE"
@@ -296,3 +311,4 @@ touch "$CACHED_ELF" "$CACHED_SO"   # 供 LRU 判定“最近使用”
 echo "=== Build complete ==="
 echo "  $OUTPUT_BASE       (ELF binary)"
 echo "  $OUTPUT_BASE.so    (Chez AOT compiled Scheme)"
+echo "  $OUTPUT_BASE.build-info.json  (chez/gcc 版本 + boot 指纹)"
