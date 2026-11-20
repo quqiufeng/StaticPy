@@ -36,6 +36,7 @@ def scheme_name(name):
     RUNTIME_MAP = {
         "py_list": "py-list",
         "py_list_append": "py-list-append",
+        "py_list_concat": "py-list-concat",
         "py_list_ref": "py-list-ref",
         "py_list_length": "py-list-length",
         "list_to_py_list": "list->py-list",
@@ -808,12 +809,12 @@ PRELUDE_FUNCTIONS = {
     "re_match", "re_search",
     "random_seed", "random_int", "random_float", "random_range",
     "random_uniform", "random_choice",
-    "string_to_float", "string_to_int", "string_of_int", "integer_to_char", "format_float", "list_length", "list_ref", "vec_ref", "tuple_ref",
+    "string_to_float", "string_to_int", "string_of_int", "integer_to_char", "char_code", "format_float", "float_fixed", "list_length", "list_ref", "vec_ref", "tuple_ref",
     "cuda_gemm", "cuda_gemm_tn", "cuda_axpy", "cuda_dot", "cuda_copy",
     "sleep", "clock",
     "argv", "exit_program", "exit",
     "pi", "e",
-    "py_list", "py_list_append", "py_list_ref", "py_list_length", "list_to_py_list", "list_append_str",
+    "py_list", "py_list_append", "py_list_concat", "py_list_ref", "py_list_length", "list_to_py_list", "list_append_str",
     "py_iter_to_list", "py_list_slice", "py_unpack",
 } | MATH_FUNCTIONS
 
@@ -1029,6 +1030,10 @@ def infer_expr_type(node):
             return _h
     if isinstance(node, ast.List):
         return "list"
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        return "list"
+    if isinstance(node, ast.DictComp):
+        return "dict"
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bool):
             return "bool"

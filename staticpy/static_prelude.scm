@@ -58,6 +58,7 @@
   (hashtable-ref d key ""))
 
 (define dict_get_or_empty (lambda (d key) (dict-get-or-empty d key)))
+(define char_code (lambda (c) (char->integer (string-ref c 0))))
 
 (define (dict-set! d key val)
   "写入字典 d[key] = val"
@@ -227,6 +228,29 @@
 (define (format_float f digits)
   (format "~,vf" digits (inexact f)))
 
+;; 精确定点十进制（与 CPython '%.Nf' 一致：二进制精确值 + 半偶舍入）
+(define (float_fixed x digits)
+  (cond
+    ((nan? x) "nan")
+    ((infinite? x) (if (> x 0) "inf" "-inf"))
+    (else
+     (let* ((neg (negative? x))
+            (sc (* (exact (abs (inexact x))) (expt 10 digits)))
+            (num (numerator sc))
+            (den (denominator sc))
+            (q (quotient num den))
+            (r (- num (* q den)))
+            (r2 (* 2 r))
+            (q (if (or (> r2 den) (and (= r2 den) (odd? q))) (+ q 1) q))
+            (ds0 (number->string (abs q)))
+            (need (+ digits 1))
+            (ds (string-append (make-string (max 0 (- need (string-length ds0))) #\0) ds0))
+            (n (string-length ds))
+            (ip (substring ds 0 (- n digits)))
+            (fp (substring ds (- n digits) n))
+            (mag (if (> digits 0) (string-append ip "." fp) ip)))
+       (if (and neg (> q 0)) (string-append "-" mag) mag)))))
+
 (define (list_length v)
   (cond ((string? v) (string-length v))
         ((vector? v) (vector-length v))
@@ -277,15 +301,26 @@
 
 ;; ====== 通用打印 ======
 
-(define (print x)
-  (cond ((number? x) (display x) (newline))
-        ((boolean? x) (display (if x "True" "False")) (newline))
-        ((string? x) (display x) (newline))
-        ((hashtable? x) (display (json->string x)) (newline))
-        ((list? x) (display (json->string (list->vector x))) (newline))
-        ((vector? x) (display (json->string x)) (newline))
-        ((null? x) (display "None") (newline))
-        (else (display x) (newline))))
+(define (print-one x)
+  (cond ((number? x) (display x))
+        ((boolean? x) (display (if x "True" "False")))
+        ((string? x) (display x))
+        ((hashtable? x) (display (json->string x)))
+        ((list? x) (display (json->string (list->vector x))))
+        ((vector? x) (display (json->string x)))
+        ((null? x) (display "None"))
+        (else (display x))))
+
+;; 多参数打印：print(a, b, c) -> 空格分隔 + 换行（与 CPython 一致）
+(define (print . args)
+  (unless (null? args)
+    (print-one (car args))
+    (let loop ((rest (cdr args)))
+      (unless (null? rest)
+        (display " ")
+        (print-one (car rest))
+        (loop (cdr rest)))))
+  (newline))
 
 ;; ====== 类型化数组/vector 工具 ======
 (define (make_int_array n)

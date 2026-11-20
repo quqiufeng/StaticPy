@@ -219,6 +219,9 @@ $PY tools/split_plugins.py --check    # plugins/ ⇄ static_prelude.scm 单一�
 $PY imgproc/pil_surface.py > imgproc/pil_api.md
 $PY imgproc/frontend_coverage.py
 $PY imgproc/difftest.py -v
+
+# 自持解析器验收：自举 parse_lib vs CPython ast 规范 dump 逐字节比对
+bash staticpy/check_parse.sh $(find . -name "*.py" -not -path "./.git/*")
 ```
 
 ---
