@@ -2510,9 +2510,15 @@ def typecheck_function(node, function_arities, module_env=None):
         op_name = type(op).__name__
         if op_name in BUILTIN_BINOP_RULES:
             allowed, result_fn = BUILTIN_BINOP_RULES[op_name]
+            # Any（未注解的局部变量等）不做严格检查：静态未知不等于类型错，
+            # 交给运行时。否则 `a = 6` 后 `a & b` 直接被判错——位运算在
+            # static_prelude.scm 里已有 bitand/bitor/... 的运行时映射。
             if allowed is not None:
-                if lt.base != allowed or rt.base != allowed:
+                any_side = lt.base == "Any" or rt.base == "Any"
+                if not any_side and (lt.base != allowed or rt.base != allowed):
                     typecheck_error(node, f"operator '{op_name}' requires {allowed}, got '{lt}' and '{rt}'")
+            if allowed is not None and (lt.base == "Any" or rt.base == "Any"):
+                return None
             result = result_fn(lt, rt)
             if result is None and lt.base != "Any" and rt.base != "Any":
                 typecheck_error(node, f"operator '{op_name}' not supported for types '{lt}' and '{rt}'")

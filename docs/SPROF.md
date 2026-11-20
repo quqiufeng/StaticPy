@@ -126,6 +126,35 @@ LD_LIBRARY_PATH=cpp/imgproc/build ./dist/pilprof resize ~/iso_gen/bench.jpg out.
 ./dist/sprof ~/iso_gen/prof/pilprof.prof --top=12
 ```
 
+### 回调热点：`pil deform`（lambda 路径，2026-11-20）
+
+`ImageOps.deform` 是唯一「每输出像素各调一次 lambda」的算子（`pil_ops_deform`：
+`fnx(x,y)` / `fny(x,y)` 各一次，w×h 次）。它正好验证补丁 7 的**一等函数调用**
+在 Scheme 侧是真热点，而非 Python 侧假象。
+
+```bash
+# 带计数的构建（产物名分开，避免覆盖交付版）
+STATICPY_PROFILE=source bash staticpy/static_build_comfycli.sh \
+    ~/iso_gen/staticpy-cache/pil.bundle.static.py imgproc/pilprof imgproc/imgproc_ffi.scm
+LD_LIBRARY_PATH=cpp/imgproc/build ./imgproc/pilprof deform mid.png out.png half
+./dist/sprof ~/iso_gen/prof/pilprof.prof --top=15
+```
+
+128×128 一条 `deform half` 的实测（总计 1,151,949 hits）：
+
+| hits | 占比 | 落点 |
+|---|---|---|
+| 789,663 | 68.5% | `pil_ops_deform`（`pil.bundle.static.py:108`），内层 `csv` 拼接 + 两次 lambda 调用（`:120`） |
+| 131,386 | 11.4% | `main`（CLI 分派） |
+| 230,827 | 20.0% | 运行时（prelude/stdlib，无 py 归属） |
+
+结论：热点的 68.5% 集中在 `csv = csv + format_float(fnx(x, y), 4) + "," + ...`
+——**字符串拼接 + 两个回调**。若后续要提速，该改的是这行的数据通路
+（先攒数组再一次 join，或把坐标生成下推到 C 侧 `img_warp`），而不是 `img_warp` 本身。
+
+> 注意：source 级计数开销极大。同一算子 512×512 在剖剖析构建下**跑不完**
+> （52 万次回调），采样必须缩图；要测大图请用 `block` 模式或 `hotattr`。
+
 ## 与 hotattr 的分工
 
 | 想知道 | 用 |

@@ -55,6 +55,17 @@ GROUPS = [
         "a, b = (7, 8)\nprint(a, b)",
         "print(max((3, 9)), sum((1, 2, 3)))",
     ]),
+    # 位运算：翻译器兜底 str_lower(Op) 会发 bitand/bitor/bitxor/lshift/rshift/Invert，
+    # 这些名字由 static_prelude.scm 映射到 R6RS bitwise-*。语料覆盖负数与 bignum
+    # （Python int 任意精度，算术右移 -8>>1 = -4，~x = -(x+1)）。
+    ("bitwise", [
+        "a = 6\nb = 3\nprint(a & b, a | b, a ^ b, a << b, a >> b)",
+        "print(~6, ~0, ~-1)",
+        "print(-8 >> 1, -1 & 255, -1 | 0, -1 ^ 0)",
+        "print(1 << 62, (1 << 62) >> 60)",
+        "print(255 & 0xF0, 0x0F | 0xF0, 0xFF ^ 0x0F)",
+        "x = 0b1011\nprint(x & 0b0110, x | 0b0100, x ^ 0b1111)",
+    ]),
 ]
 
 VERBOSE = "-v" in sys.argv

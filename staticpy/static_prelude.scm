@@ -367,6 +367,20 @@
 (define (py-truediv a b)
   (inexact (/ a b)))
 
+;; ====== 位运算 ======
+;; 翻译器对 BinOp 的兜底是 str_lower(op)，位运算于是发出 bitand/bitor/bitxor/
+;; lshift/rshift，一元 ~ 发出 Invert —— 这些名字 Chez 里都不存在。
+;; 语义交给运行时映射到 R6RS bitwise-*（用泛型版而非 fx 版：Python int 是
+;; 任意精度，bitwise-* 同样处理 bignum，比 fx 更贴 CPython）。
+;; 算术右移对负数与 Python 一致：-8>>1 → -4；-1&255 → 255。
+(define (bitand a b) (bitwise-and a b))
+(define (bitor  a b) (bitwise-ior a b))
+(define (bitxor a b) (bitwise-xor a b))
+(define (lshift a b) (bitwise-arithmetic-shift-left a b))
+(define (rshift a b) (bitwise-arithmetic-shift-right a b))
+;; ~x 在 Python 是 -(x+1)（二进制补码语义），bitwise-not 正是这个
+(define (Invert a) (bitwise-not a))
+
 ;; 统一迭代源：dict→键、str→字符、vector/list/tagged-array 原样
 (define (py-iter-seq x)
   (cond ((py-array? x) (py-array-items-h x))

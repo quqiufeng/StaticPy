@@ -226,6 +226,8 @@ __marimo__/
 /imgproc/pil.so
 /imgproc/pilcli
 /imgproc/pilcli.so
+/imgproc/pilprof
+/imgproc/pilprof.so
 /imgproc/mirror_gif
 /imgproc/mirror_gif.so
 /concat

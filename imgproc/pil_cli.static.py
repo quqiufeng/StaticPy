@@ -1,5 +1,27 @@
 from pil_lib import (img_open, img_save, img_free, img_copy, img_convert, img_convert_p, img_resize, img_scale, img_thumbnail, img_crop, img_rotate, img_transpose, img_mirror, img_pad, img_fit, img_contain, img_ops_pad, img_invert, img_grayscale, img_posterize, img_solarize, img_autocontrast, img_equalize, img_expand, img_chop_const, img_chop_offset, img_enhance, img_filter, img_quantize, img_split, img_effect_mandelbrot, img_draw_line, img_draw_rectangle, img_draw_ellipse)
+from pil_lib import pil_eval, pil_ops_deform
 from pil_lib import a, ai
+
+def transpose_mode(s: str) -> int:
+    # Pillow 的 transpose 常量名 → libimgproc 的方法号
+    # 0 FLIP_LR 1 FLIP_TB 2 ROT90 3 ROT180 4 ROT270 5 TRANSPOSE 6 TRANSVERSE
+    # 兼容旧写法（直接给数字）。
+    if s == "FLIP_LEFT_RIGHT":
+        return 0
+    if s == "FLIP_TOP_BOTTOM":
+        return 1
+    if s == "ROTATE_90":
+        return 2
+    if s == "ROTATE_180":
+        return 3
+    if s == "ROTATE_270":
+        return 4
+    if s == "TRANSPOSE":
+        return 5
+    if s == "TRANSVERSE":
+        return 6
+    return string_to_int(s)
+
 
 def main():
     args = list_to_py_list(argv())
@@ -32,7 +54,7 @@ def main():
     elif op == "rotate":
         out = img_rotate(im, string_to_float(a(args, "4")), 1, 0)
     elif op == "transpose":
-        out = img_transpose(im, ai(args, "4"))
+        out = img_transpose(im, transpose_mode(a(args, "4")))
     elif op == "mirror":
         out = img_mirror(im)
     elif op == "pad":
@@ -82,6 +104,32 @@ def main():
     elif op == "draw_ellipse":
         out = img_copy(im)
         img_draw_ellipse(out, ai(args, "4"), ai(args, "5"), ai(args, "6"), ai(args, "7"), ai(args, "8"), 0)
+    elif op == "eval":
+        # Image.eval：fn 由 argv 选名，lambda 走编译器的一等函数路径
+        kind: str = a(args, "4")
+        if kind == "square":
+            out = pil_eval(im, lambda v: (v * v) // 255)
+        elif kind == "half":
+            out = pil_eval(im, lambda v: v // 2)
+        elif kind == "neg":
+            out = pil_eval(im, lambda v: 255 - v)
+        elif kind == "double":
+            out = pil_eval(im, lambda v: (v * 2) - (v * v) // 255)
+        else:
+            print("eval kind: square|half|neg|double")
+            exit_program(1)
+    elif op == "deform":
+        # ImageOps.deform：逆向映射，每输出像素调 fnx/fny 各一次（w*h 次 → 真热点）
+        kind2: str = a(args, "4")
+        if kind2 == "half":
+            out = pil_ops_deform(im, lambda x, y: x // 2, lambda x, y: y // 2)
+        elif kind2 == "swap":
+            out = pil_ops_deform(im, lambda x, y: y, lambda x, y: x)
+        elif kind2 == "swirl":
+            out = pil_ops_deform(im, lambda x, y: x + ((y // 8) % 8) - 4, lambda x, y: y)
+        else:
+            print("deform kind: half|swap|swirl")
+            exit_program(1)
     else:
         print("unknown op: " + op)
         exit_program(1)

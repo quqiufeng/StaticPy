@@ -41,6 +41,13 @@ for i in range(10):
 def apply_all(img: ptr, f: fn) -> ptr:
     return img_point(img, f)
 
+# 位运算（§4.1 补丁 8）：翻译器兜底发 bitand/bitor/bitxor/lshift/rshift/Invert
+# 这些名字由 static_prelude.scm 映射到 R6RS bitwise-*，语义对齐 CPython
+m: int = 0xFF & 0x0F        # 15
+s: int = 1 << 10            # 1024（bignum 也对：1 << 200 不溢出）
+r: int = -8 >> 1            # -4（算术右移，与 Python 一致）
+inv: int = ~6               # -7（= -(x+1)，二进制补码）
+
 # 外部 C 函数声明
 extern fn img_open(path: str) -> ptr from "imgproc"
 ```
@@ -115,6 +122,7 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 | 6 | 类型收集递归进 `while`/`if`/`for`/`with` 体 | 上游只扫函数直层，控制流内标注丢失 |
 | 7 | **lambda + 一等函数** | 语法不够兼容 Python：`lambda` → `(lambda (args) body)`；函数值记为 `fn`、参数名进 `CURRENT_PARAMS`，**调用不加 `static_` 前缀** |
 | 8 | `generate_extern_ffi` 去硬编码路径 | 原表写死绝对路径；改为 soname + `STATICPY_LIB_<LIB>`，未知库默认 `lib<lib>.so` |
+| 9 | 位运算：类型检查对 `Any` 放行 | 位运算规则表要求两侧 `int`，`x = 6`（未注解→`Any`）后 `x & y` 被误判为类型错误。改为 `Any` 跳过严格检查、结果类型置 `None`（走泛型 IR），运行期由 prelude 的 `bitand`/`bitor`/`bitxor`/`lshift`/`rshift`/`Invert` 承接 |
 
 补丁 7 新增的全局：`CURRENT_PARAMS`（当前作用域参数名集合，调用时不加前缀）、
 `TYPE_ENV[name] = "fn"`（函数值局部变量）。它是 `Image.eval` / `ImageOps.deform` 这类**回调**的前提。
