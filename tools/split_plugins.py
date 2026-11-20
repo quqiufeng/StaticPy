@@ -16,23 +16,28 @@ PLUG = os.path.join(ROOT, "plugins")
 
 # ---------------------------------------------------------------- 运行时切片
 # (起始行, 结束行(不含), 插件名)；按原始顺序拼接可还原整个文件。
-PRELUDE_SLICE = [
-    (9, 81, "core"),        # GC / 浮点数组 / 字典
-    (81, 141, "libc"),      # 文件 I/O
-    (141, 234, "http"),     # libcurl
-    (234, 257, "math"),     # libm
-    (257, 411, "json"),     # libjansson
-    (411, 446, "libc"),     # 日期时间
-    (446, 488, "csv"),
-    (488, 600, "core"),     # 字符串工具
-    (600, 676, "libc"),     # 操作系统接口
-    (676, 728, "regex"),    # libpcre2
-    (728, 769, "random"),
-    (769, 808, "libc"),     # 时间 + argv
-    (808, 882, "core"),     # 字符串转数字 + print
-    (882, 924, "core"),     # vector 工具 + Option/Result
-    (924, 1014, "core"),   # py-list + 推导式/解包辅助
-    (1014, None, "ir"),      # 自举编译器 IR 标签
+# prelude 切片锚点：(段标题前缀, 插件名)。按标题锚定而非行号——
+# 行号表会被 seed 的增删悄悄改坏：整块代码平移后，某段会落进**错误的插件**，
+# 而构建只挑选用到的插件，落错=整段被丢弃（曾把 libc 的
+# `(load-shared-object "libc.so.6")` 切进别的插件，产出的 ELF 启动即
+# `no entry for "nanosleep"`）。标题写错/顺序颠倒会直接报错，不再静默。
+# 同一插件可出现多段，按 seed 原文顺序拼进该插件的 runtime.scm。
+PRELUDE_MARKS = [
+    (";; ====== GC 跟踪",                  "core"),   # GC / 浮点数组 / None 单例 / 真值 / 成员
+    (";; ====== 文件 I/O",                 "libc"),
+    (";; ====== HTTP 客户端",              "http"),   # libcurl
+    (";; ====== 数学函数（libm）",          "math"),
+    (";; ====== JSON 解析",                "json"),   # libjansson
+    (";; ====== 日期时间（libc）",          "libc"),
+    (";; ====== CSV 读写",                 "csv"),
+    (";; ====== 字符串工具（纯 Scheme",     "core"),
+    (";; ====== 操作系统接口",              "libc"),
+    (";; ====== 正则表达式",                "regex"),  # libpcre2
+    (";; ====== 随机数（libc）",            "random"),
+    (";; ====== 时间（libc）",              "libc"),   # 时间 + argv
+    (";; ====== 字符串转数字",              "core"),
+    (";; ====== 类型化数组/vector 工具",    "core"),   # vector 工具 + Option/Result + py-list
+    (";; ====== IR 节点标签判断",           "ir"),     # 自举编译器 IR 标签
 ]
 
 STDLIB_SLICE = [
@@ -104,17 +109,72 @@ def read_lines(path):
         return f.read().split("\n")
 
 
-def _snap(lines, idx, lo, hi):
-    """把切点吸附到最近的空行（顶层 form 之间），避免行号表随源码行数漂移切在 form 中间"""
+def _line_depths(lines):
+    """每行行首的括号深度（0 = 顶层）。只数真实括号：跳过字符串、字符字面量、注释。"""
+    depths, depth = [], 0
+    for text in lines:
+        depths.append(depth)
+        i = 0
+        while i < len(text):
+            c = text[i]
+            if c == ';':
+                break
+            if c == '"':
+                i += 1
+                while i < len(text):
+                    if text[i] == '\\':
+                        i += 2
+                        continue
+                    if text[i] == '"':
+                        i += 1
+                        break
+                    i += 1
+                continue
+            if c == '#' and i + 1 < len(text) and text[i + 1] == '\\':
+                j = i + 2
+                if j < len(text) and text[j].isalpha():
+                    while j < len(text) and text[j].isalnum():
+                        j += 1
+                else:
+                    j += 1
+                i = j
+                continue
+            if c == '(':
+                depth += 1
+            elif c == ')':
+                depth -= 1
+            i += 1
+    return depths
+
+
+def _is_top_boundary(lines, depths, k):
+    """该行是否是安全切点：处在顶层，且是空行或新 form 的起始"""
+    if k <= 0 or k >= len(lines):
+        return False
+    if depths[k] != 0:
+        return False
+    text = lines[k]
+    return (not text.strip()) or text[:1] not in (' ', '\t', ')')
+
+
+def _snap(lines, idx, lo, hi, depths=None):
+    """把切点吸附到最近的**顶层 form 边界**。
+
+    只吸附到空行是不够的：letrec/let 内部也可能有空行，切在那里会把顶层 form
+    从中间劈开（parse-json 被切进两个插件就是这么坏的）。这里改为按括号深度
+    0 判定，行号表因此只作“大致位置”用，源码增删行都不会切坏 form。
+    """
     if idx >= hi:
-        return hi
+        idx = hi
     if idx <= lo:
         return lo
-    if not lines[idx].strip():
+    if depths is None:
+        depths = _line_depths(lines)
+    if _is_top_boundary(lines, depths, idx):
         return idx
-    for d in range(1, 60):
+    for d in range(1, 400):
         for cand in (idx - d, idx + d):
-            if lo < cand < hi and not lines[cand].strip():
+            if lo < cand < hi and _is_top_boundary(lines, depths, cand):
                 return cand
     return idx
 
@@ -146,26 +206,62 @@ def slice_and_group(lines, spans):
     return out
 
 
+def _dedup_plugins(plugs):
+    """去重保序（同一插件在切片表里可能多段，拼装时只写一次）"""
+    out, seen = [], set()
+    for pl in plugs:
+        if pl is None or pl in seen:
+            continue
+        seen.add(pl)
+        out.append(pl)
+    return out
+
+
+def slice_by_marks(lines, marks, name="prelude"):
+    """按段标题锚点切片：每段从标记行开始，到下一个标记行结束（最后一段到 EOF）。
+
+    返回 {plugin: [chunk, ...]}，chunk 按 seed 原文顺序累积。
+    标记缺失/顺序颠倒直接报错——这正是行号表静默错位时缺的那道防线。
+    """
+    idxs, prev = [], 0
+    for mark, plug in marks:
+        i = next((k for k in range(prev, len(lines)) if lines[k].startswith(mark)), None)
+        if i is None:
+            raise SystemExit(f"[split_plugins] {name}: 找不到段标记 {mark!r}"
+                             f"（第 {prev + 1} 行之后）；改了 seed 就同步 PRELUDE_MARKS")
+        if i == 0:
+            raise SystemExit(f"[split_plugins] {name}: 段标记 {mark!r} 落在第 1 行，"
+                             f"前面没有 banner 可丢弃")
+        idxs.append((i, plug))
+        prev = i + 1
+    out = {}
+    for j, (i, plug) in enumerate(idxs):
+        end = idxs[j + 1][0] if j + 1 < len(idxs) else len(lines)
+        out.setdefault(plug, []).append("\n".join(lines[i:end]).rstrip() + "\n")
+    return out
+
+
 def emit_legacy(check=False):
     """用插件重新拼装旧的两块单文件（兼容老构建脚本）
 
     check=True 时只比对不落盘：这样 --check 也能守住 prelude ⇄ plugins 的漂移
     （否则 prelude 里的 183 个重复定义改了一边、另一边不动，谁也发现不了）。
+    拼接顺序 = 段标记/slice 表里的插件顺序（同一插件只写一次）。
     """
     changed = []
     targets = [
-        ("staticpy/static_prelude.scm", PRELUDE_SLICE, ";; static_prelude.scm — StaticPy 核心运行时（由 plugins/ 自动拼装，勿手改）\n"
-                                                      ";; 单一事实来源: plugins/<name>/runtime.scm；改插件后跑 python3 tools/split_plugins.py\n\n(import (chezscheme))\n\n"),
-        ("staticpy/static_stdlib_full.scm", STDLIB_SLICE, ";; static_stdlib_full.scm — StaticPy 全量扩展（由 plugins/ 自动拼装，勿手改）\n"
-                                                          ";; 单一事实来源: plugins/<name>/runtime.scm；按需选用，默认不合并\n\n"),
+        ("staticpy/static_prelude.scm", _dedup_plugins([pl for _, pl in PRELUDE_MARKS]),
+         ";; static_prelude.scm — StaticPy 核心运行时（由 plugins/ 自动拼装，勿手改）\n"
+         ";; 单一事实来源: plugins/<name>/runtime.scm；改插件后跑 python3 tools/split_plugins.py\n\n(import (chezscheme))\n\n"),
+        ("staticpy/static_stdlib_full.scm", _dedup_plugins([pl for _, _, pl in STDLIB_SLICE]),
+         ";; static_stdlib_full.scm — StaticPy 全量扩展（由 plugins/ 自动拼装，勿手改）\n"
+         ";; 单一事实来源: plugins/<name>/runtime.scm；按需选用，默认不合并\n\n"),
     ]
-    for rel, spans, banner in targets:
+    for rel, plugs, banner in targets:
         parts = [banner]
-        seen = set()
-        for start, end, plug in spans:
-            if plug is None or plug in seen:
-                continue  # 同一插件的多个切片：整段只写一次
-            seen.add(plug)
+        for plug in plugs:
+            if plug is None:
+                continue
             p = os.path.join(PLUG, plug, "runtime.scm")
             with open(p, encoding="utf-8") as f:
                 body = f.read().rstrip() + "\n"
@@ -186,7 +282,7 @@ def main():
     stdlib = read_lines(os.path.join(ROOT, "tools/seed/stdlib_full.scm"))
 
     groups = {}
-    for plug, chunks in slice_and_group(prelude, PRELUDE_SLICE).items():
+    for plug, chunks in slice_by_marks(prelude, PRELUDE_MARKS).items():
         groups.setdefault(plug, {})["runtime"] = "\n".join(chunks)
     for plug, chunks in slice_and_group(stdlib, STDLIB_SLICE).items():
         groups.setdefault(plug, {})["runtime"] = \

@@ -2,7 +2,6 @@
 ;; 单一事实来源: plugins/<name>/runtime.scm；按需选用，默认不合并
 
 
-
 ;; ============================================================
 ;; Part 1: OpenBLAS (numpy 底层) — 可选加载，不可用时跳过
 ;; ============================================================
@@ -43,7 +42,6 @@
   (set! cblas-dgemm (foreign-procedure "cblas_dgemm" (int int int int int int double void* int void* int double void* int) void)))
 
 
-
 ;; ============================================================
 ;; Part 2: LAPACK — 可选加载
 ;; ============================================================
@@ -70,7 +68,6 @@
   (set! lapack-sgesdd (foreign-procedure "LAPACKE_sgesdd" (int int int int void* int void* void* int void* int) int))
   (set! lapack-dsyevd (foreign-procedure "LAPACKE_dsyevd" (int int int int void* int void*) int))
   (set! lapack-dgeqrf (foreign-procedure "LAPACKE_dgeqrf" (int int int void* int void*) int)))
-
 
 
 ;; ============================================================
@@ -198,7 +195,6 @@
             (void* int void* void* void* void* void* void* void* void* void* void* void* double) int)))))))
 
 
-
 ;; ============================================================
 ;; Part 8: XGBoost — 树模型训练/推理
 ;; ============================================================
@@ -230,7 +226,6 @@
     (void* string void* int) int)))
 
 
-
 ;; ============================================================
 ;; Part 9: LightGBM — 树模型（替代方案）
 ;; ============================================================
@@ -259,7 +254,6 @@
     (string void*) int)))
 
 
-
 ;; ============================================================
 ;; Part 10: ONNX Runtime — 模型推理部署
 ;; ============================================================
@@ -285,11 +279,11 @@
             (void* string void* void*) int))
           (set! onnx-run (foreign-procedure "OrtRun"
             (void* void* void* void* int void* void* int) int)))))))
+
+
 ;; ============================================================
 ;; Part 4: Python 风格包装 — numpy 兼容层（需要 OpenBLAS）
 ;; ============================================================
-
-
 
 (define (np-dot a b n)
   "向量点积 a·b"
@@ -521,7 +515,6 @@
 (define (la-eigvals n a w)
   "特征值分解 (对称矩阵)"
   (lapack-dsyevd 101 78 78 n a n w))
-
 
 
 ;; ============================================================

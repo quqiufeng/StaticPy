@@ -1,4 +1,3 @@
-
 ;; ====== JSON 解析（libjansson） ======
 (define *json-available* #f)
 (guard (e (else (display "Warning: libjansson not found, json disabled\n")))
@@ -118,18 +117,19 @@
 (define (json->string obj)
   "Scheme 值 → JSON 字符串"
   (cond ((hashtable? obj)
-         (let ((keys (hashtable-keys obj)))
+         (let ((keys (dict-keys obj)))
            (string-append "{"
              (string-join
                (map (lambda (k)
                       (string-append "\"" (if (symbol? k) (symbol->string k) k) "\":"
                         (json->string (hashtable-ref obj k #f))))
-                    (vector->list keys))
+                  keys)
                ", ")
              "}")))
         ((vector? obj)
          (string-append "["
            (string-join (map json->string (vector->list obj)) ", ") "]"))
+        ((py-none? obj) "null")
         ((number? obj) (format "~s" obj))
         ((boolean? obj) (if obj "true" "false"))
         ((string? obj) (string-append "\"" (json-escape-string obj) "\""))

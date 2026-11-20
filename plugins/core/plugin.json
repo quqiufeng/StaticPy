@@ -24,6 +24,7 @@
     "make_int_array",
     "py_list",
     "py_list_append",
+    "py_list_concat",
     "py_list_length",
     "py_list_ref",
     "py_list_slice",

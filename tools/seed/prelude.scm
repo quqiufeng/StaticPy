@@ -45,38 +45,172 @@
   "手动释放（也可等 GC 自动回收）"
   (foreign-free ptr))
 
-;; ====== 字典（hashtable） ======
+;; ====== None 单例（与 #f/False 区分） ======
+;; CPython 里 None 是独立对象；这里用一个唯一不可混淆的记录表示，
+;; 使 `x is None` / `False is None` / `print(None)` 三处语义都能对上。
+(define py-none (string->symbol "\x1;py-none"))
+(define (py-none? x) (eq? x py-none))
+
+;; ====== 真值判定（CPython 语义） ======
+;; Scheme 里只有 #f 是假，而 CPython 里 None / 0 / "" / [] / {} 都是假。
+;; 最关键的是 None：它是真实对象，`(not py-none)` 在 Scheme 下是 #f，
+;; 直接照搬 `(not (not x))` 会把 `bool(None)` 判成 #t。
+(define (py-truthy x)
+  (cond ((py-none? x) #f)
+        ((eq? x #f) #f)
+        ((number? x) (not (zero? x)))
+        ((string? x) (> (string-length x) 0))
+        ((vector? x) (> (vector-length x) 0))
+        ((pair? x) #t)
+        ((null? x) #f)
+        ((hashtable? x) (> (dict-length x) 0))
+        (else #t)))
+
+;; ====== `x in y` 成员判定（按容器类型分派） ======
+;; 翻译器只发 `(py-contains? x y)`，语义交给运行时：
+;; dict 看键、str 看子串、vector(py-list) 与 Scheme list 逐元素 equal?。
+(define (py-contains? needle hay)
+  (cond ((hashtable? hay) (dict-contains? hay needle))
+        ((string? hay) (str-contains? hay needle))
+        ((vector? hay)
+         (let loop ((i 0))
+           (cond ((>= i (vector-length hay)) #f)
+                 ((equal? (vector-ref hay i) needle) #t)
+                 (else (loop (+ i 1))))))
+        ((pair? hay) (not (not (member needle hay))))
+        (else #f)))
+
+;; ====== 字典（hashtable + 插入序） ======
+;; CPython 3.7+ 的 dict 保序；Chez 的 hashtable 无序，
+;; 所以额外在同一个 hashtable 里挂一个隐藏键存「插入序（逆序）」。
+(define py-dict-order-key (string->symbol "\x1;py-dict-order"))
 
 (define (make-dict)
-  "创建空字典"
-  (make-hashtable equal-hash equal?))
+  "创建空字典（保持插入顺序）"
+  (let ((d (make-hashtable equal-hash equal?)))
+    (hashtable-set! d py-dict-order-key '())
+    d))
+
+(define (py-dict-order d)
+  (hashtable-ref d py-dict-order-key '()))
+
+(define (dict-keys d)
+  "按插入顺序返回键列表"
+  (reverse (py-dict-order d)))
+
+(define (dict-values d)
+  (map (lambda (k) (hashtable-ref d k #f)) (dict-keys d)))
+
+(define (dict-items d)
+  (map (lambda (k) (cons k (hashtable-ref d k #f))) (dict-keys d)))
+
+(define (dict-length d)
+  (length (py-dict-order d)))
 
 (define (dict-get d key)
-  "读取字典 d[key]"
-  (hashtable-ref d key #f))
+  "读取字典 d[key]；缺失 → None"
+  (if (hashtable-contains? d key)
+      (hashtable-ref d key #f)
+      py-none))
+
+(define (dict-get-default d key default)
+  "d.get(key, default)"
+  (if (hashtable-contains? d key)
+      (hashtable-ref d key #f)
+      default))
 
 (define (dict-get-or-empty d key)
-  "读取字典 d[key]，返回空字符串代替 #f"
+  "读取字典 d[key]，返回空字符串代替缺失"
   (hashtable-ref d key ""))
 
 (define dict_get_or_empty (lambda (d key) (dict-get-or-empty d key)))
 
 (define (dict-set! d key val)
-  "写入字典 d[key] = val"
-  (hashtable-set! d key val))
+  "写入字典 d[key] = val（新键追加到末尾）"
+  (unless (hashtable-contains? d key)
+    (hashtable-set! d py-dict-order-key (cons key (py-dict-order d))))
+  (hashtable-set! d key val)
+  val)
+
+(define (dict-set-default! d key val)
+  "setdefault：键不存在时写入"
+  (if (hashtable-contains? d key)
+      (hashtable-ref d key #f)
+      (dict-set! d key val)))
+
+(define (dict-delete! d key)
+  "删除键；存在返回 True"
+  (if (hashtable-contains? d key)
+      (begin
+        (hashtable-set! d py-dict-order-key
+                        (let loop ((ks (py-dict-order d)))
+                          (cond ((null? ks) '())
+                                ((equal? (car ks) key) (loop (cdr ks)))
+                                (else (cons (car ks) (loop (cdr ks)))))))
+        (hashtable-delete! d key)
+        #t)
+      #f))
+
+(define (dict-pop d key . default)
+  (if (hashtable-contains? d key)
+      (let ((v (hashtable-ref d key #f)))
+        (dict-delete! d key)
+        v)
+      (if (null? default) py-none (car default))))
 
 (define (dict-contains? d key)
-  "检查 key 是否在字典中"
-  (hashtable-contains? d key))
+  "检查 key 是否在字典中（隐藏键不算）"
+  (and (hashtable? d)
+       (not (eq? key py-dict-order-key))
+       (hashtable-contains? d key)))
+
+(define (dict-merge! d other)
+  "update：把 other 的键值按序写入 d"
+  (for-each (lambda (k) (dict-set! d k (hashtable-ref other k #f)))
+            (if (hashtable? other) (dict-keys other) '()))
+  d)
 
 (define (dict-copy d)
-  "浅拷贝字典"
+  "浅拷贝字典（保序）"
   (let ((copy (make-dict)))
-    (vector-for-each
-      (lambda (entry)
-        (dict-set! copy (car entry) (cdr entry)))
-      (hashtable-cells d))
+    (for-each (lambda (k) (dict-set! copy k (hashtable-ref d k #f)))
+              (dict-keys d))
     copy))
+
+;; ====== 真除法 / 长度 ======
+;; CPython 的 / 永远返回 float（4/2 → 2.0，1/3 → 0.333…）
+(define (py-truediv a b)
+  (inexact (/ a b)))
+
+;; 统一迭代源：dict→键、str→字符、vector/list/tagged-array 原样
+(define (py-iter-seq x)
+  (cond ((hashtable? x) (list->vector (dict-keys x)))
+        ((string? x)
+         (let* ((n (string-length x)) (v (make-vector n "")))
+           (let loop ((i 0))
+             (if (fx< i n)
+                 (begin (vector-set! v i (string (string-ref x i))) (loop (fx+ i 1)))
+                 v))))
+        ((vector? x) x)
+        ((tagged-array? x)
+         (let* ((n (tagged-array-len x)) (v (make-vector n 0.0)))
+           (let loop ((i 0))
+             (if (fx< i n)
+                 (begin (vector-set! v i (float-array-ref (tagged-array-data x) i))
+                        (loop (fx+ i 1)))
+                 v))))
+        ((list? x) (list->vector x))
+        (else (vector))))
+
+(define (py-len x)
+  "CPython len()：按实际类型分派"
+  (cond ((hashtable? x) (dict-length x))
+        ((string? x) (string-length x))
+        ((vector? x) (vector-length x))
+        ((tagged-array? x) (tagged-array-len x))
+        ((list? x) (length x))
+        ((py-none? x) 0)
+        (else 0)))
 
 ;; ====== 文件 I/O ======
 
@@ -381,18 +515,19 @@
 (define (json->string obj)
   "Scheme 值 → JSON 字符串"
   (cond ((hashtable? obj)
-         (let ((keys (hashtable-keys obj)))
+         (let ((keys (dict-keys obj)))
            (string-append "{"
              (string-join
                (map (lambda (k)
                       (string-append "\"" (if (symbol? k) (symbol->string k) k) "\":"
                         (json->string (hashtable-ref obj k #f))))
-                    (vector->list keys))
+                  keys)
                ", ")
              "}")))
         ((vector? obj)
          (string-append "["
            (string-join (map json->string (vector->list obj)) ", ") "]"))
+        ((py-none? obj) "null")
         ((number? obj) (format "~s" obj))
         ((boolean? obj) (if obj "true" "false"))
         ((string? obj) (string-append "\"" (json-escape-string obj) "\""))
@@ -834,6 +969,30 @@
 (define (format_float f digits)
   (format "~,vf" digits (inexact f)))
 
+;; 精确定点十进制（与 CPython '%.Nf' 一致：二进制精确值 + 半偶舍入）
+(define (float_fixed x digits)
+  (cond
+    ((nan? x) "nan")
+    ((infinite? x) (if (> x 0) "inf" "-inf"))
+    (else
+     (let* ((neg (negative? x))
+            (sc (* (exact (abs (inexact x))) (expt 10 digits)))
+            (num (numerator sc))
+            (den (denominator sc))
+            (q (quotient num den))
+            (r (- num (* q den)))
+            (r2 (* 2 r))
+            (q (if (or (> r2 den) (and (= r2 den) (odd? q))) (+ q 1) q))
+            (ds0 (number->string (abs q)))
+            (need (+ digits 1))
+            (ds (string-append (make-string (max 0 (- need (string-length ds0))) #\0) ds0))
+            (n (string-length ds))
+            (ip (substring ds 0 (- n digits)))
+            (fp (substring ds (- n digits) n))
+            (mag (if (> digits 0) (string-append ip "." fp) ip)))
+       (if (and neg (> q 0)) (string-append "-" mag) mag)))))
+
+
 (define (list_length v)
   (cond ((string? v) (string-length v))
         ((vector? v) (vector-length v))
@@ -881,17 +1040,154 @@
   "字符串切片 [start, end)"
   (substring s start end))
 
+;; ====== Python 风格 repr（与 CPython 逐字符对齐） ======
+;; print() 输出对齐 CPython：字符串单引号、列表 [..]、dict {...}、
+;; 浮点用 repr(float) 的最短往返表示（1e+21 / 1e-05 / 100.0）。
+
+(define (py-split-on-char s ch)
+  (let loop ((i 0))
+    (cond ((fx= i (string-length s)) (list s ""))
+          ((char=? (string-ref s i) ch)
+           (list (substring s 0 i) (substring s (fx+ i 1) (string-length s))))
+          (else (loop (fx+ i 1))))))
+
+(define (py-digits-only s)
+  (list->string
+   (filter (lambda (c) (and (char>=? c #\0) (char<=? c #\9)))
+           (string->list s))))
+
+;; Chez 对次正规浮点会输出 "5e-324|1" 这类尾注，按 '|' 截断
+(define (py-strip-notes s)
+  (let loop ((i 0))
+    (cond ((fx= i (string-length s)) s)
+          ((char=? (string-ref s i) #\|) (substring s 0 i))
+          (else (loop (fx+ i 1))))))
+
+;; repr(float)：最短往返数字；-4 < decpt <= 16 用定点，否则指数（指数至少两位）
+(define (py-float-repr x)
+  (if (nan? x)
+      "nan"
+      (if (infinite? x)
+          (if (> x 0) "inf" "-inf")
+          (let* ((raw (py-strip-notes (number->string x)))
+                 (neg (char=? (string-ref raw 0) #\-))
+                 (body (if neg (substring raw 1 (string-length raw)) raw))
+                 (parts (py-split-on-char body #\e))
+                 (mant (car parts))
+                 (exps (cadr parts))
+                 (ex (if (string=? exps "") 0 (string->number exps)))
+                 (mparts (py-split-on-char mant #\.))
+                 (ip (car mparts))
+                 (fp (cadr mparts))
+                 (ds (py-digits-only (string-append ip fp)))
+                 (decpt (fx+ (string-length ip) ex)))
+            (let* ((n (string-length ds))
+                   (i0 (let loop ((i 0))
+                         (if (and (fx< i (fx- n 1)) (char=? (string-ref ds i) #\0))
+                             (loop (fx+ i 1)) i)))
+                   (ds1 (substring ds i0 n))
+                   (decpt1 (fx- decpt i0))
+                   (n1 (string-length ds1))
+                   (j1 (let loop ((j n1))
+                         (if (and (fx> j 1) (char=? (string-ref ds1 (fx- j 1)) #\0))
+                             (loop (fx- j 1)) j)))
+                   (d (substring ds1 0 j1))
+                   (L (string-length d))
+                   (zero (string=? d "0")))
+              (let ((out
+                     (if (or zero (and (fx> decpt1 -4) (fx<= decpt1 16)))
+                         (cond (zero "0.0")
+                               ((fx<= decpt1 0)
+                                (string-append "0." (make-string (fx* -1 decpt1) #\0) d))
+                               ((fx>= decpt1 L)
+                                (string-append d (make-string (fx- decpt1 L) #\0) ".0"))
+                               (else
+                                (string-append (substring d 0 decpt1) "."
+                                               (substring d decpt1 L))))
+                         (let* ((ex2 (fx- decpt1 1))
+                                (exs (number->string (abs ex2)))
+                                (exs2 (if (fx< (string-length exs) 2)
+                                          (string-append "0" exs) exs)))
+                           (string-append (substring d 0 1)
+                                          (if (fx> L 1) (string-append "." (substring d 1 L)) "")
+                                          "e" (if (fx< ex2 0) "-" "+") exs2)))))
+                (if neg (string-append "-" out) out)))))))
+
+;; repr(str)：单引号 + CPython 转义（双引号不转义）
+(define (py-str-repr s)
+  ;; CPython 选引号：默认单引号；若含 ' 且含 " 则仍用单引号，若含 ' 而无 " 则改用双引号
+  (let* ((has-sq (py-str-find s #\'))
+         (has-dq (py-str-find s #\"))
+         (q (if (and has-sq (not has-dq)) #\" #\'))
+         (qstr (string q)))
+    (let loop ((i 0) (acc '()))
+      (if (fx= i (string-length s))
+          (string-append qstr (apply string-append (reverse acc)) qstr)
+          (let* ((c (string-ref s i))
+                 (piece
+                  (cond ((char=? c #\\) "\\\\")
+                        ((char=? c q) (string-append "\\" qstr))
+                        ((char=? c #\newline) "\\n")
+                        ((char=? c #\return) "\\r")
+                        ((char=? c #\tab) "\\t")
+                        ((or (char<? c (integer->char 32)) (char=? c (integer->char 127)))
+                         (string-append "\\x" (py-hex2 (char->integer c))))
+                        (else (string c)))))
+            (loop (fx+ i 1) (cons piece acc)))))))
+
+(define (py-hex2 n)
+  "0..255 -> 两位小写十六进制"
+  (let ((digits "0123456789abcdef"))
+    (string (string-ref digits (fxand (quotient n 16) 15))
+            (string-ref digits (fxand n 15)))))
+
+(define (py-str-find s ch)
+  (let loop ((i 0))
+    (cond ((fx= i (string-length s)) #f)
+          ((char=? (string-ref s i) ch) #t)
+          (else (loop (fx+ i 1))))))
+
+;; repr(任意值)
+(define (py-repr x)
+  (cond ((string? x) (py-str-repr x))
+        ((boolean? x) (if x "True" "False"))
+        ((py-none? x) "None")
+        ((and (number? x) (inexact? x)) (py-float-repr x))
+        ((number? x) (number->string x))
+        ((hashtable? x)
+         (string-append "{"
+                        (string-join
+                         (map (lambda (k)
+                                (string-append (py-repr k)
+                                               ": " (py-repr (hashtable-ref x k #f))))
+                              (dict-keys x))
+                         ", ")
+                        "}"))
+        ((list? x) (string-append "[" (string-join (map py-repr x) ", ") "]"))
+        ((vector? x) (string-append "[" (string-join (map py-repr (vector->list x)) ", ") "]"))
+        ((null? x) "None")
+        (else (format "~a" x))))
+
 ;; ====== 通用打印 ======
 
-(define (print x)
-  (cond ((number? x) (display x) (newline))
-        ((boolean? x) (display (if x "True" "False")) (newline))
-        ((string? x) (display x) (newline))
-        ((hashtable? x) (display (json->string x)) (newline))
-        ((list? x) (display (json->string (list->vector x))) (newline))
-        ((vector? x) (display (json->string x)) (newline))
-        ((null? x) (display "None") (newline))
-        (else (display x) (newline))))
+(define (print-one x)
+  (cond ((string? x) (display x))
+        ((and (number? x) (inexact? x)) (display (py-float-repr x)))
+        ((number? x) (display (number->string x)))
+        ((boolean? x) (display (if x "True" "False")))
+        ((null? x) (display "None"))
+        (else (display (py-repr x)))))
+
+;; 多参数打印：print(a, b, c) -> 空格分隔 + 换行（与 CPython 一致）
+(define (print . args)
+  (unless (null? args)
+    (print-one (car args))
+    (let loop ((rest (cdr args)))
+      (unless (null? rest)
+        (display " ")
+        (print-one (car rest))
+        (loop (cdr rest)))))
+  (newline))
 
 ;; ====== 类型化数组/vector 工具 ======
 (define (make_int_array n)

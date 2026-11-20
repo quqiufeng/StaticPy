@@ -26,6 +26,12 @@ if bash staticpy/check_tokenize.sh staticpy/static_translate.py selfhost/staticc
   echo "  词法器漂移：bash staticpy/check_tokenize.sh <file>"; fail=1
 fi
 
+echo ">>> [0d/4] 语义差分（翻译器：CPython 输出 vs AOT ELF 输出）"
+_sem_out=$($PY staticpy/semantics_diff.py 2>&1 | tail -1)
+if grep -q "失败 0 项" <<<"$_sem_out"; then echo "  ok（$_sem_out）"; else
+  echo "  语义差分红了：$PY staticpy/semantics_diff.py -v"; fail=1
+fi
+
 echo ">>> [1/4] 构建 C 库 + 前端（imgproc）"
 bash imgproc/build.sh >/dev/null 2>&1 && echo "  ok" || { echo "  失败"; fail=1; }
 

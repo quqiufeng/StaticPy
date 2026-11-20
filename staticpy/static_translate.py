@@ -1236,6 +1236,9 @@ def translate_binop(op_name, left_node, right_node):
             return f"(py-list-concat {left} {right})"
         if l_list or r_list:
             return f"(py-list-append {left} {right})"
+    if is_int and op_name == "Div":
+        # CPython 的 / 是真除法：1/3 → 0.333…，4/2 → 2.0
+        return f"(py-truediv {left} {right})"
     if is_int and fx_op:
         return f"({fx_op} {left} {right})"
     if is_float and fl_op:
@@ -1258,12 +1261,18 @@ def translate_compare(op, left_node, right_node):
     if isinstance(op, (ast.Is, ast.IsNot)):
         negate = isinstance(op, ast.IsNot)
         if isinstance(right_node, ast.Constant) and right_node.value is None:
-            expr = f"(eq? {translate_expr(left_node)} #f)"
+            expr = f"(py-none? {translate_expr(left_node)})"
         elif isinstance(left_node, ast.Constant) and left_node.value is None:
-            expr = f"(eq? {translate_expr(right_node)} #f)"
+            expr = f"(py-none? {translate_expr(right_node)})"
         else:
             expr = f"(eq? {translate_expr(left_node)} {translate_expr(right_node)})"
         return f"(not {expr})" if negate else expr
+    # `x in y` / `x not in y`：容器类型交给运行时 py-contains? 分派
+    # （dict 看键、str 看子串、list/vector 逐元素）。早先这里没分支，
+    # 会一路落到 (generic ...) 生成 (None "a" {...}) 这种调用。
+    if isinstance(op, (ast.In, ast.NotIn)):
+        expr = f"(py-contains? {translate_expr(left_node)} {translate_expr(right_node)})"
+        return f"(not {expr})" if isinstance(op, ast.NotIn) else expr
     left = translate_expr(left_node)
     right = translate_expr(right_node)
     lt = infer_expr_type(left_node)
@@ -2921,6 +2930,31 @@ def _tensor_module_call(node):
     return False
 
 
+def expr_is_bool(node):
+    """启发式：表达式是否已经是布尔（Scheme 下 #t/#f），无需过 py-truthy。
+
+    比较/布尔运算/not/True/False/布尔内建函数的结果天然是 #t/#f；
+    `not` 直接作用在它们身上时保留 `(not X)` 原形，IR 更干净也更快。
+    """
+    if node is None:
+        return False
+    if isinstance(node, ast.Compare) or isinstance(node, ast.BoolOp):
+        return True
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return True
+    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+        return True
+    if isinstance(node, ast.Call):
+        f = node.func
+        if isinstance(f, ast.Name) and f.id in ("bool", "isinstance", "all", "any"):
+            return True
+        if isinstance(f, ast.Attribute) and f.attr in (
+                "startswith", "endswith", "isdigit", "isalpha", "isalnum",
+                "isspace", "isupper", "islower", "isnumeric", "isidentifier"):
+            return True
+    return False
+
+
 def expr_is_tensor(node):
     """启发式：表达式是否为（或产生）张量。用于二元运算的类型路由。"""
     if node is None:
@@ -3250,7 +3284,8 @@ def translate_expr(node):
         if node.value is False:
             return "#f"
         if node.value is None:
-            return "#f"
+            # None 用独立单例表示，与 #f(False) 区分，`x is None` 才能对上
+            return "py-none"
         if isinstance(node.value, str):
             s = node.value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r")
             return f'"{s}"'
@@ -3273,7 +3308,12 @@ def translate_expr(node):
         return f"(if {translate_expr(node.test)} {translate_expr(node.body)} {translate_expr(node.orelse)})"
     elif isinstance(node, ast.UnaryOp):
         if isinstance(node.op, ast.Not):
-            return f"(not {translate_expr(node.operand)})"
+            # `not` 走 CPython 真值（None/0/""/[]/{} 都为假）。
+            # 操作数本来就是布尔时免去 py-truthy，保持 IR 干净。
+            operand = translate_expr(node.operand)
+            if expr_is_bool(node.operand):
+                return f"(not {operand})"
+            return f"(not (py-truthy {operand}))"
         if isinstance(node.op, ast.USub):
             # 张量取负 → torch-tensor-neg
             if expr_is_tensor(node.operand):
@@ -3345,7 +3385,7 @@ def translate_expr(node):
             # 内置函数
             if name in ("len",):
                 if args:
-                    return f"(list_length {args[0]})"
+                    return f"(py-len {args[0]})"
                 return "0"
             # Python isinstance(expr, EConst) -> (ir-tag? expr 'EConst)
             if name == "isinstance":
@@ -3363,7 +3403,8 @@ def translate_expr(node):
             if name == "float":
                 return f"(inexact {args[0]})" if args else "0.0"
             if name == "bool":
-                return f"(not (not {args[0]}))" if args else "#f"
+                # CPython 真值语义：None/0/""/[]/{} 都为假
+                return f"(py-truthy {args[0]})" if args else "#f"
             if name == "abs":
                 return f"(abs {args[0]})" if args else "0"
             if name == "pow":
@@ -3627,6 +3668,36 @@ def translate_expr(node):
                 t = translate_tensor_method(value, attr, node)
                 if t:
                     return t
+            # 字典方法：d.get(k[,默认]) / d.keys() / d.items() / d.values() / d.pop() / d.setdefault()
+            if attr in ("get", "keys", "items", "values", "pop", "setdefault",
+                        "update", "clear") and resolve_expr_class(func.value) is None:
+                _d = value
+                if attr == "get":
+                    if len(args) == 1:
+                        return f"(dict-get {_d} {args[0]})"
+                    if len(args) == 2:
+                        return f"(dict-get-default {_d} {args[0]} {args[1]})"
+                elif attr == "keys":
+                    return f"(dict-keys {_d})"
+                elif attr == "items":
+                    return f"(map (lambda (__k) (cons __k (dict-get {_d} __k))) (dict-keys {_d}))"
+                elif attr == "values":
+                    return f"(map (lambda (__k) (dict-get {_d} __k)) (dict-keys {_d}))"
+                elif attr == "pop":
+                    if len(args) == 1:
+                        return f"(dict-pop {_d} {args[0]})"
+                    if len(args) == 2:
+                        return f"(dict-pop {_d} {args[0]} {args[1]})"
+                elif attr == "setdefault":
+                    if len(args) == 1:
+                        return f"(dict-set-default! {_d} {args[0]} (py-none))"
+                    if len(args) == 2:
+                        return f"(dict-set-default! {_d} {args[0]} {args[1]})"
+                elif attr == "update":
+                    if len(args) == 1:
+                        return f"(dict-merge! {_d} {args[0]})"
+                elif attr == "clear":
+                    return f"(begin (set! {_d} (make-dict)) (py-none))"
             # 普通属性访问（未知对象）：content.splitlines → content-splitlines
             return f"({value}-{attr})"
         # 接收者是表达式（如嵌套调用/下标），非模块名 → 同样尝试张量方法
@@ -3992,11 +4063,11 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                 body_str = " ".join(body_parts)
                 body_exprs.append(f"(let* ((__iter {iter_val}) (__n (vector-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({target} (vector-ref __iter __i))) {body_str})))")
             elif isinstance(stmt.iter, ast.Name):
-                # for x in arr — arr 可能是 vector / tagged-array
+                # for x in arr — arr 可能是 vector / tagged-array / dict / str / list
                 iter_name = stmt.iter.id
                 body_parts = translate_block(stmt.body)
                 body_str = " ".join(body_parts)
-                body_exprs.append(f"(let* ((__iter {iter_name}) (__n (if (tagged-array? __iter) (tagged-array-len __iter) (vector-length __iter)))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({target} (if (tagged-array? __iter) (float-array-ref (tagged-array-data __iter) __i) (vector-ref __iter __i)))) {body_str})))")
+                body_exprs.append(f"(let* ((__iter (py-iter-seq {iter_name})) (__n (vector-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({target} (vector-ref __iter __i))) {body_str})))")
             else:
                 body_exprs.append(f";; for loop (untranslated)")
         elif isinstance(stmt, ast.Match):

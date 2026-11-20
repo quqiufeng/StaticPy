@@ -1,14 +1,3 @@
-
-(define (print-float-array ptr n)
-  (display "#float[")
-  (let loop ((i 0))
-    (when (< i n)
-      (when (> i 0) (display " "))
-      (display (float-array-ref ptr i))
-      (loop (+ i 1))))
-  (display "]")
-  (newline))
-
 ;; ====== 数学函数（libm） ======
 (load-shared-object "libm.so.6")
 (define libm-sin   (foreign-procedure "sin" (double) double))

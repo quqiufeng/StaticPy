@@ -1,4 +1,3 @@
-
 ;; ====== 文件 I/O ======
 
 ;; 加载 libc
@@ -61,8 +60,11 @@
             (loop2 (cdr cs) (- pos n)))))
       (utf8->string all))))
 
-
-
+(define (file-exists? path)
+  "检查文件是否存在"
+  (let ((fp (libc-fopen path "r")))
+    (when fp (libc-fclose fp))
+    (not (not fp))))
 
 ;; ====== 日期时间（libc） ======
 (define libc-time
@@ -93,11 +95,11 @@
         (foreign-free t)
         (utf8->string bv)))))
 
-
-(define (str-ends-with? s suffix)
-  "检查是否以 suffix 结尾"
-  (and (>= (string-length s) (string-length suffix))
-       (string=? (substring s (- (string-length s) (string-length suffix)) (string-length s)) suffix)))
+(define (datetime-str->ts s fmt)
+  "解析时间字符串 → 时间戳，fmt 如 '%Y-%m-%d'"
+  ;; 简化为 strptime 的 FFI
+  ;; 当前返回当前时间戳
+  (libc-time 0))
 
 ;; ====== 操作系统接口（libc） ======
 
@@ -175,18 +177,6 @@
 (define (os_mkdir path) (os-mkdir path))
 (define (os_rmdir path) (os-rmdir path))
 
-
-(define (random-choice seq)
-  "从 vector/list 中随机选择一个元素"
-  (let ((n (if (vector? seq) (vector-length seq) (length seq))))
-    (if (= n 0)
-      #f
-      (let ((i (random-range 0 n)))
-        (if (vector? seq) (vector-ref seq i) (list-ref seq i))))))
-
-(define pi 3.141592653589793)
-(define e 2.718281828459045)
-
 ;; ====== 时间（libc） ======
 (define libc-nanosleep
   (foreign-procedure "nanosleep" (void* void*) int))
@@ -215,3 +205,13 @@
 (define (exit-program code)
   "退出程序"
   (libc-exit code))
+
+;; C ABI 包装（下划线风格，供 StaticPy 调用）
+(define http_get_simple (lambda (url) (http-get-simple url)))
+(define random_float (lambda () (random-float)))
+(define random_int (lambda () (random-int)))
+(define random_range (lambda (low high) (random-range low high)))
+(define random_randint (lambda (low high) (random-randint low high)))
+(define random_uniform (lambda (low high) (random-uniform low high)))
+(define random_choice (lambda (seq) (random-choice seq)))
+(define random_seed (lambda (seed) (random-seed seed)))

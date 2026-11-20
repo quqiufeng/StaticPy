@@ -1,10 +1,3 @@
-
-(define (file-exists? path)
-  "检查文件是否存在"
-  (let ((fp (libc-fopen path "r")))
-    (when fp (libc-fclose fp))
-    (not (not fp))))
-
 ;; ====== HTTP 客户端（基于 libcurl） ======
 
 (load-shared-object "libcurl.so.4")
@@ -87,3 +80,13 @@
 (define file_write (lambda (fp s) (file-write fp s)))
 (define file_exists (lambda (path) (file-exists? path)))
 (define http_get_simple (lambda (url) (http-get-simple url)))
+
+(define (print-float-array ptr n)
+  (display "#float[")
+  (let loop ((i 0))
+    (when (< i n)
+      (when (> i 0) (display " "))
+      (display (float-array-ref ptr i))
+      (loop (+ i 1))))
+  (display "]")
+  (newline))
