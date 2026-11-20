@@ -84,6 +84,8 @@ def scheme_name(nm: str) -> str:
         return "py-list-slice"
     if nm == "py_unpack":
         return "py-unpack"
+    if nm == "py_float_repr":
+        return "py-float-repr"
     return nm
 
 def is_prelude_fn(nm: str) -> bool:
@@ -305,6 +307,43 @@ def infer_expr_type(n) -> str:
                           nt(dict_get(n, "op")))
     if t == "Compare" or t == "BoolOp":
         return "bool"
+    if t == "List" or t == "ListComp" or t == "SetComp" or t == "GeneratorExp":
+        return "list"
+    if t == "DictComp":
+        return "dict"
+    if t == "Subscript":
+        vt = infer_expr_type(dict_get(n, "value"))
+        if vt == "list":
+            return "Any"
+        if str_starts_with(vt, "list["):
+            return str_slice(vt, 5, str_length(vt) - 1)
+        if str_starts_with(vt, "vector["):
+            return str_slice(vt, 7, str_length(vt) - 1)
+        if vt == "str":
+            return "str"
+        return ""
+    if t == "Tuple":
+        elts = dict_get(n, "elts")
+        all_list: int = 1
+        any_list: int = 0
+        any_type: int = 0
+        i: int = 0
+        while i < py_list_length(elts):
+            et = infer_expr_type(py_list_ref(elts, i))
+            if et != "":
+                any_type = 1
+            if str_starts_with(et, "list"):
+                any_list = 1
+            else:
+                all_list = 0
+            i = i + 1
+        if all_list == 1:
+            return "list"
+        if any_list == 1:
+            return "tuple"
+        if any_type == 1:
+            return "tuple"
+        return ""
     if t == "UnaryOp":
         if nt(dict_get(n, "op")) == "Not":
             return "bool"
@@ -414,7 +453,9 @@ def collect_assigned_names(stmts):
         elif t == "AugAssign":
             names = names_of_target(names, dict_get(s, "target"))
         elif t == "For":
-            names = names_of_target(names, dict_get(s, "target"))
+            # 与旧版一致：for 目标只登记裸 Name（元组目标由 for-each 的 lambda 绑定）
+            if nt(dict_get(s, "target")) == "Name":
+                names = names_add(names, dict_get(dict_get(s, "target"), "id"))
             names = names_merge(names, collect_assigned_names(dict_get(s, "body")))
             names = names_merge(names, collect_assigned_names(dict_get(s, "orelse")))
         elif t == "While" or t == "If":
@@ -542,7 +583,8 @@ def translate_subscript(n) -> str:
     if vt == "list[float]":
         return "(float_array_ref " + value + " " + idx + ")"
     if vt == "tuple":
-        return "(vector-ref " + value + " " + idx + ")"
+        # tuple 是独立记录类型（repr 为 (..)），下标统一走 py-get
+        return "(py-get " + value + " " + idx + ")"
     if vt == "list":
         return "(py-list-ref " + value + " " + idx + ")"
     if str_starts_with(vt, "vector["):
@@ -550,7 +592,8 @@ def translate_subscript(n) -> str:
     if str_starts_with(vt, "list["):
         return "(vector-ref " + value + " " + idx + ")"
     if vt == "str":
-        return "(slice-string " + value + " " + idx + " (fx+ " + idx + " 1))"
+        # 单下标取字符：不能展开成 slice-string（负下标会被算成 (fx+ -1 1)=0）
+        return "(py-str-ref " + value + " " + idx + ")"
     return "(py-get " + value + " " + idx + ")"
 
 def elems_text(elts) -> str:
@@ -563,14 +606,14 @@ def elems_text(elts) -> str:
     return jn(ps)
 
 def translate_joined(n) -> str:
-    """f-string -> (string-append ...)，插值用 (format "~a" e)（与旧版一致）"""
+    """f-string -> (string-append ...)，插值用 (py-str e)（同旧版：CPython f-string 走 str()）"""
     vs = dict_get(n, "values")
     ps = py_list()
     j: int = 0
     while j < py_list_length(vs):
         e = py_list_ref(vs, j)
         if nt(e) == "FormattedValue":
-            ps = py_list_append(ps, "(format \"~a\" " + translate_expr(dict_get(e, "value")) + ")")
+            ps = py_list_append(ps, "(py-str " + translate_expr(dict_get(e, "value")) + ")")
         elif nt(e) == "Constant":
             ps = py_list_append(ps, translate_expr(e))
         else:
@@ -579,6 +622,38 @@ def translate_joined(n) -> str:
     if py_list_length(ps) == 1:
         return py_list_ref(ps, 0)
     return "(string-append " + jn(ps) + ")"
+
+IR_FIELDS = (
+    " value name operand func args "
+    "cond_expr then_body else_body var stop body "
+    "params param_types ret op left right ty "
+)
+
+def translate_attribute(n) -> str:
+    """x.attr 当值用（顺序与旧版 Attribute 分支一致；class/张量分支这里没有）"""
+    at = dict_get(n, "attr")
+    rv = dict_get(n, "value")
+    # 模块常量/函数取值：math.pi -> (pi)，time.time -> (clock)
+    mv: str = module_value_name(n)
+    if mv != "":
+        return "(" + mv + ")"
+    if nt(rv) == "Name":
+        vn = mangle_name(dict_get(rv, "id"))
+        if at == "append":
+            return "(py-list-append " + vn
+        if at == "length":
+            return "(py-list-length " + vn + ")"
+        if at == "ref" or at == "__getitem__":
+            return "(py-list-ref " + vn
+        if at == "isinstance":
+            return "(ir-tag? " + vn
+    value = translate_expr(rv)
+    if at == "copy":
+        return "(dict-copy " + value + ")"
+    # IR 节点字段：expr.value -> (ir-field expr 'value)
+    if str_contains(IR_FIELDS, " " + at + " "):
+        return "(ir-field " + value + " '" + at + ")"
+    return "(" + at + " " + value + ")"
 
 def translate_expr(n) -> str:
     t = nt(n)
@@ -633,6 +708,8 @@ def translate_expr(n) -> str:
         return "(" + op + " " + jn(ps) + ")"
     if t == "Lambda":
         return translate_lambda(n)
+    if t == "Attribute":
+        return translate_attribute(n)
     return ";; " + t + " (untranslated)"
 
 def translate_binop(op: str, ln, rn) -> str:
@@ -702,6 +779,9 @@ def translate_binop(op: str, ln, rn) -> str:
 
 def translate_compare(ops, ln, coms) -> str:
     """按类型生成特化比较；只用 ops[0]/comparators[0]（同旧版）"""
+    if py_list_length(ops) > 1 or py_list_length(coms) > 1:
+        # 链式比较：旧版就发这个占位形（bug-for-bug 对齐）
+        return f"(and {translate_expr(ln)} ... cmp)"
     op = nt(py_list_ref(ops, 0))
     rn = py_list_ref(coms, 0)
     if op == "Is" or op == "IsNot":
@@ -791,9 +871,8 @@ def translate_unary(n) -> str:
         return "(not (py-truthy " + translate_expr(e) + "))"
     if op == "USub":
         return f"(- {translate_expr(e)})"
-    if op == "UAdd":
-        return translate_expr(e)
-    return f"(not {translate_expr(e)})"
+    # 其余（Invert / UAdd …）与旧版一致：<OpName> 直译，不做语义改写
+    return f"({op} {translate_expr(e)})"
 
 def translate_lambda(n) -> str:
     ps = dict_get(dict_get(n, "args"), "args")
@@ -826,13 +905,47 @@ def translate_call(n) -> str:
         at = dict_get(f, "attr")
         rv = dict_get(f, "value")
         al = dict_get(n, "args")
+        # 模块函数：random.seed(7) -> (random_seed 7)；os.path.join -> (join ..)
+        mfn: str = module_call_name(rv, at)
+        if mfn != "":
+            kw: str = ""
+            kws = dict_get(n, "keywords")
+            if kws is not None:
+                ki: int = 0
+                while ki < py_list_length(kws):
+                    k = py_list_ref(kws, ki)
+                    if dict_get(k, "arg") is not None:
+                        if kw != "":
+                            kw = kw + " "
+                        kw = kw + translate_expr(dict_get(k, "value"))
+                    ki = ki + 1
+            if kw != "":
+                if a != "":
+                    return "(" + mfn + " " + a + " " + kw + ")"
+                return "(" + mfn + " " + kw + ")"
+            return "(" + mfn + " " + a + ")"
+        mfbn: str = module_fallback_name(rv, at)
+        if mfbn != "":
+            # 兜底路径丢关键字实参（同旧版 OS_MAP / * _MAP 分支）
+            if a != "":
+                return "(" + mfbn + " " + a + ")"
+            return "(" + mfbn + ")"
         # 不可变 list 模型：lst.append(x) -> (set! lst (py-list-append lst x))
         if at == "append" and nt(rv) == "Name" and py_list_length(al) == 1:
             vn = mangle_name(dict_get(rv, "id"))
             return f"(set! {vn} (py-list-append {vn} {a}))"
         if str_contains(CONTAINER_METHODS, " " + at + " "):
+            # .get 定参快路：不走 rest 打包（同旧版）
+            if at == "get" and (py_list_length(al) == 1 or py_list_length(al) == 2):
+                if py_list_length(al) == 1:
+                    fast: str = "py-m-get2"
+                else:
+                    fast = "py-m-get3"
+                return str_replace(f"({fast} {translate_expr(rv)} {a})", "  ", " ")
             return f"(py-m-{at} {translate_expr(rv)} {a})"
-        return f"({translate_expr(f)} {a})"
+        # 未知对象的属性调用：content.splitlines() -> (content-splitlines)
+        # 与旧版一致：通用属性调用不展开实参
+        return f"({translate_expr(rv)}-{at})"
     if nt(f) != "Name":
         return f"({translate_expr(f)} {a})"
     nm = dict_get(f, "id")
@@ -851,7 +964,8 @@ def translate_call(n) -> str:
             return "(new_dict)"
         return f"(as_dict {a})"
     if nm == "range":
-        return f"({a})"
+        # 表达式位置（for 头由 block_for 单独化 do 循环）
+        return f"(py-range->list {a})"
     if nm == "int":
         return f"(exact (round {a}))"
     if nm == "float":
@@ -860,6 +974,8 @@ def translate_call(n) -> str:
         return f"(py-truthy {a})"
     if nm == "abs":
         return f"(abs {a})"
+    if nm == "exit":
+        return f"(exit_program {a})"
     if nm == "isinstance":
         al = dict_get(n, "args")
         if py_list_length(al) == 2:
@@ -905,6 +1021,23 @@ def block_assign(exprs, s, t: str):
     v = dict_get(s, "value")
     if v is None:
         return py_list_append(exprs, ";; " + t)
+    if nt(tg) == "Tuple":
+        # 元组解构：a, b = expr -> (let ((__tmp_N expr)) (set! a (py-get __tmp_N 0)) …)
+        tmp: str = "__tmp_" + str(py_list_length(exprs))
+        tmp_val: str = translate_expr(v)
+        if nt(v) == "Tuple":
+            tmp_val = "(py-tuple " + elems_text(dict_get(v, "elts")) + ")"
+        binds: str = ""
+        elts = dict_get(tg, "elts")
+        k: int = 0
+        while k < py_list_length(elts):
+            e = py_list_ref(elts, k)
+            if nt(e) == "Name":
+                if binds != "":
+                    binds = binds + " "
+                binds = binds + f"(set! {mangle_name(dict_get(e, 'id'))} (py-get {tmp} {k}))"
+            k = k + 1
+        return py_list_append(exprs, f"(let (({tmp} {tmp_val})) {binds})")
     if nt(tg) == "Name":
         nm = dict_get(tg, "id")
         iv = infer_expr_type(v)
@@ -912,9 +1045,52 @@ def block_assign(exprs, s, t: str):
             tenv_set(nm, iv)
         return py_list_append(exprs, f"(set! {mangle_name(nm)} {translate_expr(v)})")
     if nt(tg) == "Subscript":
-        # d[k] = v -> (dict-set! d k v)
-        return py_list_append(exprs, f"(dict-set! {translate_expr(dict_get(tg, 'value'))} {translate_expr(dict_get(tg, 'slice'))} {translate_expr(v)})")
+        # d[k] = v / a[i] = v -> py-set! 统一分派（dict / list / str 都对）
+        return py_list_append(exprs, f"(py-set! {translate_expr(dict_get(tg, 'value'))} {translate_expr(dict_get(tg, 'slice'))} {translate_expr(v)})")
     return py_list_append(exprs, ";; " + t)
+
+def block_delete(s) -> str:
+    """del d[k] / del a[i] -> (begin (py-del! …) …)；del 变量 -> (set! v #f)"""
+    tg = dict_get(s, "targets")
+    parts: str = ""
+    i: int = 0
+    while i < py_list_length(tg):
+        t = py_list_ref(tg, i)
+        if nt(t) == "Subscript":
+            one = f"(py-del! {translate_expr(dict_get(t, 'value'))} {translate_expr(dict_get(t, 'slice'))})"
+        elif nt(t) == "Name":
+            one = f"(set! {mangle_name(dict_get(t, 'id'))} #f)"
+        else:
+            one = ";; del: untranslated target"
+        if i > 0:
+            parts = parts + " "
+        parts = parts + one
+        i = i + 1
+    if parts == "":
+        return "(void)"
+    return "(begin " + parts + ")"
+
+def block_try(s, lvl: int) -> str:
+    """try/except -> (guard (e (else <handler>)) <body>)"""
+    body_scheme: str = jn(translate_block(dict_get(s, "body"), lvl))
+    handler_body: str = "(void)"
+    hs = dict_get(s, "handlers")
+    if py_list_length(hs) > 0:
+        handler_body = jn(translate_block(dict_get(py_list_ref(hs, 0), "body"), lvl))
+    return f"(guard (e (else {handler_body})) {body_scheme})"
+
+def block_raise(s) -> str:
+    """raise X(..) -> (error 'X msg)"""
+    exc = dict_get(s, "exc")
+    if nt(exc) == "Call" and nt(dict_get(exc, "func")) == "Name":
+        msg: str = ""
+        ar = dict_get(exc, "args")
+        if py_list_length(ar) > 0:
+            msg = translate_expr(py_list_ref(ar, 0))
+        return "(error '" + dict_get(dict_get(exc, "func"), "id") + " " + msg + ")"
+    if nt(exc) == "Name":
+        return "(error '" + dict_get(exc, "id") + " \"raised\")"
+    return "(error 'raise \"raised\")"
 
 def translate_block(stmts, lvl: int):
     exprs = py_list()
@@ -953,6 +1129,25 @@ def translate_block(stmts, lvl: int):
             exprs = py_list_append(exprs, block_while(s))
         elif t == "For":
             exprs = py_list_append(exprs, block_for(s, lvl))
+        elif t == "Delete":
+            exprs = py_list_append(exprs, block_delete(s))
+        elif t == "With":
+            # with 在 block 内简化为直接执行 body（同旧版）
+            sub = translate_block(dict_get(s, "body"), lvl)
+            j: int = 0
+            while j < py_list_length(sub):
+                exprs = py_list_append(exprs, py_list_ref(sub, j))
+                j = j + 1
+        elif t == "Try":
+            # try/except 语法糖：guard 捕获异常（同旧版）
+            exprs = py_list_append(exprs, block_try(s, lvl))
+        elif t == "Raise":
+            exprs = py_list_append(exprs, block_raise(s))
+        elif t == "Assert":
+            msg: str = "\"assertion failed\""
+            if dict_get(s, "msg") is not None:
+                msg = translate_expr(dict_get(s, "msg"))
+            exprs = py_list_append(exprs, f"(if (not {translate_expr(dict_get(s, 'test'))}) (error 'assert {msg}))")
         else:
             exprs = py_list_append(exprs, ";; " + t)
         i = i + 1
@@ -1011,6 +1206,23 @@ def block_for(s, lvl: int) -> str:
         nm = mangle_name(dict_get(tg, "id"))
     it = dict_get(s, "iter")
     bs = jn(translate_block(dict_get(s, "body"), 0))
+    # for a, b in <iter>：元素按下标取（tuple/pair/vector 统一 py-get）
+    if nt(tg) == "Tuple" or nt(tg) == "List":
+        elts = dict_get(tg, "elts")
+        all_name: int = 1
+        binds: str = ""
+        i: int = 0
+        while i < py_list_length(elts):
+            e = py_list_ref(elts, i)
+            if nt(e) != "Name":
+                all_name = 0
+            else:
+                if i > 0:
+                    binds = binds + " "
+                binds = binds + "(" + mangle_name(dict_get(e, "id")) + f" (py-get __e {i}))"
+            i = i + 1
+        if all_name == 1 and py_list_length(elts) > 0:
+            return f"(for-each (lambda (__e) (let ({binds}) {bs})) (py-items {translate_expr(it)}))"
     if is_range(it):
         ra = dict_get(it, "args")
         n = py_list_length(ra)
@@ -1025,14 +1237,16 @@ def block_for(s, lvl: int) -> str:
     if nt(it) == "Constant" and dict_get(it, "_k") == "str":
         return f"(let* ((__iter {translate_expr(it)}) (__n (string-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({nm} (string-ref __iter __i))) {bs})))"
     if nt(it) == "Name":
-        iname = mangle_name(dict_get(it, "id"))
+        # 函数体顶层（lvl=1）走旧版函数体那条路径：py-iter-seq + vector-length；
+        # 嵌套块走 emit_for_stmt：py-seq-len / py-seq-ref（统一 vector/glist/tagged/str）
+        iter_name: str = dict_get(it, "id")
         if lvl == 1:
-            return f"(let* ((__iter (py-iter-seq {iname})) (__n (vector-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({nm} (vector-ref __iter __i))) {bs})))"
-        return (f"(let* ((__iter {iname}) (__n (if (tagged-array? __iter) (tagged-array-len __iter) "
-                f"(if (string? __iter) (string-length __iter) (vector-length __iter))))) "
+            return (f"(let* ((__iter (py-iter-seq {iter_name})) (__n (vector-length __iter))) "
+                    f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
+                    f"(let (({nm} (vector-ref __iter __i))) {bs})))")
+        return (f"(let* ((__iter {iter_name}) (__n (py-seq-len __iter))) "
                 f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
-                f"(let (({nm} (if (tagged-array? __iter) (float-array-ref (tagged-array-data __iter) __i) "
-                f"(if (string? __iter) (string-ref __iter __i) (vector-ref __iter __i))))) {bs})))")
+                f"(let (({nm} (py-seq-ref __iter __i))) {bs})))")
     return ";; for loop (untranslated)"
 
 def is_range(it) -> bool:
@@ -1221,6 +1435,489 @@ def emit_extern_ffi() -> str:
         i = i + 1
     return out
 
+# ====== 模块属性表（对齐旧版 BUILTIN_MODULES / NESTED_MODULES）======
+def mod_attr(mod: str, attr: str) -> str:
+    """mod.attr -> Scheme 函数名；未登记返回空串（同旧版模块别名解析）"""
+    if mod == "cuda" and attr == "gemm":
+        return "cuda-gemm"
+    if mod == "json" and attr == "dumps":
+        return "json_dumps"
+    if mod == "json" and attr == "loads":
+        return "parse_json"
+    if mod == "la" and attr == "eigvals":
+        return "la-eigvals"
+    if mod == "la" and attr == "solve":
+        return "la-solve"
+    if mod == "la" and attr == "svd":
+        return "la-svd"
+    if mod == "math" and attr == "abs":
+        return "abs"
+    if mod == "math" and attr == "acos":
+        return "acos"
+    if mod == "math" and attr == "asin":
+        return "asin"
+    if mod == "math" and attr == "atan":
+        return "atan"
+    if mod == "math" and attr == "atan2":
+        return "atan2"
+    if mod == "math" and attr == "ceil":
+        return "ceil"
+    if mod == "math" and attr == "cos":
+        return "cos"
+    if mod == "math" and attr == "cosh":
+        return "cosh"
+    if mod == "math" and attr == "e":
+        return "e"
+    if mod == "math" and attr == "exp":
+        return "exp"
+    if mod == "math" and attr == "floor":
+        return "floor"
+    if mod == "math" and attr == "fmod":
+        return "fmod"
+    if mod == "math" and attr == "log":
+        return "log"
+    if mod == "math" and attr == "log10":
+        return "log10"
+    if mod == "math" and attr == "log2":
+        return "log2"
+    if mod == "math" and attr == "pi":
+        return "pi"
+    if mod == "math" and attr == "pow":
+        return "pow"
+    if mod == "math" and attr == "round":
+        return "round"
+    if mod == "math" and attr == "sin":
+        return "sin"
+    if mod == "math" and attr == "sinh":
+        return "sinh"
+    if mod == "math" and attr == "sqrt":
+        return "sqrt"
+    if mod == "math" and attr == "tan":
+        return "tan"
+    if mod == "math" and attr == "tanh":
+        return "tanh"
+    if mod == "nn" and attr == "Sequential":
+        return "nn-Sequential"
+    if mod == "nn" and attr == "batch_norm1d":
+        return "nn-batch-norm1d"
+    if mod == "nn" and attr == "batch_norm2d":
+        return "nn-batch-norm2d"
+    if mod == "nn" and attr == "call":
+        return "nn-call"
+    if mod == "nn" and attr == "conv2d":
+        return "nn-conv2d"
+    if mod == "nn" and attr == "flatten":
+        return "nn-flatten"
+    if mod == "nn" and attr == "linear":
+        return "nn-linear"
+    if mod == "nn" and attr == "parameters":
+        return "nn-parameters"
+    if mod == "nn" and attr == "relu":
+        return "nn-relu"
+    if mod == "nn" and attr == "sigmoid":
+        return "nn-sigmoid"
+    if mod == "nn" and attr == "tanh":
+        return "nn-tanh"
+    if mod == "np" and attr == "abs":
+        return "np-abs"
+    if mod == "np" and attr == "arange":
+        return "np-arange"
+    if mod == "np" and attr == "argmax":
+        return "np-argmax"
+    if mod == "np" and attr == "array":
+        return "np-array"
+    if mod == "np" and attr == "clip":
+        return "np-clip"
+    if mod == "np" and attr == "concatenate":
+        return "np-concatenate"
+    if mod == "np" and attr == "copy":
+        return "np-copy"
+    if mod == "np" and attr == "daxpy":
+        return "np-daxpy"
+    if mod == "np" and attr == "dot":
+        return "np-dot"
+    if mod == "np" and attr == "exp":
+        return "np-exp"
+    if mod == "np" and attr == "gemm":
+        return "np-gemm"
+    if mod == "np" and attr == "gemv":
+        return "np-gemv"
+    if mod == "np" and attr == "linspace":
+        return "np-linspace"
+    if mod == "np" and attr == "matmul":
+        return "np-gemm"
+    if mod == "np" and attr == "max":
+        return "np-max"
+    if mod == "np" and attr == "mean":
+        return "np-mean"
+    if mod == "np" and attr == "min":
+        return "np-min"
+    if mod == "np" and attr == "ones":
+        return "np-ones"
+    if mod == "np" and attr == "scal":
+        return "np-scal"
+    if mod == "np" and attr == "sqrt":
+        return "np-sqrt"
+    if mod == "np" and attr == "sum":
+        return "np-sum"
+    if mod == "np" and attr == "zeros":
+        return "np-zeros"
+    if mod == "os" and attr == "getcwd":
+        return "os_cwd"
+    if mod == "os" and attr == "getenv":
+        return "os_getenv"
+    if mod == "os" and attr == "listdir":
+        return "os_list_dir"
+    if mod == "os" and attr == "mkdir":
+        return "os_mkdir"
+    if mod == "os" and attr == "remove":
+        return "os_delete_file"
+    if mod == "os" and attr == "rename":
+        return "os_move_file"
+    if mod == "os" and attr == "rmdir":
+        return "os_rmdir"
+    if mod == "os" and attr == "system":
+        return "os_shell"
+    if mod == "os.path" and attr == "exists":
+        return "os_file_exists"
+    if mod == "os.path" and attr == "getsize":
+        return "os_file_size"
+    if mod == "random" and attr == "choice":
+        return "random_choice"
+    if mod == "random" and attr == "randint":
+        return "random_randint"
+    if mod == "random" and attr == "random":
+        return "random_float"
+    if mod == "random" and attr == "seed":
+        return "random_seed"
+    if mod == "random" and attr == "uniform":
+        return "random_uniform"
+    if mod == "time" and attr == "sleep":
+        return "sleep"
+    if mod == "time" and attr == "strftime":
+        return "format_time"
+    if mod == "time" and attr == "time":
+        return "clock"
+    if mod == "torch" and attr == "abs":
+        return "torch-abs"
+    if mod == "torch" and attr == "adam":
+        return "torch-adam"
+    if mod == "torch" and attr == "adamw":
+        return "torch-adamw"
+    if mod == "torch" and attr == "add":
+        return "torch-add"
+    if mod == "torch" and attr == "argmax":
+        return "torch-argmax"
+    if mod == "torch" and attr == "argmax_dim":
+        return "torch-argmax-dim"
+    if mod == "torch" and attr == "available":
+        return "torch-available"
+    if mod == "torch" and attr == "avg_pool2d":
+        return "torch-avg-pool2d"
+    if mod == "torch" and attr == "backward":
+        return "torch-backward"
+    if mod == "torch" and attr == "batch_norm1d":
+        return "torch-batch-norm1d"
+    if mod == "torch" and attr == "batch_norm2d":
+        return "torch-batch-norm2d"
+    if mod == "torch" and attr == "bce_loss":
+        return "torch-bce-loss"
+    if mod == "torch" and attr == "bce_with_logits_loss":
+        return "torch-bce-with-logits-loss"
+    if mod == "torch" and attr == "cat":
+        return "torch-cat"
+    if mod == "torch" and attr == "clamp":
+        return "torch-clamp"
+    if mod == "torch" and attr == "clip_grad_norm":
+        return "torch-clip-grad-norm"
+    if mod == "torch" and attr == "clip_text_forward":
+        return "torch-clip-text-forward"
+    if mod == "torch" and attr == "clip_tokenizer_create":
+        return "torch-clip-tokenizer-create"
+    if mod == "torch" and attr == "clip_tokenizer_encode":
+        return "torch-clip-tokenizer-encode"
+    if mod == "torch" and attr == "clip_tokenizer_free":
+        return "torch-clip-tokenizer-free"
+    if mod == "torch" and attr == "clone":
+        return "torch-clone"
+    if mod == "torch" and attr == "color_convert":
+        return "torch-color-convert"
+    if mod == "torch" and attr == "controlnet_apply":
+        return "torch-controlnet-apply"
+    if mod == "torch" and attr == "controlnet_forward":
+        return "torch-controlnet-forward"
+    if mod == "torch" and attr == "conv2d":
+        return "torch-conv2d"
+    if mod == "torch" and attr == "cross_entropy":
+        return "torch-cross-entropy"
+    if mod == "torch" and attr == "cuda_is_available":
+        return "torch-cuda-is-available"
+    if mod == "torch" and attr == "ddpm_add_noise":
+        return "torch-ddpm-add-noise"
+    if mod == "torch" and attr == "ddpm_betas":
+        return "torch-ddpm-betas"
+    if mod == "torch" and attr == "detach":
+        return "torch-detach"
+    if mod == "torch" and attr == "div":
+        return "torch-div"
+    if mod == "torch" and attr == "empty":
+        return "torch-empty"
+    if mod == "torch" and attr == "eq":
+        return "torch-eq"
+    if mod == "torch" and attr == "exp":
+        return "torch-exp"
+    if mod == "torch" and attr == "flux_forward":
+        return "torch-flux-forward"
+    if mod == "torch" and attr == "fm_sigmas":
+        return "torch-fm-sigmas"
+    if mod == "torch" and attr == "fm_step":
+        return "torch-fm-step"
+    if mod == "torch" and attr == "from_raw":
+        return "torch-from-raw"
+    if mod == "torch" and attr == "gather":
+        return "torch-gather"
+    if mod == "torch" and attr == "ge":
+        return "torch-ge"
+    if mod == "torch" and attr == "gguf_free":
+        return "torch-gguf-free"
+    if mod == "torch" and attr == "gguf_load":
+        return "torch-gguf-load"
+    if mod == "torch" and attr == "gguf_load_tensor":
+        return "torch-gguf-load-tensor"
+    if mod == "torch" and attr == "gguf_load_tensor_by_name":
+        return "torch-gguf-load-tensor-by-name"
+    if mod == "torch" and attr == "gguf_tensor_count":
+        return "torch-gguf-tensor-count"
+    if mod == "torch" and attr == "gguf_tensor_name":
+        return "torch-gguf-tensor-name"
+    if mod == "torch" and attr == "grad":
+        return "torch-grad"
+    if mod == "torch" and attr == "gt":
+        return "torch-gt"
+    if mod == "torch" and attr == "has_grad":
+        return "torch-has-grad"
+    if mod == "torch" and attr == "image_composite":
+        return "torch-image-composite"
+    if mod == "torch" and attr == "image_crop":
+        return "torch-image-crop"
+    if mod == "torch" and attr == "image_resize":
+        return "torch-image-resize"
+    if mod == "torch" and attr == "image_resize_float":
+        return "torch-image-resize-float"
+    if mod == "torch" and attr == "index_select":
+        return "torch-index-select"
+    if mod == "torch" and attr == "is_cuda":
+        return "torch-is-cuda"
+    if mod == "torch" and attr == "jit_delete":
+        return "torch-jit-delete"
+    if mod == "torch" and attr == "jit_forward":
+        return "torch-jit-forward"
+    if mod == "torch" and attr == "jit_load":
+        return "torch-jit-load"
+    if mod == "torch" and attr == "l1_loss":
+        return "torch-l1-loss"
+    if mod == "torch" and attr == "le":
+        return "torch-le"
+    if mod == "torch" and attr == "linear":
+        return "torch-linear"
+    if mod == "torch" and attr == "load_image":
+        return "torch-load-image"
+    if mod == "torch" and attr == "log":
+        return "torch-log"
+    if mod == "torch" and attr == "log_softmax":
+        return "torch-log-softmax"
+    if mod == "torch" and attr == "lora_apply":
+        return "torch-lora-apply"
+    if mod == "torch" and attr == "lora_merge_into":
+        return "torch-lora-merge-into"
+    if mod == "torch" and attr == "lt":
+        return "torch-lt"
+    if mod == "torch" and attr == "manual_seed":
+        return "torch-manual-seed"
+    if mod == "torch" and attr == "matmul":
+        return "torch-matmul"
+    if mod == "torch" and attr == "max_dim":
+        return "torch-max-dim"
+    if mod == "torch" and attr == "max_pool2d":
+        return "torch-max-pool2d"
+    if mod == "torch" and attr == "mean":
+        return "torch-mean"
+    if mod == "torch" and attr == "mean_dim":
+        return "torch-mean-dim"
+    if mod == "torch" and attr == "min_dim":
+        return "torch-min-dim"
+    if mod == "torch" and attr == "mse_loss":
+        return "torch-mse-loss"
+    if mod == "torch" and attr == "mul":
+        return "torch-mul"
+    if mod == "torch" and attr == "multinomial":
+        return "torch-multinomial"
+    if mod == "torch" and attr == "neg":
+        return "torch-neg"
+    if mod == "torch" and attr == "nll_loss":
+        return "torch-nll-loss"
+    if mod == "torch" and attr == "numel":
+        return "torch-numel"
+    if mod == "torch" and attr == "ones":
+        return "torch-ones"
+    if mod == "torch" and attr == "optimizer_step":
+        return "torch-optimizer-step"
+    if mod == "torch" and attr == "optimizer_zero_grad":
+        return "torch-optimizer-zero-grad"
+    if mod == "torch" and attr == "pow":
+        return "torch-pow"
+    if mod == "torch" and attr == "randint":
+        return "torch-randint"
+    if mod == "torch" and attr == "randn":
+        return "torch-randn"
+    if mod == "torch" and attr == "relu":
+        return "torch-relu"
+    if mod == "torch" and attr == "reshape":
+        return "torch-reshape"
+    if mod == "torch" and attr == "safetensors_count":
+        return "torch-safetensors-count"
+    if mod == "torch" and attr == "safetensors_free":
+        return "torch-safetensors-free"
+    if mod == "torch" and attr == "safetensors_get_tensor_by_name":
+        return "torch-safetensors-get-tensor-by-name"
+    if mod == "torch" and attr == "safetensors_load":
+        return "torch-safetensors-load"
+    if mod == "torch" and attr == "safetensors_name":
+        return "torch-safetensors-name"
+    if mod == "torch" and attr == "safetensors_tensor":
+        return "torch-safetensors-tensor"
+    if mod == "torch" and attr == "sample_ddim":
+        return "torch-sample-ddim"
+    if mod == "torch" and attr == "sample_dpmpp_2m":
+        return "torch-sample-dpmpp-2m"
+    if mod == "torch" and attr == "sample_euler":
+        return "torch-sample-euler"
+    if mod == "torch" and attr == "sample_euler_ancestral":
+        return "torch-sample-euler-ancestral"
+    if mod == "torch" and attr == "sampler_sigmas":
+        return "torch-sampler-sigmas"
+    if mod == "torch" and attr == "save_image":
+        return "torch-save-image"
+    if mod == "torch" and attr == "save_state_dict":
+        return "torch-save-state-dict"
+    if mod == "torch" and attr == "sd_unet_forward":
+        return "torch-sd-unet-forward"
+    if mod == "torch" and attr == "sdxl_dual_clip":
+        return "torch-sdxl-dual-clip"
+    if mod == "torch" and attr == "sdxl_unet_forward":
+        return "torch-sdxl-unet-forward"
+    if mod == "torch" and attr == "set_requires_grad":
+        return "torch-set-requires-grad"
+    if mod == "torch" and attr == "sgd":
+        return "torch-sgd"
+    if mod == "torch" and attr == "sigmoid":
+        return "torch-sigmoid"
+    if mod == "torch" and attr == "softmax":
+        return "torch-softmax"
+    if mod == "torch" and attr == "sqrt":
+        return "torch-sqrt"
+    if mod == "torch" and attr == "squeeze":
+        return "torch-squeeze"
+    if mod == "torch" and attr == "stack":
+        return "torch-stack"
+    if mod == "torch" and attr == "sub":
+        return "torch-sub"
+    if mod == "torch" and attr == "sum":
+        return "torch-sum"
+    if mod == "torch" and attr == "sum_dim":
+        return "torch-sum-dim"
+    if mod == "torch" and attr == "t5_tokenizer_create":
+        return "torch-t5-tokenizer-create"
+    if mod == "torch" and attr == "t5_tokenizer_encode":
+        return "torch-t5-tokenizer-encode"
+    if mod == "torch" and attr == "t5_tokenizer_free":
+        return "torch-t5-tokenizer-free"
+    if mod == "torch" and attr == "tanh":
+        return "torch-tanh"
+    if mod == "torch" and attr == "tensor":
+        return "torch-tensor"
+    if mod == "torch" and attr == "tensor_int64":
+        return "torch-tensor-int64"
+    if mod == "torch" and attr == "to_cpu":
+        return "torch-to-cpu"
+    if mod == "torch" and attr == "to_cuda":
+        return "torch-to-cuda"
+    if mod == "torch" and attr == "to_dtype":
+        return "torch-to-dtype"
+    if mod == "torch" and attr == "to_list":
+        return "torch-to-list"
+    if mod == "torch" and attr == "transpose":
+        return "torch-transpose"
+    if mod == "torch" and attr == "unsqueeze":
+        return "torch-unsqueeze"
+    if mod == "torch" and attr == "vae_decode_tiled":
+        return "torch-vae-decode-tiled"
+    if mod == "torch" and attr == "vae_encode_tiled":
+        return "torch-vae-encode-tiled"
+    if mod == "torch" and attr == "where":
+        return "torch-where"
+    if mod == "torch" and attr == "zero_grad":
+        return "torch-zero-grad"
+    if mod == "torch" and attr == "zeros":
+        return "torch-zeros"
+    return ""
+
+MOD_ALIAS = make_dict()
+MOD_KEYS = " np la torch nn cuda math random json time os urllib os.path "
+
+def mod_key(name: str) -> str:
+    """导入别名 -> 模块名（无导入但属内置模块名也认，同旧版 is_module_alias）"""
+    m: str = dict_get(MOD_ALIAS, name)
+    if m is not None:
+        return m
+    if str_contains(MOD_KEYS, " " + name + " "):
+        return name
+    return ""
+
+MOD_FALLBACK = " np la torch cuda math random json time os os.path "
+
+def module_call_name(rv, attr: str) -> str:
+    """调用点：<mod>.<attr> / <mod>.<mid>.<attr> -> Scheme 名（未登记返回空串）"""
+    if nt(rv) == "Name":
+        mk: str = mod_key(dict_get(rv, "id"))
+        if mk == "":
+            return ""
+        return mod_attr(mk, attr)
+    if nt(rv) == "Attribute" and nt(dict_get(rv, "value")) == "Name":
+        top: str = mod_key(dict_get(dict_get(rv, "value"), "id"))
+        if top == "":
+            return ""
+        return mod_attr(top + "." + dict_get(rv, "attr"), attr)
+    return ""
+
+def module_fallback_name(rv, attr: str) -> str:
+    """未登记表项的模块调用：兜底用属性名本身（同旧版 *_MAP.get(attr, attr)）"""
+    if nt(rv) == "Name":
+        mk: str = mod_key(dict_get(rv, "id"))
+        if mk != "" and str_contains(MOD_FALLBACK, " " + mk + " "):
+            return attr
+        return ""
+    if nt(rv) == "Attribute" and nt(dict_get(rv, "value")) == "Name":
+        top: str = mod_key(dict_get(dict_get(rv, "value"), "id"))
+        if top == "":
+            return ""
+        key: str = top + "." + dict_get(rv, "attr")
+        if str_contains(MOD_FALLBACK, " " + key + " "):
+            return attr
+    return ""
+
+def module_value_name(n) -> str:
+    """取值点：<mod>.<attr> -> (scheme 常量/函数名)；未登记返回空串"""
+    if nt(n) != "Attribute":
+        return ""
+    rv = dict_get(n, "value")
+    if nt(rv) != "Name":
+        return ""
+    mk: str = mod_key(dict_get(rv, "id"))
+    if mk == "":
+        return ""
+    return mod_attr(mk, dict_get(n, "attr"))
+
 # ========== 模块 ==========
 
 def collect_sigs(body) -> int:
@@ -1238,6 +1935,18 @@ def collect_imports(body) -> int:
     i: int = 0
     while i < py_list_length(body):
         s = py_list_ref(body, i)
+        if nt(s) == "Import":
+            names = dict_get(s, "names")
+            j0: int = 0
+            while j0 < py_list_length(names):
+                al0 = py_list_ref(names, j0)
+                nm0: str = dict_get(al0, "name")
+                asn0 = alias_asname(al0)
+                if asn0 == "":
+                    dict_set(MOD_ALIAS, nm0, nm0)
+                else:
+                    dict_set(MOD_ALIAS, asn0, nm0)
+                j0 = j0 + 1
         if nt(s) == "ImportFrom":
             mod: str = dict_get(s, "module")
             names = dict_get(s, "names")
