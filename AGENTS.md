@@ -3,6 +3,11 @@
 > **先读 [VISION.md](./VISION.md)**：本仓库的工作方式 —— 约定长存，语言与产物皆为耗材；
 > 人类给约定与验收，agent 交付"满足约定的可再生制品"。本文是那份"约定"的作业细则。
 
+> **其余文档**：[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)（流水线/环境）、
+> [docs/LANGUAGE.md](./docs/LANGUAGE.md)（子集/类型/FFI 约定）、[docs/PLUGINS.md](./docs/PLUGINS.md)（插件）、
+> [docs/LIBS.md](./docs/LIBS.md)（已集成库）、[docs/MIGRATION.md](./docs/MIGRATION.md)（方法论）、
+> [docs/SELFHOST.md](./docs/SELFHOST.md)（自举）、[docs/DEPLOY.md](./docs/DEPLOY.md)（部署）。
+
 > 本项目的定位：**Python 语法 → Scheme IR → AOT 机器码 + 运行时挂 C 库**。
 > 不重造语言：把成熟前端（Python 语法）、成熟后端（Chez Scheme）、原生能力（C 库）
 > 对齐成一套**约定**。任何一层不够用，都可以改（翻译器 / C helper / FFI）。

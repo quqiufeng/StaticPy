@@ -68,10 +68,10 @@ IDL 生成 client/server、policy-as-code——**都"约定而产物可弃"**。
 
 | 角色 | 本仓库对应 |
 |---|---|
-| 约定 | `AGENTS.md`（迁移作业手册）+ C ABI（`imgproc.h`） |
+| 约定 | `AGENTS.md`（迁移作业手册）+ C ABI（`imgproc.h`）+ [docs/](./docs/ARCHITECTURE.md) |
 | 参照 | **Pillow**（逐像素对齐） |
 | 证据 | `imgproc/difftest.py`、`selfcheck.sh`（机器可判） |
-| 溯源 | git 提交史 + `PATCHES.md` + `THIRD_PARTY.md` |
+| 溯源 | git 提交史 + [docs/LANGUAGE.md](./docs/LANGUAGE.md)（编译器补丁）+ [docs/THIRD_PARTY.md](./docs/THIRD_PARTY.md) |
 | 可审信任根 | `selfhost/staticc.sp`（~1100 行，可自持/可审计） |
 | 产物 | 单文件 ELF / 自包含部署包（`package.sh`） |
 | 被 AI 演化的语言 | `staticpy/static_translate.py`（agent 可改、可自举） |

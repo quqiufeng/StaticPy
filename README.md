@@ -3,123 +3,109 @@
 > **一个小 Python 子集 + 一个用 C ABI 拼起来的生态；可自举、可审计，因而可信任。**
 > **A small Python subset with an ecosystem assembled over a plain C ABI — self-hosting and auditable, hence trustworthy.**
 
-**Python 语法 → Scheme(Chez) IR → AOT 机器码**，产物是独立 ELF/`.so`；
+**Python 语法 → Scheme（Chez）IR → AOT 机器码**，产物是独立 ELF / `.so`；
 需要什么能力就**运行时挂 C 库**（FFI），**不依赖 Python 解释器 / pip / venv**。
 
-> 定位：把 Python 的**表达力**接到**原生后端**上——不是重造语言，而是把成熟的
+> 定位：把 Python 的**表达力**接到**原生后端**上——不重造语言，而是把成熟的
 > 前端（Python 语法）、后端（Chez Scheme）、原生能力（C 库）对齐成一套**给 AI agent 用的约定**。
 
-## 能力清单
+---
 
-见 **[CAPABILITIES.md](./CAPABILITIES.md)**：已集成库/工具、可做工具（模型已就位）、游戏相关能力、边界。
+## 30 秒上手
 
-## 愿景（先读）
+```bash
+# 1) 一个程序
+cat > app.static.py <<'EOF'
+def main() -> int:
+    print("hello staticpy")
+    return 0
+EOF
 
-> **一门 AI 设计、AI 使用、人类监督的语言——语法可被智能体演化，约定（契约+参照+证据+溯源）钉死。**
-> 人类给"要什么、算不算数"，AI 定"怎么写、怎么验、怎么交"。详见 **[VISION.md](./VISION.md)**。
+# 2) 构建并运行（自动推断插件：只有 core/libc）
+python3 -m kernel run app.static.py          # -> hello staticpy
 
-## 目录
+# 3) 产出的独立 ELF（拷走即可跑，无需 Python）
+python3 -m kernel build app.static.py -o hello
+./hello
+```
+
+图像能力（对标 Pillow 的 `imgproc` 样板）：
+
+```bash
+bash imgproc/build.sh                                    # libimgproc.so + pil/concat/mirror_gif
+LD_LIBRARY_PATH=$PWD/cpp/imgproc/build \
+  ./imgproc/pil convert IN.png OUT.png L
+```
+
+验证（机器判据）：
+
+```bash
+python3 imgproc/difftest.py -v     # 差分测试：Pillow vs 我们，逐像素 —— 当前 100/100（maxΔ=0）
+python3 imgproc/frontend_coverage.py # 覆盖面：自省核对 —— 当前 100/100
+bash selfcheck.sh                  # 全量自检：构建 + 差分 + 覆盖 + 插件钩子 + 自举比对
+```
+
+---
+
+## 文档地图
+
+只读你想读的那一篇；**根目录不再堆散文档**。
+
+| 文档 | 回答的问题 |
+|---|---|
+| **[VISION.md](./VISION.md)** | 为什么"语言是耗材、约定才是资产"；人在这个模型里拥有什么 |
+| **[AGENTS.md](./AGENTS.md)** | **agent 作业手册**：把 Python 库迁到 StaticPy 的可复制步骤与踩坑表 |
+| **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** | 编译器/内核/插件/AOT 的流水线、产物落点、缓存与环境变量 |
+| **[docs/LANGUAGE.md](./docs/LANGUAGE.md)** | Python 子集支持什么、类型系统、FFI 约定（`extern fn`）、编译器本地补丁 |
+| **[docs/PLUGINS.md](./docs/PLUGINS.md)** | 插件规范：`plugin.json` 字段、三种形态、语法钩子、CLI |
+| **[docs/LIBS.md](./docs/LIBS.md)** | 已集成的库与推理工具清单（含每个库的构建/运行/验证命令） |
+| **[docs/MIGRATION.md](./docs/MIGRATION.md)** | 迁移方法论：自省 → 铺桩 → 差分，以及"照抄 C 源"的坑表 |
+| **[docs/SELFHOST.md](./docs/SELFHOST.md)** | 三环自举与信任链：怎么复现、信任根是什么 |
+| **[docs/DEPLOY.md](./docs/DEPLOY.md)** | 强分发：自包含部署包（零依赖）与 glibc 下限 |
+| **[docs/THIRD_PARTY.md](./docs/THIRD_PARTY.md)** | 第三方组件、许可与归属 |
+| **[imgproc/README.md](./imgproc/README.md)** | 旗杆样板（对标 Pillow）：三层结构、覆盖面、怎么扩算子 |
+
+---
+
+## 仓库结构
 
 ```
-staticpy/                # 语言工具链
-├── static_translate.py    # Python → Scheme 翻译器（含本地补丁：is None / break-continue /
-│                          #   模块级变量 / 顶层语句 / float ABI / lambda+一等函数）
-├── static_prelude.scm     # 运行时值类型
-├── static_stdlib.scm      # 标准库
-├── static_build.sh        # 兼容别名（转发到下面那个，单一真源）
-└── static_build_comfycli.sh  # 构建脚本（translate + Chez AOT + 独立 ELF）
-                             #   缓存 ~/iso_gen/staticpy-cache，裸名产物落 dist/
+staticpy/          # 语言工具链
+├── static_translate.py    # Python → Scheme 翻译器（含本地补丁，见 docs/LANGUAGE.md）
+├── static_prelude.scm     # 运行时值类型；static_stdlib.scm 标准库
+├── static_build_comfycli.sh  # 构建入口（translate + Chez AOT + 独立 ELF）
+└── static_build.sh        # 兼容别名（转发到上面那个，单一真源）
 
-imgproc/                 # 「StaticPy 版 Pillow」——图像处理库（本轮迁移样板）
-├── pil_lib.static.py      # 库（纯函数，可被集成；lambda/一等函数）
-├── pil_cli.static.py      # pil CLI 分发
-├── pilcli.static.py       # 早期 CLI
-├── mirror_gif.static.py   # 示例算子
-├── concat.static.py       # 构建工具（自举：用 StaticPy 写）
-├── build.sh / build_app.sh
-├── pyimgproc.py           # libimgproc.so 的 ctypes 绑定（差分测试用）
-├── pil_surface.py         # 自省 Pillow API → 清单
-├── frontend_coverage.py   # 自省清单核对覆盖面
-├── difftest.py            # 自动化差分测试：PIL vs 我们，逐像素
-├── README.md / MIGRATION.md / pil_api.md
-└── examples/
-
-cpp/imgproc/             # C++ 底层库 libimgproc.so（对标 Pillow libImaging）
-├── core.cpp geom.cpp color.cpp ops.cpp filters.cpp draw.cpp
-├── effects.cpp quant.cpp lut.cpp
-├── imgproc.h imgproc_internal.h
-├── build_cpp.sh
-└── thirdparty/{giflib,stb}
+kernel/            # 插件化内核：发现插件 → 拓扑排序 → 拼 bundle → 调 Chez
+plugins/           # 一切能力都是插件（core/libc/math/json/http/imgproc/torch/…）
+cpp/               # 各库的 C/C++ 核心（libimgproc.so、libatlas.so、…）
+imgproc/ anim/ atlas/ font/ cvops/ easing/ pathfind/ upscale/ warp3d/ zlib/ hashlib/
+                   # 每个目录 = 一个库的前端（.static.py + ffi.scm + difftest.py）
+tools/             # ONNX 推理工具前端（detect/ocr/remove/sr/pose/…）
+selfhost/          # 自举代码与信任根（staticc.py / staticc.sp）
+luajit/            # 同一份 C ABI 的 LuaJIT 绑定与单文件 ELF 嵌入
+docs/              # 本仓文档
 ```
+
+---
 
 ## 三条"补齐运行时"的路径
 
-1. **有现成 C 库** → 运行时挂 `.so`（`libgif/libwebp/libtiff/libfreetype`）
-2. **没有** → 自写 **C++ helper**（`libimgproc.so`）
-3. **语法不够兼容 Python** → **改编译器**（对齐 Scheme IR）—— 已加 lambda/一等函数
+1. **有现成 C 库** → 运行时挂 `.so`（`libgif` / `libwebp` / `libtiff` / `libfreetype` / `libcrypto`）
+2. **没有现成的** → 自写 **C/C++ helper**（如 `libimgproc.so`、`libatlas.so`）
+3. **语法不够兼容 Python** → **改编译器**，对齐 Scheme IR（如 lambda / 一等函数）
 
-## 构建 / 运行
-
-```bash
-bash imgproc/build.sh                 # C++ 库 + StaticPy ELF（pil/mirror_gif 等）
-LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/pil convert IN.png OUT.png L
-
-bash imgproc/build_app.sh my_app.static.py my_app   # 用 pil_lib 构建用户程序
-```
-
-## LuaJIT 集成（编译时编入）
-
-C ABI 是共享的运行时表面：**同一份 `libimgproc.so`** 被 StaticPy(FFI)、Python(ctypes)、LuaJIT(ffi.C) 共用。
-更进一步，可把 **LuaJIT + 运行时静态编进一个单文件 ELF**（无动态 luajit 依赖）：
-
-```bash
-bash luajit/embed-build.sh                 # → ./lua_app（内嵌 LuaJIT + 图像运行时）
-./lua_app IN.png OUT.png                   # 内嵌 Lua 脚本，ffi.C 直接调运行时函数
-./lua_app my_script.lua                    # 或跑指定 Lua 脚本
-```
-
-## 自举与信任链
-
-工具链**可自举**：上游 `ReScheme` 记录了三环自举（ReSchme/StaticPy/`.sp`）与**信任链**，
-最终收敛到一段 **~1100 行的 `.sp` 编译器作为信任根**（几天可完整审计）。
-即"编译器/解释器只是约定的实现"——可替换、可自持、可审计。
-
-## 部署（强分发 / 自包含）
-
-产物可打成**自包含目录**：把 ELF + 它用到的**全部 `.so`（含传递依赖）**一起放进包里，
-配一个设 `LD_LIBRARY_PATH=$DIR/lib` 的启动器。**目标服务器零要求**——不需要 Python、
-不需要 pip、不需要任何预装库；`scp` 过去 `./run` 即可。
-
-```
-mypkg/
-├── <name>        # 启动器（设 LD_LIBRARY_PATH 后 exec app）
-├── app           # StaticPy ELF（Chez 运行时已静态嵌入）
-└── lib/          # libimgproc.so + libgif/libwebp/libtiff/libfreetype + 传递依赖
-```
-
-```bash
-bash imgproc/package.sh imgproc/pil pil        # -> dist/pil/ 与 dist/pil.tar.gz
-```
-
-**唯一不可再拆的两样（且都可控）**：① Linux 内核 + x86-64 架构；② glibc 版本下限
-（用老 glibc 的 `GLIBC_SYSROOT` 构建即可覆盖新老发行版）。其余**全在包里**。
-
-> 对比 Go：产物同样是静态单文件；这里是「Python 语法 + 运行时 FFI 任意 C 库」，
-> 交付模型（compile once → copy → run）等价，且宿主不需要任何前置条件。
-
-## 验证（自动化）
-
-```bash
-python3 imgproc/pil_surface.py > imgproc/pil_api.md   # 自省清单
-python3 imgproc/frontend_coverage.py                  # 覆盖面
-python3 imgproc/difftest.py -v                        # 差分测试（逐像素）
-```
-
-当前：**PIL 覆盖面 100/100**；差分测试 **100/100**（多数逐像素 max=0）。
-方法与经验见 `imgproc/MIGRATION.md`。
+> 判据只有一条：**产出的 Scheme IR / 数值对不对**；对不齐就照参照实现（如 Pillow 的 C 源）逐行搬。
 
 ## 依赖
 
-- 构建：`g++`、`Chez Scheme`（`/opt/ChezScheme/ta6le`）、`pkg-config freetype2`
-- 运行时：`libgif.so.7`、`libwebp.so.7`、`libtiff.so.6`、`libfreetype.so.6`
-- 验证脚本：任一装了 Pillow/numpy 的 Python 即可（**仅用于"测量"对照，不进产物**）
+- 构建：`g++`、`Chez Scheme`（默认 `/opt/ChezScheme/ta6le`，可用 `CHEZ_SCHEME_DIR` 覆盖）、`pkg-config freetype2`
+- 运行：`libgif.so.7`、`libwebp.so.7`、`libtiff.so.6`、`libfreetype.so.6`（按库按需；打包时一并收进部署包）
+- 测量侧（**不进产物**）：任一装了 Pillow/numpy 的 Python，仅用于差分测试与 API 自省
+- 一键环境：`docker build -t staticpy . && docker run --rm -v $PWD:/w -w /w staticpy bash selfcheck.sh`
+
+## 原理一句话
+
+**广度**用 Python 自省一键枚举；**深度**靠照抄目标库的 C 源；**判据**交给自动化差分；
+**缺什么补什么**——挂 `.so` / 写 C++ helper / 改编译器。人（或 agent）只做两件事：
+**读源对齐** + **改实现**，然后重跑差分到全绿。
