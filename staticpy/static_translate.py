@@ -44,6 +44,9 @@ def scheme_name(name):
         "py_iter_to_list": "py-iter->list",
         "py_list_slice": "py-list-slice",
         "py_unpack": "py-unpack",
+        # prelude 里定义的是 kebab 形式 (py-float-repr x)；不映射会生成
+        # (py_float_repr v) → 「variable py_float_repr is not bound」（自举翻译器踩过）
+        "py_float_repr": "py-float-repr",
     }
     return RUNTIME_MAP.get(name, name)
 
@@ -3469,6 +3472,13 @@ def translate_expr(node):
             # Python isinstance(expr, EConst) -> (ir-tag? expr 'EConst)
             if name == "isinstance":
                 if len(args) == 2:
+                    # 类型名必须取**裸名**：translate_expr(Name) 会把内建类型名换成值包装器
+                    # （str -> py-str，int -> ((lambda (x) ...))），而 prelude 的
+                    # ir-builtin-isa? 只认 'str/'int/'float…；不取裸名则 isinstance 恒假，
+                    # 自举编译器里的 isinstance(n, str) 会静默走错分支。
+                    type_node = node.args[1]
+                    if isinstance(type_node, ast.Name):
+                        return f"(ir-tag? {args[0]} '{type_node.id})"
                     return f"(ir-tag? {args[0]} '{args[1]})"
                 return gen_error(node, "isinstance expects 2 arguments")
             if name == "print":

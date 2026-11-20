@@ -1,0 +1,23 @@
+(define (pl-sort! l . opts)
+  "list.sort()：全数字走 C 快路径；其余 Scheme 稳定排序。opts=(keyfn reverse?)"
+  (let ((keyfn (if (and (pair? opts) (procedure? (car opts))) (car opts) #f)))
+    (let ((rev? (if keyfn
+                   (and (pair? (cdr opts)) (not (not (cadr opts))))
+                   (and (pair? opts) (not (not (car opts)))))))
+      (if (and (not keyfn) (not rev?) (pl-all-numbers? l))
+          (pl-sort-numbers! l)
+          (let* ((n (py-listv-len l))
+                 (lst (pl-to-list l))
+                 (cmp (if keyfn
+                          (lambda (a b)
+                            (let ((c (py-cmp (keyfn a) (keyfn b))))
+                              (if rev? (> c 0) (< c 0))))
+                          (lambda (a b)
+                            (let ((c (py-cmp a b)))
+                              (if rev? (> c 0) (< c 0))))))
+                 (sorted (sort cmp lst))
+                 (vs (py-listv-vs l)))
+            (let loop ((p sorted) (i 0))
+              (when (pair? p) (vector-set! vs i (car p)) (loop (cdr p) (fx+ i 1))))
+            (py-listv-len-set! l n)
+            py-none)))))
