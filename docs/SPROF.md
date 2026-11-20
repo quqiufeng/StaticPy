@@ -67,6 +67,46 @@ STATICPY_PROFILE=block STATICPY_PGO=1 bash staticpy/static_build_comfycli.sh app
 `optimize-level` 都不能变，否则块对不上，编译器会抛异常。
 所以 PGO 只能在"同一份源码"上迭代，改代码就重新采。
 
+## 真实目标实测（imgproc，2026-11-20）
+
+拿真库练一次，把「计数」和「墙钟」摆在一起——顺便说明**计数 ≠ 时间**。
+
+靶：`imgproc` 的 `pil` CLI，`resize` 一张 2000×1500 JPEG → 900×600 lanczos
+（C 侧 `libimgproc.so` 干活），min-of-N。
+
+| 分段 | 墙钟 | 怎么测的 |
+|---|---|---|
+| 纯 C（直连 `libimgproc.so`，跳过 Scheme） | **191 ms** | ctypes 调 open+resize+save |
+| 纯启动（`pilprof` 无参即退） | **50 ms** | Chez boot + ELF 装载 |
+| StaticPy ELF 全程 | **260 ms** | `pilprof resize …` |
+| ⇒ Scheme 包装层 | **≈ 19 ms**（约全程 7%） | 260 − 50 − 191 |
+
+计数侧（`STATICPY_PROFILE=source`，同一次运行）：
+
+```
+总计 1789 hits，其中 1549 (86.6%) 落在运行时（prelude/stdlib）
+用户代码仅 240 hits (13.4%)：main 141 / a 67 / ai 27
+最热语句：a() 的函数体 48 hits，img_save 调用 11 hits
+```
+
+**两条结论，别混着用：**
+
+1. **86.6% 的计数在运行时，但运行时只花了 19ms。** prelude 表达式多且每句都廉价，
+   计数被它们刷满；真正的墙钟在 C 里。**要抓时间用 `trace oncpu` / 墙钟对照，
+   要抓"哪段代码跑得最多、改它能省几次调用"才用 sprof。**
+2. 对这个 workload，**Scheme 层最多能省 19ms**（改 `a`/`ai` 的参数解析、削 main 的
+   字符串分派链）。想快得更多只有两条路：改 C，或减少跨 FFI 次数。
+   这也印证了 AGENTS.md 的判断——**wrapper 优化有天花板，先看清天花板再动手**。
+
+复现（三段都在仓库里，无外部依赖）：
+
+```bash
+python3 -c "…"                                   # 造图 → ~/iso_gen/bench.jpg
+STATICPY_PROFILE=source bash imgproc/build_app.sh imgproc/pil_cli.static.py pilprof
+LD_LIBRARY_PATH=cpp/imgproc/build ./dist/pilprof resize ~/iso_gen/bench.jpg out.png 900 600 lanczos
+./dist/sprof ~/iso_gen/prof/pilprof.prof --top=12
+```
+
 ## 与 hotattr 的分工
 
 | 想知道 | 用 |
