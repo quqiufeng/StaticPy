@@ -1,3 +1,4 @@
+
 ;; ====== JSON 解析（libjansson） ======
 (define *json-available* #f)
 (guard (e (else (display "Warning: libjansson not found, json disabled\n")))

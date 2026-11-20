@@ -1,3 +1,18 @@
+
+(define (py-list-slice v start end)
+  "py-list/vector 切片 [start,end)；end 为负数时从尾部数。返回 py-list"
+  (let* ((lst (vector->list v))
+         (n (length lst))
+         (hi (if (< end 0) (+ n end) end)))
+    (list->vector (if (<= hi start) '()
+                      (list-head (list-tail lst start) (- hi start))))))
+
+(define (py-unpack e i)
+  "多目标解包的取第 i 项：vector / 点对 (a . b) / 其它按单值"
+  (cond ((vector? e) (vector-ref e i))
+        ((pair? e) (if (= i 0) (car e) (cdr e)))
+        (else e)))
+
 ;; ====== IR 节点标签判断（StaticPy 自举编译器用） ======
 ;; Python 的 isinstance(x, EConst) 在 Scheme 里对应 (ir-tag? x 'EConst)
 ;; 因为 EConst(x) 被翻译成 (vector 'EConst x)

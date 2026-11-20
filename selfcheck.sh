@@ -20,6 +20,12 @@ if grep -qF "(define TAG 7)" <<<"$_hook_out" && grep -qF "(* 2 i)" <<<"$_hook_ou
   echo "  插件钩子失效（rewrite/expr/stmt）"; fail=1
 fi
 
+echo ">>> [0c/4] 词法器差分（static_translate.static.py vs CPython tokenize）"
+if bash staticpy/check_tokenize.sh staticpy/static_translate.py selfhost/staticc.py \
+     imgproc/pil_lib.static.py >/dev/null 2>&1; then echo "  ok（token 流一致）"; else
+  echo "  词法器漂移：bash staticpy/check_tokenize.sh <file>"; fail=1
+fi
+
 echo ">>> [1/4] 构建 C 库 + 前端（imgproc）"
 bash imgproc/build.sh >/dev/null 2>&1 && echo "  ok" || { echo "  失败"; fail=1; }
 

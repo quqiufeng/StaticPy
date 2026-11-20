@@ -116,21 +116,29 @@
     (foreign-free buf)))
 
 (define (file-read-all fp)
-  "读取整个文件内容"
-  (let* ((buf-size 4096)
+  "读取整个文件内容（先攒字节再一次性 UTF-8 解码，避免多字节字符跨块被撕成 U+FFFD）"
+  (let* ((buf-size 65536)
          (buf (foreign-alloc buf-size))
-         (result '()))
+         (chunks '())
+         (total 0))
     (let loop ()
-      (let ((n (libc-fread buf 1 (- buf-size 1) fp)))
+      (let ((n (libc-fread buf 1 buf-size fp)))
         (when (> n 0)
-          ;; Copy C memory to bytevector
           (let ((bv (make-bytevector n 0)))
             (do ((i 0 (+ i 1))) ((= i n))
               (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 buf i)))
-            (set! result (cons (utf8->string bv) result)))
+            (set! chunks (cons bv chunks))
+            (set! total (+ total n)))
           (loop))))
     (foreign-free buf)
-    (apply string-append (reverse result))))
+    (let ((all (make-bytevector total 0)))
+      (let loop2 ((cs chunks) (pos total))
+        (when (pair? cs)
+          (let* ((bv (car cs)) (n (bytevector-length bv)))
+            (do ((i 0 (+ i 1))) ((= i n))
+              (bytevector-u8-set! all (+ (- pos n) i) (bytevector-u8-ref bv i)))
+            (loop2 (cdr cs) (- pos n)))))
+      (utf8->string all))))
 
 (define (file-exists? path)
   "检查文件是否存在"
@@ -815,6 +823,12 @@
 
 (define (string_of_int n)
   (number->string (exact n)))
+
+;; 码点 -> 单字符字符串（词法器解码 \xHH / \uXXXX 用）
+(define (integer_to_char n)
+  (if (and (integer? n) (>= n 0) (<= n #x10FFFF))
+      (string (integer->char n))
+      ""))
 
 ;; formats a float to fixed decimal places
 (define (format_float f digits)

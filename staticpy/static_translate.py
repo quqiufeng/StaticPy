@@ -808,7 +808,7 @@ PRELUDE_FUNCTIONS = {
     "re_match", "re_search",
     "random_seed", "random_int", "random_float", "random_range",
     "random_uniform", "random_choice",
-    "string_to_float", "string_to_int", "string_of_int", "format_float", "list_length", "list_ref", "vec_ref", "tuple_ref",
+    "string_to_float", "string_to_int", "string_of_int", "integer_to_char", "format_float", "list_length", "list_ref", "vec_ref", "tuple_ref",
     "cuda_gemm", "cuda_gemm_tn", "cuda_axpy", "cuda_dot", "cuda_copy",
     "sleep", "clock",
     "argv", "exit_program", "exit",
@@ -1093,6 +1093,19 @@ def infer_expr_type(node):
                 return "bool"
             if name == "make_float_array":
                 return "list[float]"
+            # 预置字符串/列表函数返回类型（否则 Any 会退化成通用 =，字符串比较直接炸）
+            if name in ("str_slice", "str_join", "str_replace", "str_trim", "str_lower",
+                        "str_upper", "string_of_int", "format_float", "json_dumps",
+                        "os_getenv", "os_cwd", "http_get_simple", "integer_to_char"):
+                return "str"
+            if name in ("str_split", "os_list_dir"):
+                return "list[str]"
+            if name in ("str_length", "string_to_int", "list_length", "os_file_size"):
+                return "int"
+            if name in ("string_to_float", "now_ts"):
+                return "float"
+            if name in ("str_contains", "str_starts_with", "str_ends_with", "os_file_exists"):
+                return "bool"
             # 用户函数：从 FUNCTION_SIGS 推断返回类型
             unmangled = node.func.id
             if unmangled in FUNCTION_SIGS:
@@ -1286,6 +1299,9 @@ def translate_compare(op, left_node, right_node):
         if str_op:
             return f"({str_op} {left} {right})"
     fx_op, fl_op, generic = op_map_num.get(type(op).__name__, (None, None, None))
+    if type(op).__name__ == "Eq":
+        # 双方类型都未知：用 equal?（number/string/char 通吃），别发 (= ...)
+        return f"(equal? {left} {right})"
     return f"({generic} {left} {right})"
 
 
@@ -1462,6 +1478,45 @@ def has_direct_continue(stmts):
     return has_direct_control(stmts, (ast.Continue,))
 
 
+def emit_for_stmt(stmt, indent="        "):
+    """for 循环 → do 循环 / 向量遍历（translate_block 与函数体共用）"""
+    target = mangle_name(stmt.target.id) if isinstance(stmt.target, ast.Name) else "i"
+    it = stmt.iter
+    body_str = " ".join(translate_block(stmt.body))
+    if isinstance(it, ast.Call) and hasattr(it.func, 'id') and it.func.id == 'range':
+        rargs = it.args
+        if len(rargs) == 1:
+            n = translate_expr(rargs[0])
+            return f"(do (({target} 0 (+ {target} 1))) ((>= {target} {n})) {body_str})"
+        if len(rargs) == 2:
+            start = translate_expr(rargs[0])
+            end = translate_expr(rargs[1])
+            return f"(do (({target} {start} (+ {target} 1))) ((>= {target} {end})) {body_str})"
+        if len(rargs) == 3:
+            start = translate_expr(rargs[0])
+            end = translate_expr(rargs[1])
+            step = translate_expr(rargs[2])
+            return f"(do (({target} {start} (+ {target} {step}))) ((>= {target} {end})) {body_str})"
+        return f";; for range with {len(rargs)} args"
+    if isinstance(it, (ast.List, ast.ListComp, ast.Tuple)):
+        iter_val = translate_expr(it)
+        return (f"(let* ((__iter {iter_val}) (__n (vector-length __iter))) "
+                f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
+                f"(let (({target} (vector-ref __iter __i))) {body_str})))")
+    if isinstance(it, ast.Constant) and isinstance(it.value, str):
+        iter_val = translate_expr(it)
+        return (f"(let* ((__iter {iter_val}) (__n (string-length __iter))) "
+                f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
+                f"(let (({target} (string-ref __iter __i))) {body_str})))")
+    if isinstance(it, ast.Name):
+        iter_name = it.id
+        return (f"(let* ((__iter {iter_name}) (__n (if (tagged-array? __iter) (tagged-array-len __iter) "
+                f"(if (string? __iter) (string-length __iter) (vector-length __iter))))) "
+                f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
+                f"(let (({target} (if (tagged-array? __iter) (float-array-ref (tagged-array-data __iter) __i) "
+                f"(if (string? __iter) (string-ref __iter __i) (vector-ref __iter __i))))) {body_str})))")
+    return ";; for loop (untranslated)"
+
 def translate_block(stmts):
     """翻译一个语句块（if/while 体），正确处理 set! 赋值"""
     exprs = []
@@ -1526,6 +1581,8 @@ def translate_block(stmts):
                 exprs.append(f"(if {test}\n        (begin {' '.join(inner_then)})\n        (begin {' '.join(inner_else)}))")
             else:
                 exprs.append(f"(if {test}\n        (begin {' '.join(inner_then)}))")
+        elif isinstance(s, ast.For):
+            exprs.append(emit_for_stmt(s))
         elif isinstance(s, ast.While):
             test = translate_expr(s.test)
             body_str = " ".join(translate_block(s.body))
@@ -2613,8 +2670,13 @@ def typecheck_function(node, function_arities, module_env=None):
                     # - 声明为 Any：保持 Any，不收紧
                     # - 无声明：从右侧推断；推断不出设为 Any
                     if declared is None:
-                        # 无显式标注：推断为 Any（渐进式类型），不根据首次赋值收紧
-                        env[target.id] = Type("Any")
+                        # 无显式标注：布尔字面量保持 bool（否则 `b = False; if b:` 会被判成 Any）
+                        # 其余推断为 Any（渐进式类型），不根据首次赋值收紧
+                        if val_t is not None and val_t.base == "bool":
+                            env[target.id] = Type("bool")
+                            TYPE_ENV[target.id] = Type("bool")
+                        else:
+                            env[target.id] = Type("Any")
                     # 否则 declared 存在（Any 或具体类型），保持不变
                 elif isinstance(target, ast.Tuple):
                     # 元组解构：每个元素从 tuple 类型推断或设为 Any

@@ -1,3 +1,4 @@
+
 ;; ====== 随机数（libc） ======
 (define libc-rand (foreign-procedure "rand" () int))
 (define libc-srand (foreign-procedure "srand" (unsigned-32) void))
@@ -27,14 +28,3 @@
 (define (random-uniform low high)
   "返回 low..high 的随机浮点数"
   (+ low (* (random-float) (- high low))))
-
-(define (random-choice seq)
-  "从 vector/list 中随机选择一个元素"
-  (let ((n (if (vector? seq) (vector-length seq) (length seq))))
-    (if (= n 0)
-      #f
-      (let ((i (random-range 0 n)))
-        (if (vector? seq) (vector-ref seq i) (list-ref seq i))))))
-
-(define pi 3.141592653589793)
-(define e 2.718281828459045)

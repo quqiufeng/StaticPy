@@ -3,6 +3,7 @@
 
 (import (chezscheme))
 
+
 ;; ====== GC 跟踪：自动释放 C 内存 ======
 (define *gc-guardian* (make-guardian))
 
@@ -74,6 +75,18 @@
         (dict-set! copy (car entry) (cdr entry)))
       (hashtable-cells d))
     copy))
+
+
+(define (csv-encode fields)
+  "将字段列表编码为 CSV 行"
+  (string-join
+    (map (lambda (f)
+           (let ((s (if (number? f) (format "~s" f) f)))
+             (if (string-any (lambda (c) (or (char=? c #\,) (char=? c #\"))) s)
+                 (string-append "\"" (string-replace s "\"" "\"\"") "\"")
+                 s)))
+         fields)
+    ","))
 
 ;; ====== 字符串工具（纯 Scheme，不依赖 Chez 扩展） ======
 
@@ -182,10 +195,16 @@
   (and (>= (string-length s) (string-length prefix))
        (string=? (substring s 0 (string-length prefix)) prefix)))
 
-(define (str-ends-with? s suffix)
-  "检查是否以 suffix 结尾"
-  (and (>= (string-length s) (string-length suffix))
-       (string=? (substring s (- (string-length s) (string-length suffix)) (string-length s)) suffix)))
+
+;; C ABI 包装（下划线风格，供 StaticPy 调用）
+(define http_get_simple (lambda (url) (http-get-simple url)))
+(define random_float (lambda () (random-float)))
+(define random_int (lambda () (random-int)))
+(define random_range (lambda (low high) (random-range low high)))
+(define random_randint (lambda (low high) (random-randint low high)))
+(define random_uniform (lambda (low high) (random-uniform low high)))
+(define random_choice (lambda (seq) (random-choice seq)))
+(define random_seed (lambda (seed) (random-seed seed)))
 
 ;; ====== 字符串转数字（用于读取数据文件） ======
 (define (string_to_float s)
@@ -197,6 +216,12 @@
 
 (define (string_of_int n)
   (number->string (exact n)))
+
+;; 码点 -> 单字符字符串（词法器解码 \xHH / \uXXXX 用）
+(define (integer_to_char n)
+  (if (and (integer? n) (>= n 0) (<= n #x10FFFF))
+      (string (integer->char n))
+      ""))
 
 ;; formats a float to fixed decimal places
 (define (format_float f digits)
@@ -249,6 +274,7 @@
   "字符串切片 [start, end)"
   (substring s start end))
 
+
 ;; ====== 通用打印 ======
 
 (define (print x)
@@ -287,6 +313,7 @@
 (define (is_error r) (eq? (vector-ref r 0) 'error))
 (define (is_some o) (eq? (vector-ref o 0) 'some))
 (define (is_none o) (eq? (vector-ref o 0) 'none))
+
 
 (define (unwrap r)
   (if (is_ok r)
@@ -379,19 +406,6 @@
         ((pair? x) (list x))
         (else (list x))))
 
-(define (py-list-slice v start end)
-  "py-list/vector 切片 [start,end)；end 为负数时从尾部数。返回 py-list"
-  (let* ((lst (vector->list v))
-         (n (length lst))
-         (hi (if (< end 0) (+ n end) end)))
-    (list->vector (if (<= hi start) '()
-                      (list-head (list-tail lst start) (- hi start))))))
-
-(define (py-unpack e i)
-  "多目标解包的取第 i 项：vector / 点对 (a . b) / 其它按单值"
-  (cond ((vector? e) (vector-ref e i))
-        ((pair? e) (if (= i 0) (car e) (cdr e)))
-        (else e)))
 
 ;; ====== 文件 I/O ======
 
@@ -431,27 +445,32 @@
     (foreign-free buf)))
 
 (define (file-read-all fp)
-  "读取整个文件内容"
-  (let* ((buf-size 4096)
+  "读取整个文件内容（先攒字节再一次性 UTF-8 解码，避免多字节字符跨块被撕成 U+FFFD）"
+  (let* ((buf-size 65536)
          (buf (foreign-alloc buf-size))
-         (result '()))
+         (chunks '())
+         (total 0))
     (let loop ()
-      (let ((n (libc-fread buf 1 (- buf-size 1) fp)))
+      (let ((n (libc-fread buf 1 buf-size fp)))
         (when (> n 0)
-          ;; Copy C memory to bytevector
           (let ((bv (make-bytevector n 0)))
             (do ((i 0 (+ i 1))) ((= i n))
               (bytevector-u8-set! bv i (foreign-ref 'unsigned-8 buf i)))
-            (set! result (cons (utf8->string bv) result)))
+            (set! chunks (cons bv chunks))
+            (set! total (+ total n)))
           (loop))))
     (foreign-free buf)
-    (apply string-append (reverse result))))
+    (let ((all (make-bytevector total 0)))
+      (let loop2 ((cs chunks) (pos total))
+        (when (pair? cs)
+          (let* ((bv (car cs)) (n (bytevector-length bv)))
+            (do ((i 0 (+ i 1))) ((= i n))
+              (bytevector-u8-set! all (+ (- pos n) i) (bytevector-u8-ref bv i)))
+            (loop2 (cdr cs) (- pos n)))))
+      (utf8->string all))))
 
-(define (file-exists? path)
-  "检查文件是否存在"
-  (let ((fp (libc-fopen path "r")))
-    (when fp (libc-fclose fp))
-    (not (not fp))))
+
+
 
 ;; ====== 日期时间（libc） ======
 (define libc-time
@@ -482,11 +501,11 @@
         (foreign-free t)
         (utf8->string bv)))))
 
-(define (datetime-str->ts s fmt)
-  "解析时间字符串 → 时间戳，fmt 如 '%Y-%m-%d'"
-  ;; 简化为 strptime 的 FFI
-  ;; 当前返回当前时间戳
-  (libc-time 0))
+
+(define (str-ends-with? s suffix)
+  "检查是否以 suffix 结尾"
+  (and (>= (string-length s) (string-length suffix))
+       (string=? (substring s (- (string-length s) (string-length suffix)) (string-length s)) suffix)))
 
 ;; ====== 操作系统接口（libc） ======
 
@@ -564,6 +583,18 @@
 (define (os_mkdir path) (os-mkdir path))
 (define (os_rmdir path) (os-rmdir path))
 
+
+(define (random-choice seq)
+  "从 vector/list 中随机选择一个元素"
+  (let ((n (if (vector? seq) (vector-length seq) (length seq))))
+    (if (= n 0)
+      #f
+      (let ((i (random-range 0 n)))
+        (if (vector? seq) (vector-ref seq i) (list-ref seq i))))))
+
+(define pi 3.141592653589793)
+(define e 2.718281828459045)
+
 ;; ====== 时间（libc） ======
 (define libc-nanosleep
   (foreign-procedure "nanosleep" (void* void*) int))
@@ -593,15 +624,12 @@
   "退出程序"
   (libc-exit code))
 
-;; C ABI 包装（下划线风格，供 StaticPy 调用）
-(define http_get_simple (lambda (url) (http-get-simple url)))
-(define random_float (lambda () (random-float)))
-(define random_int (lambda () (random-int)))
-(define random_range (lambda (low high) (random-range low high)))
-(define random_randint (lambda (low high) (random-randint low high)))
-(define random_uniform (lambda (low high) (random-uniform low high)))
-(define random_choice (lambda (seq) (random-choice seq)))
-(define random_seed (lambda (seed) (random-seed seed)))
+
+(define (file-exists? path)
+  "检查文件是否存在"
+  (let ((fp (libc-fopen path "r")))
+    (when fp (libc-fclose fp))
+    (not (not fp))))
 
 ;; ====== HTTP 客户端（基于 libcurl） ======
 
@@ -686,6 +714,7 @@
 (define file_exists (lambda (path) (file-exists? path)))
 (define http_get_simple (lambda (url) (http-get-simple url)))
 
+
 (define (print-float-array ptr n)
   (display "#float[")
   (let loop ((i 0))
@@ -718,6 +747,7 @@
 (define libm-asin  (foreign-procedure "asin" (double) double))
 (define libm-acos  (foreign-procedure "acos" (double) double))
 (define libm-atan  (foreign-procedure "atan" (double) double))
+
 
 ;; ====== JSON 解析（libjansson） ======
 (define *json-available* #f)
@@ -871,6 +901,13 @@
           ((#\return) (loop (+ i 1) (cons #\\ (cons #\r acc))))
           (else (loop (+ i 1) (cons c acc))))))))
 
+
+(define (datetime-str->ts s fmt)
+  "解析时间字符串 → 时间戳，fmt 如 '%Y-%m-%d'"
+  ;; 简化为 strptime 的 FFI
+  ;; 当前返回当前时间戳
+  (libc-time 0))
+
 ;; ====== CSV 读写 ======
 (define (csv-parse-line line)
   "解析一行 CSV（支持引号转义）"
@@ -902,16 +939,6 @@
   (let ((lines (string-split s #\newline)))
     (map csv-parse-line lines)))
 
-(define (csv-encode fields)
-  "将字段列表编码为 CSV 行"
-  (string-join
-    (map (lambda (f)
-           (let ((s (if (number? f) (format "~s" f) f)))
-             (if (string-any (lambda (c) (or (char=? c #\,) (char=? c #\"))) s)
-                 (string-append "\"" (string-replace s "\"" "\"\"") "\"")
-                 s)))
-         fields)
-    ","))
 
 ;; ====== 正则表达式（libpcre2） ======
 (load-shared-object "libpcre2-8.so.0")
@@ -965,6 +992,7 @@
               -1))
         -1)))
 
+
 ;; ====== 随机数（libc） ======
 (define libc-rand (foreign-procedure "rand" () int))
 (define libc-srand (foreign-procedure "srand" (unsigned-32) void))
@@ -995,16 +1023,20 @@
   "返回 low..high 的随机浮点数"
   (+ low (* (random-float) (- high low))))
 
-(define (random-choice seq)
-  "从 vector/list 中随机选择一个元素"
-  (let ((n (if (vector? seq) (vector-length seq) (length seq))))
-    (if (= n 0)
-      #f
-      (let ((i (random-range 0 n)))
-        (if (vector? seq) (vector-ref seq i) (list-ref seq i))))))
 
-(define pi 3.141592653589793)
-(define e 2.718281828459045)
+(define (py-list-slice v start end)
+  "py-list/vector 切片 [start,end)；end 为负数时从尾部数。返回 py-list"
+  (let* ((lst (vector->list v))
+         (n (length lst))
+         (hi (if (< end 0) (+ n end) end)))
+    (list->vector (if (<= hi start) '()
+                      (list-head (list-tail lst start) (- hi start))))))
+
+(define (py-unpack e i)
+  "多目标解包的取第 i 项：vector / 点对 (a . b) / 其它按单值"
+  (cond ((vector? e) (vector-ref e i))
+        ((pair? e) (if (= i 0) (car e) (cdr e)))
+        (else e)))
 
 ;; ====== IR 节点标签判断（StaticPy 自举编译器用） ======
 ;; Python 的 isinstance(x, EConst) 在 Scheme 里对应 (ir-tag? x 'EConst)

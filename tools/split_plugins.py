@@ -65,7 +65,7 @@ PREFIX_OWNER = [
     ("random_", "random"), ("re_", "regex"), ("csv_", "csv"),
     ("str_", "core"), ("py_list", "core"), ("list_", "core"), ("vec_", "core"),
     ("make_", "core"), ("dict_", "core"), ("float_array", "core"),
-    ("int_array", "core"), ("string_", "core"),
+    ("int_array", "core"), ("string_", "core"), ("integer_to_", "core"),
     ("argv", "libc"), ("exit", "libc"), ("pi", "math"), ("e", "math"),
 ]
 
@@ -104,13 +104,44 @@ def read_lines(path):
         return f.read().split("\n")
 
 
+def _snap(lines, idx, lo, hi):
+    """把切点吸附到最近的空行（顶层 form 之间），避免行号表随源码行数漂移切在 form 中间"""
+    if idx >= hi:
+        return hi
+    if idx <= lo:
+        return lo
+    if not lines[idx].strip():
+        return idx
+    for d in range(1, 60):
+        for cand in (idx - d, idx + d):
+            if lo < cand < hi and not lines[cand].strip():
+                return cand
+    return idx
+
+
 def slice_and_group(lines, spans):
-    """按 (start,end,plugin) 切片，按插件累积（保持原文顺序）"""
+    """按 (start,end,plugin) 切片（1 基，end 不含），按插件累积（保持原文顺序）
+
+    所有切点先按原顺序吸附到空行并保证单调，再按吸附后的位置切片；
+    行号表因此只作“大致位置”用，运行时增删几行不会切坏顶层 form。
+    """
+    n = len(lines)
+    raw = sorted({b for start, end, _ in spans for b in [start - 1] + ([end - 1] if end else [n])})
+    snapped = {}
+    prev = 0
+    for b in raw:
+        cur = _snap(lines, b, prev, n)
+        if cur < prev:
+            cur = prev
+        snapped[b] = cur
+        prev = cur
     out = {}
     for start, end, plug in spans:
         if plug is None:
             continue
-        chunk = lines[start - 1: (end - 1) if end else len(lines)]
+        a = snapped[start - 1]
+        b = snapped[end - 1] if end else n
+        chunk = lines[a:b]
         out.setdefault(plug, []).append("\n".join(chunk).rstrip() + "\n")
     return out
 

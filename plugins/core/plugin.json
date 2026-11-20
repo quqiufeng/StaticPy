@@ -14,6 +14,7 @@
     "float_array_set",
     "int_array_ref",
     "int_array_set",
+    "integer_to_char",
     "list_append_str",
     "list_length",
     "list_ref",

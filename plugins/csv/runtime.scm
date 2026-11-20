@@ -1,3 +1,10 @@
+
+(define (datetime-str->ts s fmt)
+  "解析时间字符串 → 时间戳，fmt 如 '%Y-%m-%d'"
+  ;; 简化为 strptime 的 FFI
+  ;; 当前返回当前时间戳
+  (libc-time 0))
+
 ;; ====== CSV 读写 ======
 (define (csv-parse-line line)
   "解析一行 CSV（支持引号转义）"
@@ -28,14 +35,3 @@
   "解析 CSV 字符串 → list of list"
   (let ((lines (string-split s #\newline)))
     (map csv-parse-line lines)))
-
-(define (csv-encode fields)
-  "将字段列表编码为 CSV 行"
-  (string-join
-    (map (lambda (f)
-           (let ((s (if (number? f) (format "~s" f) f)))
-             (if (string-any (lambda (c) (or (char=? c #\,) (char=? c #\"))) s)
-                 (string-append "\"" (string-replace s "\"" "\"\"") "\"")
-                 s)))
-         fields)
-    ","))

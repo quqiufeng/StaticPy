@@ -1,3 +1,4 @@
+
 ;; ====== GC 跟踪：自动释放 C 内存 ======
 (define *gc-guardian* (make-guardian))
 
@@ -69,6 +70,18 @@
         (dict-set! copy (car entry) (cdr entry)))
       (hashtable-cells d))
     copy))
+
+
+(define (csv-encode fields)
+  "将字段列表编码为 CSV 行"
+  (string-join
+    (map (lambda (f)
+           (let ((s (if (number? f) (format "~s" f) f)))
+             (if (string-any (lambda (c) (or (char=? c #\,) (char=? c #\"))) s)
+                 (string-append "\"" (string-replace s "\"" "\"\"") "\"")
+                 s)))
+         fields)
+    ","))
 
 ;; ====== 字符串工具（纯 Scheme，不依赖 Chez 扩展） ======
 
@@ -177,10 +190,16 @@
   (and (>= (string-length s) (string-length prefix))
        (string=? (substring s 0 (string-length prefix)) prefix)))
 
-(define (str-ends-with? s suffix)
-  "检查是否以 suffix 结尾"
-  (and (>= (string-length s) (string-length suffix))
-       (string=? (substring s (- (string-length s) (string-length suffix)) (string-length s)) suffix)))
+
+;; C ABI 包装（下划线风格，供 StaticPy 调用）
+(define http_get_simple (lambda (url) (http-get-simple url)))
+(define random_float (lambda () (random-float)))
+(define random_int (lambda () (random-int)))
+(define random_range (lambda (low high) (random-range low high)))
+(define random_randint (lambda (low high) (random-randint low high)))
+(define random_uniform (lambda (low high) (random-uniform low high)))
+(define random_choice (lambda (seq) (random-choice seq)))
+(define random_seed (lambda (seed) (random-seed seed)))
 
 ;; ====== 字符串转数字（用于读取数据文件） ======
 (define (string_to_float s)
@@ -192,6 +211,12 @@
 
 (define (string_of_int n)
   (number->string (exact n)))
+
+;; 码点 -> 单字符字符串（词法器解码 \xHH / \uXXXX 用）
+(define (integer_to_char n)
+  (if (and (integer? n) (>= n 0) (<= n #x10FFFF))
+      (string (integer->char n))
+      ""))
 
 ;; formats a float to fixed decimal places
 (define (format_float f digits)
@@ -244,6 +269,7 @@
   "字符串切片 [start, end)"
   (substring s start end))
 
+
 ;; ====== 通用打印 ======
 
 (define (print x)
@@ -282,6 +308,7 @@
 (define (is_error r) (eq? (vector-ref r 0) 'error))
 (define (is_some o) (eq? (vector-ref o 0) 'some))
 (define (is_none o) (eq? (vector-ref o 0) 'none))
+
 
 (define (unwrap r)
   (if (is_ok r)
@@ -373,17 +400,3 @@
         ((null? x) '())
         ((pair? x) (list x))
         (else (list x))))
-
-(define (py-list-slice v start end)
-  "py-list/vector 切片 [start,end)；end 为负数时从尾部数。返回 py-list"
-  (let* ((lst (vector->list v))
-         (n (length lst))
-         (hi (if (< end 0) (+ n end) end)))
-    (list->vector (if (<= hi start) '()
-                      (list-head (list-tail lst start) (- hi start))))))
-
-(define (py-unpack e i)
-  "多目标解包的取第 i 项：vector / 点对 (a . b) / 其它按单值"
-  (cond ((vector? e) (vector-ref e i))
-        ((pair? e) (if (= i 0) (car e) (cdr e)))
-        (else e)))
