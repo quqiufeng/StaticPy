@@ -31,8 +31,8 @@ PRELUDE_SLICE = [
     (769, 808, "libc"),     # 时间 + argv
     (808, 882, "core"),     # 字符串转数字 + print
     (882, 924, "core"),     # vector 工具 + Option/Result
-    (924, 963, "core"),     # py-list
-    (963, None, "ir"),      # 自举编译器 IR 标签
+    (924, 1014, "core"),   # py-list + 推导式/解包辅助
+    (1014, None, "ir"),      # 自举编译器 IR 标签
 ]
 
 STDLIB_SLICE = [

@@ -81,6 +81,8 @@
     "log2",
     "pi",
     "pow",
+    "py_iter_to_list",
+    "py_unpack",
     "round",
     "sin",
     "sinh",

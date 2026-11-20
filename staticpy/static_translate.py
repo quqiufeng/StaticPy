@@ -8,6 +8,7 @@ import sys
 import re
 import json
 import ast
+import itertools
 import keyword
 
 # ====== Scheme 保留字/不可用作变量名的标识符 ======
@@ -39,6 +40,9 @@ def scheme_name(name):
         "py_list_length": "py-list-length",
         "list_to_py_list": "list->py-list",
         "dict_copy": "dict-copy",
+        "py_iter_to_list": "py-iter->list",
+        "py_list_slice": "py-list-slice",
+        "py_unpack": "py-unpack",
     }
     return RUNTIME_MAP.get(name, name)
 
@@ -530,6 +534,7 @@ RECORD_FIELDS = {}
 # 调用 obj.m(a) → (static_C_m obj a)；self.x → (C-x self)
 CLASSES = {}        # 类名 -> analyze_class() 的结果
 CURRENT_CLASS = None  # 正在翻译的方法所属类（self 的类型上下文）
+RECORD_FIELDS = {}  # 记录类名 → 字段顺序（供 match 的位置参数模式使用）
 SELF_PARAMS = ("self", "cls")
 TRANS_ERRORS = []   # 翻译期的“响亮失败”记录（stderr 报告）
 
@@ -809,6 +814,7 @@ PRELUDE_FUNCTIONS = {
     "argv", "exit_program", "exit",
     "pi", "e",
     "py_list", "py_list_append", "py_list_ref", "py_list_length", "list_to_py_list", "list_append_str",
+    "py_iter_to_list", "py_list_slice", "py_unpack",
 } | MATH_FUNCTIONS
 
 def parse_extern_functions(code):
@@ -1749,6 +1755,7 @@ def translate_dataclass(node):
     if not fields:
         return f";; class {name} (no fields)"
     field_str = " ".join(fields)
+    RECORD_FIELDS[name] = fields
     return "\n".join([f"(define-record-type {name}", f"  (fields {field_str}))"])
 
 
@@ -2960,6 +2967,207 @@ def translate_tensor_method(receiver, attr, node):
 
 
 
+_COMP_UID = itertools.count(1)
+
+
+def _comp_bind(target, elt, name_fn):
+    """生成解包绑定列表 [(name, expr), ...]"""
+    if isinstance(target, ast.Name):
+        return [(name_fn(target.id), elt)]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        out = []
+        for i, e in enumerate(target.elts):
+            if isinstance(e, ast.Starred):
+                e = e.value
+            if isinstance(e, ast.Name):
+                out.append((name_fn(e.id), f"(py-unpack {elt} {i})"))
+        return out
+    return []
+
+
+def _translate_comprehension(generators, emit, kind):
+    """通用推导式翻译：[e for ...] / {k: v for ...} / {e for ...} / (e for ...)
+
+    嵌套 named-let，累加器 __acc 逐层显式传递；迭代源统一走 (py-iter->list ...)，
+    因此 range / list / str / py-list / dict.items() 都能迭代。
+    支持多个 for 与多个 if；条件按源代码顺序求值。
+    kind: "list" | "set" | "dict" | "gen"
+    """
+    uid = next(_COMP_UID)
+
+    def rec(idx, acc_expr):
+        gen = generators[idx]
+        it = f"__it{uid}_{idx}"
+        n = f"__n{uid}_{idx}"
+        i = f"__i{uid}_{idx}"
+        elt = f"__e{uid}_{idx}"
+        nm = f"loop{uid}_{idx}"
+
+        def adv(a):
+            # 本层推进到下一轮：把新的累加器带过去
+            return f"({nm} (+ {i} 1) {a})"
+
+        if idx + 1 < len(generators):
+            inner = rec(idx + 1, "__acc")
+        else:
+            inner = f"(cons {emit()} __acc)"
+        body = adv(inner)
+        for cond in reversed(gen.ifs):
+            body = f"(if {translate_expr(cond)} {body} {adv('__acc')})"
+        binds = _comp_bind(gen.target, elt, mangle_name)
+        binds_str = f"({elt} (list-ref {it} {i}))" + "".join(
+            f" ({b} {ex})" for b, ex in binds)
+        return (f"(let* (({it} (py-iter->list {translate_expr(gen.iter)}))"
+                f" ({n} (length {it})))"
+                f" (let {nm} (({i} 0) (__acc {acc_expr}))"
+                f" (if (>= {i} {n}) __acc"
+                f" (let* ({binds_str}) {body}))))")
+
+    body = rec(0, "'()")
+    if kind == "dict":
+        return (f"(let* ((__pairs{uid} (reverse {body})) (__d{uid} (make-dict)))"
+                f" (for-each (lambda (__p) (dict-set! __d{uid} (car __p) (cdr __p)))"
+                f" __pairs{uid})"
+                f" __d{uid})")
+    if kind == "set":
+        return (f"(list->py-list (reverse (fold-left"
+                f" (lambda (__a __x) (if (member __x __a) __a (cons __x __a)))"
+                f" '() (reverse {body}))))")
+    if kind == "gen":
+        return f"(list->vector (reverse {body}))"
+    return f"(list->py-list (reverse {body}))"
+
+
+_MATCH_UID = itertools.count(1)
+
+
+def _pat_cond(pat, val):
+    """match pattern → (条件字符串 或 None, [(名字, 表达式), ...])
+
+    条件 None 表示该 pattern 恒真（捕获/通配）。捕获的取值表达式只在条件成立时
+    才求值（生成的代码把 binds 放进 cond 之后的 let* 里）。
+    """
+    if isinstance(pat, ast.MatchValue):
+        return f"(equal? {val} {translate_expr(pat.value)})", []
+    if isinstance(pat, ast.MatchSingleton):
+        if pat.value is None:
+            return f"(eq? {val} #f)", []
+        return (f"(eq? {val} #t)" if pat.value else f"(eq? {val} #f)"), []
+    if isinstance(pat, ast.MatchAs):
+        binds = []
+        if pat.name:
+            binds.append((mangle_name(pat.name), val))
+        if pat.pattern is None:
+            return None, binds
+        cond, sub = _pat_cond(pat.pattern, val)
+        return cond, sub + binds
+    if isinstance(pat, ast.MatchOr):
+        conds = []
+        for alt in pat.patterns:
+            c, _b = _pat_cond(alt, val)
+            conds.append("(and #t #t)" if c is None else c)
+        return "(or " + " ".join(conds) + ")", []
+    if isinstance(pat, ast.MatchSequence):
+        n = len(pat.patterns)
+        star = next((i for i, p in enumerate(pat.patterns)
+                     if isinstance(p, ast.MatchStar)), None)
+        if star is None:
+            conds = [f"(vector? {val})", f"(= (vector-length {val}) {n})"]
+            binds = []
+            for i, p in enumerate(pat.patterns):
+                c, b = _pat_cond(p, f"(py-list-ref {val} {i})")
+                if c:
+                    conds.append(c)
+                binds += b
+            return "(and " + " ".join(conds) + ")", binds
+        tail = n - 1 - star
+        conds = [f"(vector? {val})", f"(>= (vector-length {val}) {n - 1})"]
+        binds = []
+        for i, p in enumerate(pat.patterns[:star]):
+            c, b = _pat_cond(p, f"(py-list-ref {val} {i})")
+            if c:
+                conds.append(c)
+            binds += b
+        rest_pat = pat.patterns[star]
+        if rest_pat.name:
+            end = f"(vector-length {val})" if tail == 0 else f"(- (vector-length {val}) {tail})"
+            binds.append((mangle_name(rest_pat.name),
+                          f"(py-list-slice {val} {star} {end})"))
+        for k, p in enumerate(pat.patterns[star + 1:]):
+            c, b = _pat_cond(p, f"(py-list-ref {val} (- (vector-length {val}) {tail - k}))")
+            if c:
+                conds.append(c)
+            binds += b
+        return "(and " + " ".join(conds) + ")", binds
+    if isinstance(pat, ast.MatchMapping):
+        conds = [f"(hashtable? {val})"]
+        binds = []
+        for k, p in zip(pat.keys, pat.patterns):
+            kk = translate_expr(k)
+            conds.append(f"(dict-contains? {val} {kk})")
+            c, b = _pat_cond(p, f"(dict-get {val} {kk})")
+            if c:
+                conds.append(c)
+            binds += b
+        return "(and " + " ".join(conds) + ")", binds
+    if isinstance(pat, ast.MatchClass):
+        cls = pat.cls
+        cname = cls.id if isinstance(cls, ast.Name) else translate_expr(cls)
+        conds = [f"({cname}? {val})"]
+        binds = []
+        fields = RECORD_FIELDS.get(cname)
+        for i, p in enumerate(pat.patterns):
+            if fields and i < len(fields):
+                c, b = _pat_cond(p, f"({cname}-{fields[i]} {val})")
+                if c:
+                    conds.append(c)
+                binds += b
+            else:
+                conds.append("(and #t #t)")  # 字段顺序未知：只校验类型
+        for attr, p in zip(pat.kwd_attrs, pat.kwd_patterns):
+            # define-record-type 的 fields 简写生成 <Type>-<field> 访问器
+            c, b = _pat_cond(p, f"({cname}-{attr} {val})")
+            if c:
+                conds.append(c)
+            binds += b
+        return "(and " + " ".join(conds) + ")", binds
+    # 兜底：不认识就恒真（宁可放过，不要漏匹配）
+    return None, []
+
+
+def translate_match(stmt):
+    """match/case → let + letrec 的连续子（thunk 链）
+
+    每个 case 编译成一个 thunk：条件成立 → let* 解包 → body；否则调下一个 thunk。
+    用 thunk 而不是嵌套 if 复制，避免带 guard 时整条链被复制多份。
+    """
+    uid = next(_MATCH_UID)
+    subj = f"__m{uid}"
+    thunks = []
+    n = len(stmt.cases)
+    for i, case in enumerate(stmt.cases):
+        nxt = f"{subj}_k{i + 1}"
+        cond, binds = _pat_cond(case.pattern, subj)
+        body = " ".join(translate_block(case.body)) or "(void)"
+        guard = translate_expr(case.guard) if case.guard is not None else None
+        # 捕获绑定必须在条件（含 guard）成立之后才求值
+        inner = body
+        if guard is not None:
+            inner = f"(if {guard} {body} ({nxt}))"
+        if binds:
+            inner = f"(let* ({' '.join(f'({nm} {ex})' for nm, ex in binds)}) {inner})"
+        if cond is None and guard is None and not binds:
+            thunks.append(f"({subj}_k{i} (lambda () {body}))")
+        elif cond is None:
+            thunks.append(f"({subj}_k{i} (lambda () {inner}))")
+        else:
+            thunks.append(f"({subj}_k{i} (lambda () (if {cond} {inner} ({nxt}))))")
+    # Python 语义：没有任何 case 命中时语句什么也不做
+    thunks.append(f"({subj}_k{n} (lambda () (void)))")
+    return (f"(let (({subj} {translate_expr(stmt.subject)}))"
+            f" (letrec ({' '.join(thunks)}) ({subj}_k0)))")
+
+
 def translate_expr(node):
     """翻译一个表达式"""
     if node is None:
@@ -3381,33 +3589,23 @@ def translate_expr(node):
         n = len(elems)
         return f"(py-list {' '.join(elems)})"
     elif isinstance(node, ast.ListComp):
-        # 简化: [expr for i in range(n)] → (py-list ... loop)
-        if len(node.generators) == 1:
-            gen = node.generators[0]
-            target = mangle_name(gen.target.id) if isinstance(gen.target, ast.Name) else "i"
-            if isinstance(gen.iter, ast.Call) and hasattr(gen.iter.func, 'id') and gen.iter.func.id == 'range':
-                rargs = gen.iter.args
-                if len(rargs) == 1:
-                    n = translate_expr(rargs[0])
-                    body = translate_expr(node.elt)
-                    return f"(list->py-list (let loop (({target} 0) (acc '())) (if (>= {target} {n}) (reverse acc) (loop (+ {target} 1) (cons {body} acc)))))"
-        return "(py-list)"
+        return _translate_comprehension(node.generators,
+                                        lambda: translate_expr(node.elt), "list")
+    elif isinstance(node, ast.DictComp):
+        return _translate_comprehension(
+            node.generators,
+            lambda: f"(cons {translate_expr(node.key)} {translate_expr(node.value)})",
+            "dict")
+    elif isinstance(node, ast.SetComp):
+        return _translate_comprehension(node.generators,
+                                        lambda: translate_expr(node.elt), "set")
     elif isinstance(node, ast.Set):
         # {1, 2, 3} → 转为 list（ Scheme 无 set，用 list 近似）
         elems = [translate_expr(e) for e in node.elts]
         return f"(py-list {' '.join(elems)})"
     elif isinstance(node, ast.GeneratorExp):
-        # 同 ListComp 简化处理
-        if len(node.generators) == 1:
-            gen = node.generators[0]
-            target = mangle_name(gen.target.id) if isinstance(gen.target, ast.Name) else "i"
-            if isinstance(gen.iter, ast.Call) and hasattr(gen.iter.func, 'id') and gen.iter.func.id == 'range':
-                rargs = gen.iter.args
-                if len(rargs) == 1:
-                    n = translate_expr(rargs[0])
-                    body = translate_expr(node.elt)
-                    return f"(list->vector (let loop (({target} 0) (acc '())) (if (>= {target} {n}) (reverse acc) (loop (+ {target} 1) (cons {body} acc)))))"
-        return "(vector)"
+        return _translate_comprehension(node.generators,
+                                        lambda: translate_expr(node.elt), "gen")
     elif isinstance(node, ast.Subscript):
         # a[i] / a[i:j] / a[i:j:k] → 根据 value 类型选择 accessor 或 slice
         value = translate_expr(node.value)
@@ -3734,6 +3932,8 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                 body_exprs.append(f"(let* ((__iter {iter_name}) (__n (if (tagged-array? __iter) (tagged-array-len __iter) (vector-length __iter)))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({target} (if (tagged-array? __iter) (float-array-ref (tagged-array-data __iter) __i) (vector-ref __iter __i)))) {body_str})))")
             else:
                 body_exprs.append(f";; for loop (untranslated)")
+        elif isinstance(stmt, ast.Match):
+            body_exprs.append(translate_match(stmt))
         elif isinstance(stmt, ast.While):
             test = translate_expr(stmt.test)
             body_str = " ".join(translate_block(stmt.body))

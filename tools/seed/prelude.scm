@@ -960,6 +960,57 @@
 (define list_append_str py-list-append)
 (define tuple_ref vector-ref)
 
+;; ====== 推导式支持（dict/set/list comprehension 共用） ======
+
+;; tagged array 兜底：np 插件（plugins/np/runtime.scm）会覆盖成自己的定义。
+;; 判定用「首元素不是数」区分 #(ptr n) 与普通 py-list #(1 2)，避免误判。
+(define (py-tagged-array? x)
+  (and (vector? x)
+       (= (vector-length x) 2)
+       (not (number? (vector-ref x 0)))
+       (integer? (vector-ref x 1))))
+
+(define (py-tagged-array-data a) (vector-ref a 0))
+(define (py-tagged-array-len a) (vector-ref a 1))
+
+;; 无条件提供；np 插件在 bundle 里后加载，会覆盖成它自己的更宽松版本。
+(define (tagged-array? x) (py-tagged-array? x))
+(define (tagged-array-data a) (py-tagged-array-data a))
+(define (tagged-array-len a) (py-tagged-array-len a))
+
+(define (py-tagged->list x)
+  (guard (e (#t (list x)))
+    (let ((n (tagged-array-len x))
+          (d (tagged-array-data x)))
+      (let loop ((i 0) (acc '()))
+        (if (>= i n) (reverse acc)
+            (loop (+ i 1) (cons (float-array-ref d i) acc)))))))
+
+(define (py-iter->list x)
+  "把 Python 可迭代对象归一成 Scheme list：py-list/vector、str、list、pair、
+   tagged array(#(ptr n))、单值兜底"
+  (cond ((py-tagged-array? x) (py-tagged->list x))
+        ((vector? x) (vector->list x))
+        ((string? x) (string->list x))
+        ((list? x) x)
+        ((null? x) '())
+        ((pair? x) (list x))
+        (else (list x))))
+
+(define (py-list-slice v start end)
+  "py-list/vector 切片 [start,end)；end 为负数时从尾部数。返回 py-list"
+  (let* ((lst (vector->list v))
+         (n (length lst))
+         (hi (if (< end 0) (+ n end) end)))
+    (list->vector (if (<= hi start) '()
+                      (list-head (list-tail lst start) (- hi start))))))
+
+(define (py-unpack e i)
+  "多目标解包的取第 i 项：vector / 点对 (a . b) / 其它按单值"
+  (cond ((vector? e) (vector-ref e i))
+        ((pair? e) (if (= i 0) (car e) (cdr e)))
+        (else e)))
+
 ;; ====== IR 节点标签判断（StaticPy 自举编译器用） ======
 ;; Python 的 isinstance(x, EConst) 在 Scheme 里对应 (ir-tag? x 'EConst)
 ;; 因为 EConst(x) 被翻译成 (vector 'EConst x)

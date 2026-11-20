@@ -4,6 +4,20 @@ from __future__ import annotations
 
 import os
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+STATICPY_DIR = os.path.join(os.path.dirname(HERE), "staticpy")
+
+
+def _runtime_roots():
+    """与 static_build_comfycli.sh 一致：prelude + stdlib 必须先于插件/程序。
+
+    旧 .sh 链路用 `cat static_prelude.scm` 打头；kernel 链路此前漏了这一步，
+    结果 isinstance→ir-tag?、make_dict 等在 ELF 里未绑定。
+    """
+    stdlib = os.environ.get("STATICPY_STDLIB", "static_stdlib.scm")
+    return [os.path.join(STATICPY_DIR, "static_prelude.scm"),
+            os.path.join(STATICPY_DIR, stdlib)]
+
 
 def assemble(kernel, code_ss, extra_ffi=None, header=None):
     """返回 (bundle 文本, 参与 hash 的输入文件列表)"""
@@ -16,6 +30,13 @@ def assemble(kernel, code_ss, extra_ffi=None, header=None):
             parts.append(";;; " + line)
     parts.append("(import (chezscheme))")
     parts.append("")
+
+    for path in _runtime_roots():
+        parts.append(f";;; ---- runtime: {os.path.basename(path)} ----")
+        with open(path, encoding="utf-8") as f:
+            parts.append(f.read().rstrip())
+        parts.append("")
+        inputs.append(path)
 
     for name, path in kernel.runtime_files():
         parts.append(f";;; ---- plugin: {name} :: {os.path.basename(path)} ----")

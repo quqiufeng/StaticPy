@@ -45,8 +45,10 @@ def apply_all(img: ptr, f: fn) -> ptr:
 extern fn img_open(path: str) -> ptr from "imgproc"
 ```
 
-**有限支持**：推导式（基于 `range`/`list` 的简化实现）、元组解构 `x, y = 1, 2`、
-切片 `a[1:3]`、`dataclass`（编译成 record）、`enum`（编译成常量）。
+**有限支持**：推导式（list / dict / set / 生成器；多 `for`、`if` 过滤、元组解包、
+迭代 `range` / `list` / `str` / py-list / tagged array）、`match`/`case`（字面量、通配、
+捕获、`|`、序列 `[a, *rest]`、映射 `{"k": v}`、类模式 `Pt(x=0)`/`Pt(1, y)`）、
+元组解构 `x, y = 1, 2`、切片 `a[1:3]`、`dataclass`（编译成 record）、`enum`（编译成常量）。
 
 **不支持**（也不要绕）：`class`/继承/多态、`try`/`except`/`raise`、生成器/`yield`、
 自由变量闭包、`eval`/`exec`、动态 `getattr`/`setattr`。

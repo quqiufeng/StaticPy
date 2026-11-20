@@ -321,7 +321,9 @@ class Kernel:
         T.MODULE_FN_RETURN_TYPES.clear()
         T.MODULE_FN_RETURN_TYPES.update(self.return_types)
         # PRELUDE_FUNCTIONS 含 MATH_FUNCTIONS（数学函数不是 C FFI）
-        T.PRELUDE_FUNCTIONS.clear()
+        # 注意：只能**并集**，不能 clear——翻译器默认表里还有 argv/file_*/str_* 等
+        # 一大票 Scheme 侧预置函数；清掉会让它们被当成用户函数加 static_ 前缀
+        # （kernel 链路曾因此产出 static_argv，运行时 unbound）。
         T.PRELUDE_FUNCTIONS.update(self.prelude_functions)
         T.KERNEL_LIBS.clear()
         T.KERNEL_LIBS.update(self.lib_map)
