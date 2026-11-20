@@ -321,15 +321,16 @@ def py_list_append(lst: list, val):
     return result
 
 
-def str_join(parts: list, sep_str):
-    result = ""
+def str_join(parts: list, sep_str: str) -> str:
+    result: str = ""
     i = 0
     n = len(parts)
     while i < n:
+        piece: str = parts[i]
         if i == 0:
-            result = parts[i]
+            result = piece
         else:
-            result = result + sep_str + parts[i]
+            result = result + sep_str + piece
         i = i + 1
     return result
 

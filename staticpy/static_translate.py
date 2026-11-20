@@ -815,12 +815,13 @@ PRELUDE_FUNCTIONS = {
     "argv", "exit_program", "exit",
     "pi", "e",
     "py_list", "py_list_append", "py_list_concat", "py_list_ref", "py_list_length", "list_to_py_list", "list_append_str",
-    "py_iter_to_list", "py_list_slice", "py_unpack",
+    "py_iter_to_list", "py_list_slice", "py_unpack", "py_float_repr",
 } | MATH_FUNCTIONS
 
 def parse_extern_functions(code):
     """解析 extern fn 声明"""
-    pattern = r'extern\s+fn\s+(\w+)\s*\((.*?)\)\s*->\s*(\w+)\s+from\s+"(\w+)"'
+    # 锚定行首：避免把注释/字符串里出现的 `extern fn ...` 当成真声明
+    pattern = r'(?m)^\s*extern\s+fn\s+(\w+)\s*\((.*?)\)\s*->\s*(\w+)\s+from\s+"(\w+)"'
     for m in re.finditer(pattern, code, re.DOTALL):
         name = m.group(1)
         if name in PRELUDE_FUNCTIONS:
@@ -1020,6 +1021,40 @@ def collect_assigned_names(stmts):
     return names
 
 
+# 内建函数作为一等值使用时的包装（Python 的 key=len / map(int, xs) 等）
+BUILTIN_VALUE_WRAPPERS = {
+    "len": "py-len",
+    "str": "py-str",
+    "int": "(lambda (x) (exact (round x)))",
+    "float": "(lambda (x) (inexact x))",
+    "bool": "py-truthy",
+    "abs": "abs",
+    "sum": "py-sum",
+    "min": "py-min",
+    "max": "py-max",
+    "sorted": "py-sorted",
+    "enumerate": "py-enumerate",
+    "zip": "py-zip",
+    "any": "py-any",
+    "all": "py-all",
+    "repr": "py-repr",
+    "ord": "char->integer",
+    "chr": "integer->char",
+}
+
+
+# 方法名当一等值（key=str.lower）：方法名 → 预置过程
+METHOD_VALUE_FNS = {
+    "lower": "str-lower",
+    "upper": "str-upper",
+    "strip": "str-trim",
+    "title": "str-title",
+    "lstrip": "str-trim",
+    "rstrip": "str-trim",
+    "bit_length": "integer-length",
+}
+
+
 def infer_expr_type(node):
     """基于 TYPE_ENV 推断表达式类型（仅用于代码生成优化，不参与类型检查）"""
     if node is None:
@@ -1101,15 +1136,18 @@ def infer_expr_type(node):
             # 预置字符串/列表函数返回类型（否则 Any 会退化成通用 =，字符串比较直接炸）
             if name in ("str_slice", "str_join", "str_replace", "str_trim", "str_lower",
                         "str_upper", "string_of_int", "format_float", "json_dumps",
-                        "os_getenv", "os_cwd", "http_get_simple", "integer_to_char"):
+                        "os_getenv", "os_cwd", "http_get_simple", "integer_to_char") \
+                    and name not in FUNCTION_SIGS:
                 return "str"
-            if name in ("str_split", "os_list_dir"):
+            if name in ("str_split", "os_list_dir") and name not in FUNCTION_SIGS:
                 return "list[str]"
-            if name in ("str_length", "string_to_int", "list_length", "os_file_size"):
+            if name in ("str_length", "string_to_int", "list_length", "os_file_size") \
+                    and name not in FUNCTION_SIGS:
                 return "int"
-            if name in ("string_to_float", "now_ts"):
+            if name in ("string_to_float", "now_ts") and name not in FUNCTION_SIGS:
                 return "float"
-            if name in ("str_contains", "str_starts_with", "str_ends_with", "os_file_exists"):
+            if name in ("str_contains", "str_starts_with", "str_ends_with", "os_file_exists") \
+                    and name not in FUNCTION_SIGS:
                 return "bool"
             # 用户函数：从 FUNCTION_SIGS 推断返回类型
             unmangled = node.func.id
@@ -1397,7 +1435,7 @@ def translate_stmt(node, bindings=None):
             tmp = f"__unpack_{node.lineno}"
             names = [e.id for e in targets[0].elts]
             val = translate_expr(node.value)
-            sets = " ".join(f"(set! {n} (vector-ref {tmp} {i}))" for i, n in enumerate(names))
+            sets = " ".join(f"(set! {n} (py-unpack {tmp} {i}))" for i, n in enumerate(names))
             bindings.append((tmp, val))
             return f"  ;; tuple-unpack\n  (begin {sets})"
         if len(targets) == 1 and isinstance(targets[0], ast.Name):
@@ -1497,6 +1535,13 @@ def emit_for_stmt(stmt, indent="        "):
     target = mangle_name(stmt.target.id) if isinstance(stmt.target, ast.Name) else "i"
     it = stmt.iter
     body_str = " ".join(translate_block(stmt.body))
+    # for a, b in <iter>：元素按 Python 下标取（tuple/pair/vector 统一走 py-get）
+    if isinstance(stmt.target, (ast.Tuple, ast.List)) and stmt.target.elts \
+            and all(isinstance(e, ast.Name) for e in stmt.target.elts):
+        names = [mangle_name(e.id) for e in stmt.target.elts]
+        binds = " ".join(f"({nm} (py-get __e {i}))" for i, nm in enumerate(names))
+        return (f"(for-each (lambda (__e) (let ({binds}) {body_str})) "
+                f"(py-items {translate_expr(it)}))")
     if isinstance(it, ast.Call) and hasattr(it.func, 'id') and it.func.id == 'range':
         rargs = it.args
         if len(rargs) == 1:
@@ -1524,11 +1569,11 @@ def emit_for_stmt(stmt, indent="        "):
                 f"(let (({target} (string-ref __iter __i))) {body_str})))")
     if isinstance(it, ast.Name):
         iter_name = it.id
-        return (f"(let* ((__iter {iter_name}) (__n (if (tagged-array? __iter) (tagged-array-len __iter) "
-                f"(if (string? __iter) (string-length __iter) (vector-length __iter))))) "
+        # py-seq-len / py-seq-ref 统一 vector / py-glist / tagged-array / str
+        # （str 迭代给「1 字符 str」，与 CPython 一致；旧版给 char）
+        return (f"(let* ((__iter {iter_name}) (__n (py-seq-len __iter))) "
                 f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
-                f"(let (({target} (if (tagged-array? __iter) (float-array-ref (tagged-array-data __iter) __i) "
-                f"(if (string? __iter) (string-ref __iter __i) (vector-ref __iter __i))))) {body_str})))")
+                f"(let (({target} (py-seq-ref __iter __i))) {body_str})))")
     return ";; for loop (untranslated)"
 
 def translate_block(stmts):
@@ -1557,11 +1602,11 @@ def translate_block(stmts):
                     tmp_val = translate_expr(s.value)
                     if isinstance(s.value, ast.Tuple):
                         elems = [translate_expr(e) for e in s.value.elts]
-                        tmp_val = f"(vector {' '.join(elems)})"
+                        tmp_val = f"(py-tuple {' '.join(elems)})"
                     binds = []
                     for idx, elt in enumerate(t.elts):
                         if isinstance(elt, ast.Name):
-                            binds.append(f"(set! {mangle_name(elt.id)} (vector-ref {tmp} {idx}))")
+                            binds.append(f"(set! {mangle_name(elt.id)} (py-get {tmp} {idx}))")
                     exprs.append(f"(let (({tmp} {tmp_val})) {' '.join(binds)})")
                     destructure_done = True
                 elif len(s.targets) == 1 and isinstance(s.targets[0], ast.Subscript):
@@ -1569,7 +1614,7 @@ def translate_block(stmts):
                     d = translate_expr(t.value)
                     k = translate_expr(t.slice)
                     v = translate_expr(s.value)
-                    exprs.append(f"(dict-set! {d} {k} {v})")
+                    exprs.append(f"(py-set! {d} {k} {v})")
                     destructure_done = True
             if target and val:
                 # 从右侧表达式推断目标变量类型，仅用于辅助代码生成
@@ -1638,7 +1683,17 @@ def translate_block(stmts):
         elif isinstance(s, ast.Pass):
             exprs.append("(void)")
         elif isinstance(s, ast.Delete):
-            exprs.append(f";; del: {ast.dump(s)}")
+            # del d[k] / del a[i] → py-del! 统一分派（dict/list 都对）；del 变量暂不支持
+            parts = []
+            for t in s.targets:
+                if isinstance(t, ast.Subscript):
+                    parts.append("(py-del! %s %s)" % (translate_expr(t.value),
+                                                      translate_expr(t.slice)))
+                elif isinstance(t, ast.Name):
+                    parts.append("(set! %s #f)" % mangle_name(t.id))
+                else:
+                    parts.append(f";; del: {ast.dump(t)}")
+            exprs.append("(begin %s)" % " ".join(parts) if parts else "(void)")
         elif isinstance(s, ast.Continue):
             exprs.append("(__continue__ #f)")
         elif isinstance(s, ast.Break):
@@ -2523,7 +2578,9 @@ def typecheck_function(node, function_arities, module_env=None):
             check_expr(expr.test)
             bt = check_expr(expr.body)
             et = check_expr(expr.orelse)
-            if bt and et and not is_subtype(bt, et) and not is_subtype(et, bt):
+            # `x if c else None` 在 Python 里是 Optional[x]，不是类型错误
+            _opt = (bt and et and (str(bt) in ("none", "Any") or str(et) in ("none", "Any")))
+            if bt and et and not _opt and not is_subtype(bt, et) and not is_subtype(et, bt):
                 typecheck_error(expr, f"branches have incompatible types '{bt}' and '{et}'")
             return bt or et
         if isinstance(expr, ast.List):
@@ -3295,6 +3352,12 @@ def translate_expr(node):
         module, scheme_fn = resolve_imported_name(node.id)
         if scheme_fn:
             return scheme_fn
+        # 内建函数当值用（key=len / map(len, xs) 之类）：给一个一等过程的包装
+        _bid = node.id
+        if _bid in BUILTIN_VALUE_WRAPPERS \
+                and _bid not in globals().get("CURRENT_PARAMS", ()) \
+                and _bid not in TYPE_ENV and _bid not in FUNC_NODES:
+            return BUILTIN_VALUE_WRAPPERS[_bid]
         return mangle_name(node.id)
     elif isinstance(node, ast.Lambda):
         global CURRENT_PARAMS
@@ -3343,6 +3406,9 @@ def translate_expr(node):
                 return _lcall
         if isinstance(func, ast.Name):
             name = func.id
+            # range(...) 出现在表达式位置（for 头由 emit_for_stmt 化成 do 循环）
+            if name == "range":
+                return f"(py-range->list {' '.join(args)})"
             # Option/Result/Some constructors
             if name in ("Ok", "Error", "Some"):
                 if len(args) != 1:
@@ -3387,6 +3453,19 @@ def translate_expr(node):
                 if args:
                     return f"(py-len {args[0]})"
                 return "0"
+            # str(x) → (py-str x)：字符串原样，其余走 repr
+            if name == "str":
+                if args:
+                    return f"(py-str {args[0]})"
+                return '""'
+            if name == "list":
+                if args:
+                    return f"(as_list {args[0]})"
+                return "(new_list)"
+            if name == "dict":
+                if args:
+                    return f"(as_dict {args[0]})"
+                return "(new_dict)"
             # Python isinstance(expr, EConst) -> (ir-tag? expr 'EConst)
             if name == "isinstance":
                 if len(args) == 2:
@@ -3407,6 +3486,26 @@ def translate_expr(node):
                 return f"(py-truthy {args[0]})" if args else "#f"
             if name == "abs":
                 return f"(abs {args[0]})" if args else "0"
+            # 内建迭代/聚合函数（语义见 plugins/core/runtime.scm）
+            if name == "sum":
+                return f"(py-sum {' '.join(args)})" if args else "0"
+            if name in ("min", "max"):
+                if not args:
+                    return gen_error(node, f"{name} expected at least 1 argument")
+                return f"(py-{name} {' '.join(args)})"
+            if name == "sorted":
+                if not args:
+                    return gen_error(node, "sorted expected at least 1 argument")
+                # sorted(xs, reverse=True) → 关键字按位置追加（key, reverse）
+                kw = {k.arg: translate_expr(k.value) for k in node.keywords if k.arg}
+                # 位置固定传 key / reverse（缺省 #f），避免关键字顺序歧义
+                return f"(py-sorted {args[0]} {kw.get('key', '#f')} {kw.get('reverse', '#f')})"
+            if name == "enumerate":
+                return f"(py-enumerate {' '.join(args)})" if args else "(py-list)"
+            if name == "zip":
+                return f"(py-zip {' '.join(args)})"
+            if name in ("any", "all"):
+                return f"(py-{name} {' '.join(args)})" if args else ("#f" if name == "any" else "#t")
             if name == "pow":
                 return f"(pow {args[0]} {args[1]})" if len(args) >= 2 else "1"
             if name == "none":
@@ -3415,7 +3514,10 @@ def translate_expr(node):
             if name in ("is_ok", "is_error", "is_some", "is_none", "unwrap", "unwrap_or", "unwrap_error"):
                 return f"({name} {' '.join(args)})"
             # 预置函数（Scheme 运行时，不走 FFI，无需 extern fn 声明）
-            if name in PRELUDE_FUNCTIONS:
+            # 用户自己定义的函数优先（Python 语义：局部定义遮蔽运行时名），
+            # 否则 staticc.py 这类「同名实现」会被静默导到预置 shim（如 str_join→str-join
+            # 只吃 Scheme list，遇到 py-glist 直接 car 崩）。
+            if name in PRELUDE_FUNCTIONS and name not in FUNCTION_SIGS:
                 return f"({scheme_name(name)} {' '.join(args)})"
             # IR / dataclass-style class constructors: EConst(x) -> (vector 'EConst x)
             if name in RECORD_TYPES or name in ("EConst", "EVar", "EBinop", "EUnary", "ECall", "SLet", "SSet", "SReturn", "SExpr", "SIf", "SWhile", "SFor", "IRFunc"):
@@ -3668,36 +3770,16 @@ def translate_expr(node):
                 t = translate_tensor_method(value, attr, node)
                 if t:
                     return t
-            # 字典方法：d.get(k[,默认]) / d.keys() / d.items() / d.values() / d.pop() / d.setdefault()
+            # 容器方法：dict/list 统一走运行时泛型分派（hashtable / PyArray）
             if attr in ("get", "keys", "items", "values", "pop", "setdefault",
-                        "update", "clear") and resolve_expr_class(func.value) is None:
-                _d = value
-                if attr == "get":
-                    if len(args) == 1:
-                        return f"(dict-get {_d} {args[0]})"
-                    if len(args) == 2:
-                        return f"(dict-get-default {_d} {args[0]} {args[1]})"
-                elif attr == "keys":
-                    return f"(dict-keys {_d})"
-                elif attr == "items":
-                    return f"(map (lambda (__k) (cons __k (dict-get {_d} __k))) (dict-keys {_d}))"
-                elif attr == "values":
-                    return f"(map (lambda (__k) (dict-get {_d} __k)) (dict-keys {_d}))"
-                elif attr == "pop":
-                    if len(args) == 1:
-                        return f"(dict-pop {_d} {args[0]})"
-                    if len(args) == 2:
-                        return f"(dict-pop {_d} {args[0]} {args[1]})"
-                elif attr == "setdefault":
-                    if len(args) == 1:
-                        return f"(dict-set-default! {_d} {args[0]} (py-none))"
-                    if len(args) == 2:
-                        return f"(dict-set-default! {_d} {args[0]} {args[1]})"
-                elif attr == "update":
-                    if len(args) == 1:
-                        return f"(dict-merge! {_d} {args[0]})"
-                elif attr == "clear":
-                    return f"(begin (set! {_d} (make-dict)) (py-none))"
+                        "update", "clear", "copy", "sort", "append", "extend",
+                        "insert", "remove", "index", "count", "reverse") \
+                    and resolve_expr_class(func.value) is None:
+                # .get 定参快路：不走 rest 打包（每次调用省一次 list 分配）
+                if attr == "get" and len(args) in (1, 2):
+                    fast = "py-m-get2" if len(args) == 1 else "py-m-get3"
+                    return f"({fast} {value} {' '.join(args)})".replace("  ", " ")
+                return f"(py-m-{attr} {value} {' '.join(args)})".replace("  ", " ")
             # 普通属性访问（未知对象）：content.splitlines → content-splitlines
             return f"({value}-{attr})"
         # 接收者是表达式（如嵌套调用/下标），非模块名 → 同样尝试张量方法
@@ -3719,9 +3801,9 @@ def translate_expr(node):
             items.append(f"(dict-set! d {k} {v})")
         return f"(let ((d (make-dict))) {' '.join(items)} d)"
     elif isinstance(node, ast.Tuple):
-        # Tuple 表达式：转成 vector
+        # Tuple 表达式：转成 Python tuple（记录类型，repr 为 (..)）
         elems = [translate_expr(e) for e in node.elts]
-        return f"(vector {' '.join(elems)})"
+        return f"(py-tuple {' '.join(elems)})"
     elif isinstance(node, ast.List):
         elems = [translate_expr(e) for e in node.elts]
         n = len(elems)
@@ -3792,11 +3874,12 @@ def translate_expr(node):
         idx = translate_expr(slc)
         # If the index is a string literal, use dict-get
         if isinstance(slc, ast.Constant) and isinstance(slc.value, str):
-            return f"(dict-get {value} {idx})"
+            return f"(py-get {value} {idx})"
         if vt == "list[float]":
             return f"(float_array_ref {value} {idx})"
         if vt == "tuple":
-            return f"(vector-ref {value} {idx})"
+            # tuple 是独立记录类型（repr 为 (..)），下标统一走 py-get
+            return f"(py-get {value} {idx})"
         if vt == "list":
             return f"(py-list-ref {value} {idx})"
         if vt and str(vt).startswith("vector["):
@@ -3804,8 +3887,9 @@ def translate_expr(node):
         if vt and str(vt).startswith("list["):
             return f"(vector-ref {value} {idx})"
         if vt == "str":
-            return f"(slice-string {value} {idx} (fx+ {idx} 1))"
-        return f"(vector-ref {value} {idx})"
+            # 单下标取字符：不能展开成 slice-string（负下标会被算成 (fx+ -1 1)=0）
+            return f"(py-str-ref {value} {idx})"
+        return f"(py-get {value} {idx})"
     elif isinstance(node, ast.Attribute):
         # class 成员（self.x / 已知实例.x / 方法引用）
         _cattr = try_class_attr(node)
@@ -3820,6 +3904,10 @@ def translate_expr(node):
             _map = BUILTIN_MODULES.get(_mod)
             if _map and isinstance(_map.get(node.attr), str):
                 return _map[node.attr]
+        # str.lower 当值用（key=str.lower 这类）：包成一等过程
+        if isinstance(node.value, ast.Name) and node.value.id in ("str", "int", "float") \
+                and node.attr in METHOD_VALUE_FNS:
+            return f"(lambda (__x) ({METHOD_VALUE_FNS[node.attr]} __x))"
         # 张量属性：<tensor>.dtype / .shape / .ndim / .T → 运行时查询函数
         if node.attr in TENSOR_ATTR_FN:
             return f"({TENSOR_ATTR_FN[node.attr]} {translate_expr(node.value)})"
@@ -3870,7 +3958,9 @@ def translate_expr(node):
             elif isinstance(val, ast.FormattedValue):
                 # {expr} → (format "~s" expr)
                 expr = translate_expr(val.value)
-                parts.append(f"(format \"~a\" {expr})")
+                # CPython 的 f-string 用 str()：None/True/容器都要走 py-str，
+                # 否则 (format "~a") 会露出 #t / #(1 2) / py-none 这类内核表示。
+                parts.append(f"(py-str {expr})")
             else:
                 parts.append('""')
         if len(parts) == 1:
@@ -3975,14 +4065,14 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                         # 元组解构：a, b = expr → (let ((tmp expr)) (set! a (vector-ref tmp 0)) ...)
                         tmp = "__tmp_" + str(si)
                         tmp_val = translate_expr(stmt.value)
-                        # 如果右侧是元组字面量，先转成 vector
+                        # 如果右侧是元组字面量，先转成 tuple
                         if isinstance(stmt.value, ast.Tuple):
                             elems = [translate_expr(e) for e in stmt.value.elts]
-                            tmp_val = f"(vector {' '.join(elems)})"
+                            tmp_val = f"(py-tuple {' '.join(elems)})"
                         binds = []
                         for idx, elt in enumerate(t.elts):
                             if isinstance(elt, ast.Name):
-                                binds.append(f"(set! {mangle_name(elt.id)} (vector-ref {tmp} {idx}))")
+                                binds.append(f"(set! {mangle_name(elt.id)} (py-get {tmp} {idx}))")
                         destructure = f"(let (({tmp} {tmp_val})) {' '.join(binds)})"
                         body_exprs.append(destructure)
                         # 元组解构已处理，跳过后续 set!
@@ -3992,7 +4082,9 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                         d = translate_expr(t.value)
                         k = translate_expr(t.slice)
                         v = translate_expr(stmt.value)
-                        body_exprs.append(f"(dict-set! {d} {k} {v})")
+                        # 下标赋值的容器类型未知 → py-set! 统一分派（dict/list/vector 都对）；
+                        # 原先硬发 dict-set!，对 list/vector 直接报 "not a hashtable"。
+                        body_exprs.append(f"(py-set! {d} {k} {v})")
             if target and val and target != "__destructured__":
                 # 从右侧表达式推断目标变量类型，仅用于辅助代码生成（如 subscript 选择 accessor）
                 inferred = infer_expr_type(stmt.value)
@@ -4033,6 +4125,11 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
             else:
                 body_exprs.append(f"(if {test}\n    (begin {' '.join(then_exprs)}))")
         elif isinstance(stmt, ast.For):
+            if isinstance(stmt.target, (ast.Tuple, ast.List)):
+                # for a, b in ... 交给 emit_for_stmt 统一处理
+                body_exprs.append(emit_for_stmt(stmt))
+                si += 1
+                continue
             target = mangle_name(stmt.target.id) if isinstance(stmt.target, ast.Name) else "i"
             if isinstance(stmt.iter, ast.Call) and hasattr(stmt.iter.func, 'id') and stmt.iter.func.id == 'range':
                 rargs = stmt.iter.args
@@ -4114,8 +4211,17 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
         elif isinstance(stmt, ast.Pass):
             body_exprs.append("(void)")
         elif isinstance(stmt, ast.Delete):
-            # del a[i] → (dict-set! / vector-set! ...) 暂不支持
-            body_exprs.append(f";; del: {ast.dump(stmt)}")
+            # del d[k] / del a[i] → py-del! 统一分派（dict/list 都对）；del 变量暂不支持
+            parts = []
+            for t in stmt.targets:
+                if isinstance(t, ast.Subscript):
+                    parts.append("(py-del! %s %s)" % (translate_expr(t.value),
+                                                      translate_expr(t.slice)))
+                elif isinstance(t, ast.Name):
+                    parts.append("(set! %s #f)" % mangle_name(t.id))
+                else:
+                    parts.append(f";; del: {ast.dump(t)}")
+            body_exprs.append("(begin %s)" % " ".join(parts) if parts else "(void)")
         else:
             body_exprs.append(f";; {type(stmt).__name__}: {ast.dump(stmt)}")
         si += 1

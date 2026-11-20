@@ -12,11 +12,26 @@
 
 NONE = "\x00N"
 
+# 当前 token 行号槽（1 元素 int 数组）
+# 用数组而非普通变量：函数内 `x = ...` 会被翻译成局部 let 绑定，遮蔽模块级全局，
+# 于是「在函数里给全局赋值」根本不生效。数组元素变异没有这个问题。
+LINE_P = make_int_array(1)
+
 # ========== 节点构造 ==========
+
+def cline() -> int:
+    """当前解析位置所在行号（1 起）"""
+    return int_array_ref(LINE_P, 0)
+
+def cline_set(v: int) -> int:
+    int_array_set(LINE_P, 0, v)
+    return 0
 
 def an(t: str):
     d = make_dict()
     dict_set(d, "_t", t)
+    # lineno 供代码生成输出 `;; file:line` 注释（与 CPython ast 的 lineno 对应）
+    dict_set(d, "lineno", cline())
     return d
 
 def af(d, k: str, v) -> int:
@@ -52,6 +67,9 @@ def tget(toks, p, k: int):
         i = n - 1
     if i < 0:
         i = 0
+    if k == 0:
+        # 「当前 token」被看一眼就刷新解析位置行号（lookahead 不算）
+        int_array_set(LINE_P, 0, tok_line(py_list_ref(toks, i)))
     return py_list_ref(toks, i)
 
 def tty(toks, p) -> str:
@@ -1097,6 +1115,97 @@ def is_testlist_end(toks, p) -> bool:
         return True
     return False
 
+# ========== extern fn 声明（FFI 绑定，非 Python 语法） ==========
+#   extern fn <名字>(<参数: 类型>) -> <返回类型> from "<库名>"
+# 旧翻译器（static_translate.py:parse_extern_functions）先用正则把这类行剥掉，
+# 再交给 CPython ast。自举前端在 token 层做同样的事：整条声明被跳过（不产生
+# 语句，行号不变），声明本身记进 EXTERN_DECLS，供 emit_lib 生成
+# `load-shared-object` + `foreign-procedure`（对应 generate_extern_ffi）。
+EXTERN_DECLS = make_dict()
+dict_set(EXTERN_DECLS, "_n", 0)
+
+def extern_count() -> int:
+    return dict_get(EXTERN_DECLS, "_n")
+
+def extern_get(i: int):
+    return dict_get(EXTERN_DECLS, "d" + string_of_int(i))
+
+def extern_has(name: str) -> bool:
+    """name 是 extern fn 声明过的外部函数吗（命中则调用不加 static_ 前缀）"""
+    return dict_get(EXTERN_DECLS, ":" + name) != None
+
+def extern_add(name: str, ret: str, lib: str, params) -> int:
+    n: int = dict_get(EXTERN_DECLS, "_n")
+    d = make_dict()
+    dict_set(d, "name", name)
+    dict_set(d, "ret", ret)
+    dict_set(d, "lib", lib)
+    dict_set(d, "params", params)
+    dict_set(EXTERN_DECLS, "d" + string_of_int(n), d)
+    dict_set(EXTERN_DECLS, ":" + name, n)
+    dict_set(EXTERN_DECLS, "_n", n + 1)
+    return 0
+
+def is_extern_at(toks, p) -> bool:
+    """当前位置是 extern fn 声明吗（extern 不是 Python 关键字，token 类型是 NAME）"""
+    return tv_at(toks, p, 0) == "extern" and tv_at(toks, p, 1) == "fn"
+
+# 跳过一段类型标注（NAME 或 list[...] 之类的泛型下标），返回归一化后的类型名
+def skip_ffi_type(toks, p) -> str:
+    t: str = tv(toks, p)
+    tadv(p)
+    if tty(toks, p) == "OP" and tv(toks, p) == "[":
+        depth: int = 0
+        while tty(toks, p) != "ENDMARKER":
+            if is_op(toks, p, "["):
+                depth = depth + 1
+            elif is_op(toks, p, "]"):
+                depth = depth - 1
+                tadv(p)
+                if depth == 0:
+                    return "list"
+                continue
+            tadv(p)
+        return "list"
+    return t
+
+def parse_extern_decl(toks, p):
+    tadv(p)  # extern
+    tadv(p)  # fn
+    name: str = tv(toks, p)
+    tadv(p)
+    want_op(toks, p, "(")
+    params = py_list()
+    while tty(toks, p) != "ENDMARKER" and not is_op(toks, p, ")"):
+        pn: str = tv(toks, p)
+        tadv(p)
+        pt: str = "float"  # 无标注时的历史默认值（与 parse_extern_functions 一致）
+        if is_op(toks, p, ":"):
+            tadv(p)
+            pt = skip_ffi_type(toks, p)
+        pd = make_dict()
+        dict_set(pd, "n", pn)
+        dict_set(pd, "t", pt)
+        params = py_list_append(params, pd)
+        if is_op(toks, p, ","):
+            tadv(p)
+            continue
+        break
+    want_op(toks, p, ")")
+    ret: str = "void"
+    if is_op(toks, p, "->"):
+        tadv(p)
+        ret = skip_ffi_type(toks, p)
+    lib: str = ""
+    if tv(toks, p) == "from":
+        tadv(p)
+        lib = tv(toks, p)  # STRING token 的值已去引号
+        tadv(p)
+    extern_add(name, ret, lib, params)
+    if tty(toks, p) == "NEWLINE":
+        tadv(p)
+    return py_list()
+
 # ========== 语句 ==========
 
 def parse_module(toks):
@@ -1116,6 +1225,8 @@ def parse_module(toks):
 def parse_stmt(toks, p):
     if is_op(toks, p, "@"):
         return parse_decorated(toks, p)
+    if is_extern_at(toks, p):
+        return parse_extern_decl(toks, p)
     t = tty(toks, p)
     v = tv(toks, p)
     out = py_list()

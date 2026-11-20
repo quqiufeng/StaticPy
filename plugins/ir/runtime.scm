@@ -9,9 +9,28 @@
           ((eq? (record-type-name rtd) tname) #t)
           (else (loop (record-type-parent rtd))))))
 
+;; 内置类型的 isinstance：isinstance(x, str) -> (ir-tag? x 'str)
+;; 早先 ir-tag? 只认记录/标签向量，对 str/int/float 一律返回 #f，
+;; 于是 isinstance(any, str) 恒假——调用方（含自举版 emit_lib）会静默走错分支。
+(define (ir-builtin-isa? node t)
+  (cond ((eq? t 'object) #t)
+        ((eq? t 'str) (string? node))
+        ((eq? t 'bool) (boolean? node))
+        ((eq? t 'int) (and (integer? node) (not (boolean? node))))
+        ((eq? t 'float) (flonum? node))
+        ((eq? t 'number) (number? node))
+        ((eq? t 'list) (vector? node))
+        ((eq? t 'tuple) (vector? node))
+        ((eq? t 'dict) (hashtable? node))
+        ((eq? t 'set) (hashtable? node))
+        ((eq? t 'none) (or (py-none? node) (null? node)))
+        ((eq? t 'bytes) (string? node))
+        (else 'unknown)))
+
 (define (ir-tag? node tag)
   (let ((t (if (string? tag) (string->symbol tag) tag)))
     (cond
+     ((not (eq? (ir-builtin-isa? node t) 'unknown)) (ir-builtin-isa? node t))
      ((record? node) (ir-record-isa? node t))
      ((vector? node)
       (and (> (vector-length node) 0)

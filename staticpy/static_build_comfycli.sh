@@ -143,10 +143,24 @@ else
     # --- Step 2: Chez AOT -------------------------------------------------
     echo ">>> Step 2: Compile (Chez AOT)"
     MERGED_SS="$CACHE_DIR/${STEM_BASE}_${BUILD_HASH}.ss"
+    # 插件 runtime（plugin.json 的 "runtime"）：按 Kernel 的拓扑顺序拼在 prelude 之后
+    PLUGIN_SCM_LIST=""
+    if [ -n "${STATICPY_PLUGINS:-}" ]; then
+        PLUGIN_SCM_LIST=$(cd "$PROJECT_DIR" && "$PYTHON" - "$STATICPY_PLUGINS" <<'PYEOF'
+import sys
+from kernel.plugin import Kernel
+k = Kernel.discover()
+k.resolve([n for n in sys.argv[1].split(',') if n])
+for name, path in k.runtime_files():
+    print(path)
+PYEOF
+)
+    fi
     {
         cat static_prelude.scm; echo
         cat "$STDLIB"; echo
         if [ -n "$FFI_SCM" ] && [ -f "$FFI_SCM" ]; then cat "$FFI_SCM"; echo; fi
+        for pscm in $PLUGIN_SCM_LIST; do cat "$pscm"; echo; done
         cat "$CODE_SS"
     } > "$MERGED_SS"
 

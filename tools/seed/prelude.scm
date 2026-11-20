@@ -51,6 +51,163 @@
 (define py-none (string->symbol "\x1;py-none"))
 (define (py-none? x) (eq? x py-none))
 
+;; ====== Python tuple ======
+;; list 用 vector（repr 为 [..]），tuple 用记录类型包一层 vector，
+;; 这样 print((1, 2)) 才是 (1, 2) 而不是 [1, 2]，且与 list 的类型判定互不混淆。
+(define-record-type py-tuple
+  (fields vs)
+  (nongenerative py-tuple-1))
+
+(define (py-tuple . elems)
+  "构造 tuple：元素可为任意对象"
+  (make-py-tuple (list->vector elems)))
+
+(define (py-tuple-len t) (vector-length (py-tuple-vs t)))
+(define (py-tuple-items t) (vector->list (py-tuple-vs t)))
+(define (py-tuple-ref t k)
+  (let ((i (py-idx (py-tuple-len t) k)))
+    (if (or (not i) (>= i (py-tuple-len t))) py-none (vector-ref (py-tuple-vs t) i))))
+
+;; ====== 可增长 py-list（list() 动态构建，append 摊销 O(1)） ======
+;; 静态字面量 [1,2,3] 仍是 vector（不可变、repr 同 list）；
+;; list() / append 链得到 py-glist（后备 vector + 有效长度，翻倍扩容）。
+;; 两者在通用入口 py-get/py-len/py-items/py-repr 里统一分派。
+(define-record-type py-glist
+  (fields (mutable vs) (mutable n))
+  (nongenerative py-glist-1))
+
+(define (py-glist-new . cap)
+  (make-py-glist (make-vector (if (null? cap) 8 (max 8 (car cap))) py-none) 0))
+
+(define (py-glist-len g) (py-glist-n g))
+
+(define (py-glist-ref g k)
+  (let ((j (py-idx (py-glist-n g) k)))
+    (if (and j (< j (py-glist-n g))) (vector-ref (py-glist-vs g) j) py-none)))
+
+(define (py-glist-set! g k v)
+  (let ((j (py-idx (py-glist-n g) k)))
+    (if (and j (< j (py-glist-n g))) (begin (vector-set! (py-glist-vs g) j v) v)
+        (error 'py-set! "list index out of range"))))
+
+(define (py-glist-push! g v)
+  "摊还 O(1) 追加：容量满则翻倍拷贝"
+  (let* ((vs (py-glist-vs g)) (n (py-glist-n g)) (cap (vector-length vs)))
+    (if (fx>= n cap)
+        (let* ((nv (make-vector (fx* (if (fx< cap 8) 8 cap) 2) py-none)))
+          (do ((i 0 (fx+ i 1))) ((fx>= i n)) (vector-set! nv i (vector-ref vs i)))
+          (vector-set! nv n v)
+          (py-glist-vs-set! g nv)
+          (py-glist-n-set! g (fx+ n 1)))
+        (begin (vector-set! vs n v)
+               (py-glist-n-set! g (fx+ n 1))))
+    g))
+
+(define (py-glist->vector g)
+  "导出为普通 vector（长度 = 有效长度）"
+  (let* ((n (py-glist-n g)) (out (make-vector n py-none)) (vs (py-glist-vs g)))
+    (do ((i 0 (fx+ i 1))) ((fx>= i n)) (vector-set! out i (vector-ref vs i)))
+    out))
+
+(define (py-glist-copy g)
+  (to-glist (py-glist->vector g)))
+
+(define (py-glist-pop! g . k)
+  (let ((n (py-glist-n g)))
+    (if (and (pair? k) (number? (car k)))
+        (let ((i (py-idx n (car k))))
+          (if (or (not i) (>= i n)) (error 'pop "pop index out of range")
+              (let ((v (vector-ref (py-glist-vs g) i)))
+                (do ((j i (fx+ j 1))) ((fx>= j (fx- n 1)))
+                  (vector-set! (py-glist-vs g) j (vector-ref (py-glist-vs g) (fx+ j 1))))
+                (vector-set! (py-glist-vs g) (fx- n 1) py-none)
+                (py-glist-n-set! g (fx- n 1))
+                v)))
+        (if (fx= n 0) (error 'pop "pop from empty list")
+            (let ((v (vector-ref (py-glist-vs g) (fx- n 1))))
+              (vector-set! (py-glist-vs g) (fx- n 1) py-none)
+              (py-glist-n-set! g (fx- n 1))
+              v)))))
+
+(define (py-glist-insert! g i v)
+  (let* ((n (py-glist-n g)) (j (if (fx< i 0) (max 0 (fx+ n i)) (if (fx> i n) n i))))
+    (py-glist-push! g v)                      ; 先扩容 + 占位
+    (do ((k (fx- (py-glist-n g) 1) (fx- k 1))) ((fx<= k j))
+      (vector-set! (py-glist-vs g) k (vector-ref (py-glist-vs g) (fx- k 1))))
+    (vector-set! (py-glist-vs g) j v)
+    g))
+
+(define (py-glist-extend! g o)
+  (for-each (lambda (v) (py-glist-push! g v)) (py-items o))
+  g)
+
+(define (py-glist-sort! g . args)
+  (let* ((n (py-glist-n g))
+         (sorted (list-sort (or (and (pair? args) (car args)) <)
+                            (vector->list (py-glist->vector g)))))
+    (let ((i 0))
+      (for-each (lambda (v) (vector-set! (py-glist-vs g) i v) (set! i (+ i 1))) sorted))
+    g))
+
+(define (py-glist-reverse! g)
+  (let ((vs (py-glist-vs g)) (n (py-glist-n g)))
+    (do ((i 0 (fx+ i 1))) ((fx>= i (fxsra n 1)))
+      (let ((a (vector-ref vs i)) (b (vector-ref vs (fx- n 1 i))))
+        (vector-set! vs i b) (vector-set! vs (fx- n 1 i) a)))
+    g))
+
+(define (py-glist-index g v)
+  (let loop ((i 0))
+    (cond ((fx>= i (py-glist-n g)) -1)
+          ((equal? (vector-ref (py-glist-vs g) i) v) i)
+          (else (loop (fx+ i 1))))))
+
+(define (py-glist-count g v)
+  (let loop ((i 0) (c 0))
+    (if (fx>= i (py-glist-n g)) c
+        (loop (fx+ i 1) (if (equal? (vector-ref (py-glist-vs g) i) v) (fx+ c 1) c)))))
+
+(define (py-glist-remove! g v)
+  (let loop ((i 0))
+    (cond ((fx>= i (py-glist-n g)) py-none)
+          ((equal? (vector-ref (py-glist-vs g) i) v)
+           (do ((j i (fx+ j 1))) ((fx>= j (fx- (py-glist-n g) 1)))
+             (vector-set! (py-glist-vs g) j (vector-ref (py-glist-vs g) (fx+ j 1))))
+           (py-glist-n-set! g (fx- (py-glist-n g) 1))
+           py-none)
+          (else (loop (fx+ i 1))))))
+
+(define (py-glist-seq g)
+  "内部遍历用：返回有效元素 list（只读）"
+  (let loop ((i (fx- (py-glist-n g) 1)) (acc '()))
+    (if (fx< i 0) acc (loop (fx- i 1) (cons (vector-ref (py-glist-vs g) i) acc)))))
+
+(define (py-seq-len x)
+  "for 循环快路：vector / py-glist / 其余走 py-len"
+  (cond ((vector? x) (vector-length x))
+        ((py-glist? x) (py-glist-n x))
+        (else (py-len x))))
+
+(define (py-seq-ref x i)
+  "for 循环快路：按容器类型取第 i 个元素"
+  (cond ((vector? x)
+         (if (py-tagged-array? x) (float-array-ref (py-tagged-array-data x) i) (vector-ref x i)))
+        ((py-glist? x) (py-glist-ref x i))
+        (else (py-get x i))))
+
+(define (py-range->list . args)
+  "range(...) 在表达式位置（for 头由翻译器化成 do 循环）：返回 py-glist"
+  (let* ((n (length args))
+         (start (if (>= n 2) (car args) 0))
+         (stop (cond ((>= n 2) (cadr args)) ((= n 1) (car args)) (else 0)))
+         (step (if (>= n 3) (caddr args) 1)))
+    (when (= step 0) (error 'range "range() arg 3 must not be zero"))
+    (let ((g (py-glist-new)))
+      (let loop ((i start))
+        (if (if (> step 0) (< i stop) (> i stop))
+            (begin (py-glist-push! g i) (loop (+ i step)))
+            g)))))
+
 ;; ====== 真值判定（CPython 语义） ======
 ;; Scheme 里只有 #f 是假，而 CPython 里 None / 0 / "" / [] / {} 都是假。
 ;; 最关键的是 None：它是真实对象，`(not py-none)` 在 Scheme 下是 #f，
@@ -60,6 +217,8 @@
         ((eq? x #f) #f)
         ((number? x) (not (zero? x)))
         ((string? x) (> (string-length x) 0))
+        ((py-tuple? x) (> (py-tuple-len x) 0))
+        ((py-glist? x) (> (py-glist-n x) 0))
         ((vector? x) (> (vector-length x) 0))
         ((pair? x) #t)
         ((null? x) #f)
@@ -70,8 +229,16 @@
 ;; 翻译器只发 `(py-contains? x y)`，语义交给运行时：
 ;; dict 看键、str 看子串、vector(py-list) 与 Scheme list 逐元素 equal?。
 (define (py-contains? needle hay)
-  (cond ((hashtable? hay) (dict-contains? hay needle))
+  (cond ((py-array? hay) (py-array-has-h hay needle))
+        ((hashtable? hay) (dict-contains? hay needle))
         ((string? hay) (str-contains? hay needle))
+        ((py-glist? hay)
+         (> (py-glist-count hay needle) 0))
+        ((py-tuple? hay)
+         (let loop ((rest (py-tuple-items hay)))
+           (cond ((null? rest) #f)
+                 ((equal? (car rest) needle) #t)
+                 (else (loop (cdr rest))))))
         ((vector? hay)
          (let loop ((i 0))
            (cond ((>= i (vector-length hay)) #f)
@@ -96,28 +263,34 @@
 
 (define (dict-keys d)
   "按插入顺序返回键列表"
-  (reverse (py-dict-order d)))
+  (if (py-array? d) (py-m-keys d) (reverse (py-dict-order d))))
 
 (define (dict-values d)
-  (map (lambda (k) (hashtable-ref d k #f)) (dict-keys d)))
+  (if (py-array? d) (py-m-values d)
+      (map (lambda (k) (hashtable-ref d k #f)) (dict-keys d))))
 
 (define (dict-items d)
-  (map (lambda (k) (cons k (hashtable-ref d k #f))) (dict-keys d)))
+  (if (py-array? d) (py-m-items d)
+      (map (lambda (k) (cons k (hashtable-ref d k #f))) (dict-keys d))))
 
 (define (dict-length d)
-  (length (py-dict-order d)))
+  (if (py-array? d) (py-array-len-h d) (length (py-dict-order d))))
 
 (define (dict-get d key)
   "读取字典 d[key]；缺失 → None"
-  (if (hashtable-contains? d key)
-      (hashtable-ref d key #f)
-      py-none))
+  (if (py-array? d)
+      (py-array-get-h d key)
+      (if (hashtable-contains? d key)
+          (hashtable-ref d key #f)
+          py-none)))
 
 (define (dict-get-default d key default)
   "d.get(key, default)"
-  (if (hashtable-contains? d key)
-      (hashtable-ref d key #f)
-      default))
+  (if (py-array? d)
+      (py-array-get-def-h d key default)
+      (if (hashtable-contains? d key)
+          (hashtable-ref d key #f)
+          default)))
 
 (define (dict-get-or-empty d key)
   "读取字典 d[key]，返回空字符串代替缺失"
@@ -127,55 +300,70 @@
 
 (define (dict-set! d key val)
   "写入字典 d[key] = val（新键追加到末尾）"
-  (unless (hashtable-contains? d key)
-    (hashtable-set! d py-dict-order-key (cons key (py-dict-order d))))
-  (hashtable-set! d key val)
-  val)
+  (if (py-array? d)
+      (py-array-set-h d key val)
+      (begin
+        (unless (hashtable-contains? d key)
+          (hashtable-set! d py-dict-order-key (cons key (py-dict-order d))))
+        (hashtable-set! d key val)
+        val)))
 
 (define (dict-set-default! d key val)
   "setdefault：键不存在时写入"
-  (if (hashtable-contains? d key)
-      (hashtable-ref d key #f)
-      (dict-set! d key val)))
+  (cond ((py-array? d) (py-m-setdefault d key val))
+        ((hashtable-contains? d key)
+        (hashtable-ref d key #f))
+        (else (dict-set! d key val))))
 
 (define (dict-delete! d key)
   "删除键；存在返回 True"
-  (if (hashtable-contains? d key)
+  (if (py-array? d)
+      (if (py-array-has-h d key) (begin (py-array-del-h d key) #t) #f)
+      (if (hashtable-contains? d key)
       (begin
         (hashtable-set! d py-dict-order-key
                         (let loop ((ks (py-dict-order d)))
                           (cond ((null? ks) '())
                                 ((equal? (car ks) key) (loop (cdr ks)))
                                 (else (cons (car ks) (loop (cdr ks)))))))
-        (hashtable-delete! d key)
-        #t)
-      #f))
+          (hashtable-delete! d key)
+          #t)
+        #f)))
 
 (define (dict-pop d key . default)
-  (if (hashtable-contains? d key)
-      (let ((v (hashtable-ref d key #f)))
-        (dict-delete! d key)
-        v)
-      (if (null? default) py-none (car default))))
+  (if (py-array? d)
+      (apply py-m-pop d (cons key default))
+      (if (hashtable-contains? d key)
+          (let ((v (hashtable-ref d key #f)))
+            (dict-delete! d key)
+            v)
+          (if (null? default) py-none (car default)))))
 
 (define (dict-contains? d key)
   "检查 key 是否在字典中（隐藏键不算）"
-  (and (hashtable? d)
-       (not (eq? key py-dict-order-key))
-       (hashtable-contains? d key)))
+  (if (py-array? d)
+      (py-array-has-h d key)
+      (and (hashtable? d)
+           (not (eq? key py-dict-order-key))
+           (hashtable-contains? d key))))
 
 (define (dict-merge! d other)
   "update：把 other 的键值按序写入 d"
-  (for-each (lambda (k) (dict-set! d k (hashtable-ref other k #f)))
-            (if (hashtable? other) (dict-keys other) '()))
-  d)
+  (if (py-array? d)
+      (apply py-m-update d (list other))
+      (begin
+        (for-each (lambda (k) (dict-set! d k (hashtable-ref other k #f)))
+                  (if (hashtable? other) (dict-keys other) '()))
+        d)))
 
 (define (dict-copy d)
   "浅拷贝字典（保序）"
-  (let ((copy (make-dict)))
-    (for-each (lambda (k) (dict-set! copy k (hashtable-ref d k #f)))
-              (dict-keys d))
-    copy))
+  (if (py-array? d)
+      (py-m-copy d)
+      (let ((copy (make-dict)))
+        (for-each (lambda (k) (dict-set! copy k (hashtable-ref d k #f)))
+                  (dict-keys d))
+        copy)))
 
 ;; ====== 真除法 / 长度 ======
 ;; CPython 的 / 永远返回 float（4/2 → 2.0，1/3 → 0.333…）
@@ -184,7 +372,9 @@
 
 ;; 统一迭代源：dict→键、str→字符、vector/list/tagged-array 原样
 (define (py-iter-seq x)
-  (cond ((hashtable? x) (list->vector (dict-keys x)))
+  (cond ((py-array? x) (py-array-items-h x))
+        ((py-glist? x) (py-glist->vector x))
+        ((hashtable? x) (list->vector (dict-keys x)))
         ((string? x)
          (let* ((n (string-length x)) (v (make-vector n "")))
            (let loop ((i 0))
@@ -202,10 +392,163 @@
         ((list? x) (list->vector x))
         (else (vector))))
 
+;; ====== PyArray 挂载点（plugins/pyarray 载入后填；未载入则退化为旧行为） ======
+;; 泛型访问器：翻译器对"类型未知的下标"发 py-get / py-set! / py-del!，
+;; 语义交给运行时按容器类型分派（PyArray / dict / list / vector）。
+(define py-array-pred    #f)
+(define py-array-get-h   #f)
+(define py-array-get-def-h #f)   ; c[k] 带默认值的热路
+(define py-array-set-h   #f)
+(define py-array-del-h   #f)
+(define py-array-len-h   #f)
+(define py-array-has-h   #f)
+(define py-array-items-h #f)
+
+(define (py-array? x) (and py-array-pred (py-array-pred x)))
+
+;; py-map（PyArray 的 dict）判定：由 plugins/pyarray 注册；未载入则恒假
+(define py-dict-pred #f)
+(define (py-dict? x) (and py-dict-pred (py-dict-pred x)))
+
+(define (py-idx n k)
+  "Python 下标归一：负数从尾部数；越界 → #f"
+  (cond ((not (number? k)) #f)
+        ((< k 0) (let ((j (+ n k))) (and (>= j 0) (truncate j))))
+        ((>= k n) #f)
+        (else (truncate k))))
+
+(define (py-get c k)
+  "c[k]：统一入口（缺失 → None）"
+  (cond ((py-array? c) (py-array-get-h c k))
+        ((hashtable? c) (dict-get c k))
+        ((string? c) (let ((i (py-idx (string-length c) k)))
+                       (if i (string (string-ref c i)) py-none)))
+        ((py-tuple? c) (py-tuple-ref c k))
+        ((py-glist? c) (py-glist-ref c k))
+        ((vector? c) (let ((i (py-idx (vector-length c) k)))
+                       (if i (vector-ref c i) py-none)))
+        (else py-none)))
+
+(define (py-get-default c k d)
+  "c.get(k, d) 语义"
+  (if (py-array? c)
+      (py-array-get-def-h c k d)
+      (cond ((hashtable? c) (dict-get-default c k d))
+            ((py-tuple? c) (let ((v (py-tuple-ref c k))) (if (py-none? v) d v)))
+            ((py-glist? c) (let ((v (py-glist-ref c k))) (if (py-none? v) d v)))
+            ((vector? c) (let ((i (py-idx (vector-length c) k)))
+                           (if i (vector-ref c i) d)))
+            ((string? c) (let ((i (py-idx (string-length c) k)))
+                           (if i (string (string-ref c i)) d)))
+            (else d))))
+
+(define (py-set! c k v)
+  "c[k] = v"
+  (cond ((py-array? c) (py-array-set-h c k v))
+        ((hashtable? c) (dict-set! c k v))
+        ((py-glist? c) (py-glist-set! c k v))
+        ((vector? c)
+         (let ((i (py-idx (vector-length c) k)))
+           (if i (vector-set! c i v)
+               (error 'py-set! "index out of range"))))
+        (else (error 'py-set! "item assignment on non-container"))))
+
+(define (py-del! c k)
+  "del c[k]"
+  (cond ((py-array? c) (py-array-del-h c k))
+        ((hashtable? c) (dict-delete! c k))
+        ((py-glist? c) (py-glist-set! c k py-none))
+        ((and (vector? c) (py-idx (vector-length c) k)) => (lambda (i) (vector-set! c i py-none)))
+        (else py-none)))
+
+;; ====== 容器方法泛型分派（dict / list / PyArray 共用一套名字） ======
+;; 翻译器把 x.get(...) / x.sort() / x.append(...) 等统一发成 py-m-<name>，
+;; 具体语义在这里按接收者类型分派：hashtable（旧 dict）/ PyArray（新）。
+(define (py-m-keys r) (if (py-array? r) (py-array-method-h 'keys r '()) (dict-keys r)))
+(define (py-m-values r) (if (py-array? r) (py-array-method-h 'values r '()) (dict-values r)))
+(define (py-m-items r) (if (py-array? r) (py-array-method-h 'items r '()) (dict-items r)))
+
+(define (py-m-get r k . d)
+  (let ((dflt (if (null? d) py-none (car d))))
+    (cond ((py-array? r) (if (null? d) (py-array-get-h r k) (py-array-get-def-h r k dflt)))
+          ((hashtable? r) (if (null? d) (dict-get r k) (dict-get-default r k dflt)))
+          (else py-none))))
+
+;; 定参快路：`.get(k)` / `.get(k, d)` 不走 rest 列表（每次调用少一次 list 分配 + appl）
+(define (py-m-get2 r k) "x.get(k)：定参快路（语义同 py-m-get）" (py-get r k))
+(define (py-m-get3 r k d) "x.get(k, d)：定参快路（语义同 py-m-get）" (py-get-default r k d))
+
+(define (py-m-pop r . k)
+  (cond ((py-array? r) (py-array-method-h 'pop r k))
+        ((py-glist? r) (apply py-glist-pop! r k))
+        ((hashtable? r) (if (null? k) (error 'pop "dict.pop needs key")
+                            (if (null? (cdr k)) (dict-pop r (car k))
+                                (dict-pop r (car k) (cadr k)))))
+        (else py-none)))
+
+(define (py-m-clear r)
+  (cond ((py-array? r) (py-array-method-h 'clear r '()))
+        ((py-glist? r) (py-glist-n-set! r 0) py-none)
+        (else (begin (dict-clear! r) py-none))))
+
+(define (py-m-setdefault r k . v)
+  (if (py-array? r) (py-array-method-h 'setdefault r (cons k v))
+      (if (dict-contains? r k) (dict-get r k)
+          (let ((dv (if (null? v) py-none (car v)))) (dict-set! r k dv)))))
+
+(define (py-m-update r o)
+  (if (py-array? r) (py-array-method-h 'update r (list o)) (begin (dict-merge! r o) py-none)))
+
+(define (py-m-copy r)
+  (cond ((py-array? r) (py-array-method-h 'copy r '()))
+        ((py-glist? r) (py-glist-copy r))
+        (else (dict-copy r))))
+
+(define (py-m-sort r . args)
+  (cond ((py-array? r) (py-array-method-h 'sort r args))
+        ((py-glist? r)
+         (let ((sorted (list-sort (or (and (pair? args) (car args)) <) (py-glist-seq r)))
+               (vs (py-glist-vs r)))
+           (let loop ((i 0) (rest sorted))
+             (if (null? rest) r
+                 (begin (vector-set! vs i (car rest)) (loop (+ i 1) (cdr rest)))))))
+        (else py-none)))
+(define (py-m-reverse r)
+  (cond ((py-array? r) (py-array-method-h 'reverse r '()))
+        ((py-glist? r) (py-glist-reverse! r))
+        (else py-none)))
+(define (py-m-append r v)
+  (if (py-array? r) (py-array-append-h r v) (py-list-append r v)))
+
+(define (py-m-extend r o)
+  (cond ((py-array? r) (py-array-method-h 'extend r (list o)))
+        ((py-glist? r) (py-glist-extend! r o))
+        (else py-none)))
+(define (py-m-insert r i v)
+  (cond ((py-array? r) (py-array-method-h 'insert r (list i v)))
+        ((py-glist? r) (py-glist-insert! r i v))
+        (else py-none)))
+(define (py-m-remove r v)
+  (cond ((py-array? r) (py-array-method-h 'remove r (list v)))
+        ((py-glist? r) (py-glist-remove! r v))
+        (else py-none)))
+
+(define (py-m-index r v)
+  (cond ((py-array? r) (py-array-method-h 'index r (list v)))
+        ((py-glist? r) (py-glist-index r v))
+        (else -1)))
+(define (py-m-count r v)
+  (cond ((py-array? r) (py-array-method-h 'count r (list v)))
+        ((py-glist? r) (py-glist-count r v))
+        (else 0)))
+
 (define (py-len x)
   "CPython len()：按实际类型分派"
-  (cond ((hashtable? x) (dict-length x))
+  (cond ((py-array? x) (py-array-len-h x))
+        ((hashtable? x) (dict-length x))
         ((string? x) (string-length x))
+        ((py-tuple? x) (py-tuple-len x))
+        ((py-glist? x) (py-glist-n x))
         ((vector? x) (vector-length x))
         ((tagged-array? x) (tagged-array-len x))
         ((list? x) (length x))
@@ -965,6 +1308,12 @@
       (string (integer->char n))
       ""))
 
+;; 单字符字符串 -> 码点（integer_to_char 的逆；空串返回 -1）
+(define (char_code c)
+  (if (and (string? c) (> (string-length c) 0))
+      (char->integer (string-ref c 0))
+      -1))
+
 ;; formats a float to fixed decimal places
 (define (format_float f digits)
   (format "~,vf" digits (inexact f)))
@@ -996,11 +1345,13 @@
 (define (list_length v)
   (cond ((string? v) (string-length v))
         ((vector? v) (vector-length v))
+        ((py-glist? v) (py-glist-n v))
         (else (length v))))
 
 (define (list_ref v i)
   (cond ((string? v) (string-ref v i))
         ((vector? v) (vector-ref v i))
+        ((py-glist? v) (py-glist-ref v i))
         (else (list-ref v i))))
 
 (define (vec_ref v i)
@@ -1036,9 +1387,21 @@
                              (vector-ref src (+ start i))
                              (float-array-ref src (+ start i)))))))
 
+(define (py-str-ref s i)
+  "s[i]：负下标从尾部数，越界 → None（与 list 下标一致）"
+  (let ((j (py-idx (string-length s) i)))
+    (if j (string (string-ref s j)) py-none)))
+
 (define (slice-string s start end)
-  "字符串切片 [start, end)"
-  (substring s start end))
+  "字符串切片 [start, end)；按 Python 规则折算负下标并截断到 [0, len]"
+  (let* ((n (string-length s))
+         (a (if (< start 0) (+ n start) start))
+         (b (if (< end 0) (+ n end) end))
+         (a (if (< a 0) 0 a))
+         (b (if (> b n) n b))
+         (a (if (> a n) n a))
+         (b (if (< b 0) 0 b)))
+    (if (fx>= a b) "" (substring s a b))))
 
 ;; ====== Python 风格 repr（与 CPython 逐字符对齐） ======
 ;; print() 输出对齐 CPython：字符串单引号、列表 [..]、dict {...}、
@@ -1148,12 +1511,37 @@
           (else (loop (fx+ i 1))))))
 
 ;; repr(任意值)
+(define (py-str x)
+  "str(x)：字符串原样返回，其余用 repr"
+  (if (string? x) x (py-repr x)))
+
 (define (py-repr x)
   (cond ((string? x) (py-str-repr x))
         ((boolean? x) (if x "True" "False"))
         ((py-none? x) "None")
         ((and (number? x) (inexact? x)) (py-float-repr x))
         ((number? x) (number->string x))
+        ((py-dict? x)
+         (string-append "{"
+                        (string-join
+                         (map (lambda (k)
+                                (string-append (py-repr k) ": " (py-repr (py-array-get-h x k))))
+                              (py-m-keys x))
+                         ", ")
+                        "}"))
+        ((py-array? x)
+         (string-append "["
+                        (string-join (map py-repr (vector->list (py-array-items-h x))) ", ")
+                        "]"))
+        ((py-tuple? x)
+         (let ((items (py-tuple-items x)))
+           (string-append "("
+                          (if (null? items)
+                              ""
+                              (string-append
+                               (string-join (map py-repr items) ", ")
+                               (if (null? (cdr items)) "," "")))
+                          ")")))
         ((hashtable? x)
          (string-append "{"
                         (string-join
@@ -1164,6 +1552,7 @@
                          ", ")
                         "}"))
         ((list? x) (string-append "[" (string-join (map py-repr x) ", ") "]"))
+        ((py-glist? x) (string-append "[" (string-join (map py-repr (py-glist-seq x)) ", ") "]"))
         ((vector? x) (string-append "[" (string-join (map py-repr (vector->list x)) ", ") "]"))
         ((null? x) "None")
         (else (format "~a" x))))
@@ -1234,28 +1623,87 @@
 ;; ====== 通用 Pythonic 列表（ heterogeneous vector/list ） ======
 
 (define (py-list . elems)
-  "通用列表：可存放任意对象，对应 Python list"
+  "通用列表：可存放任意对象，对应 Python list（vector 表示；
+append/insert 首次触发升级为可增长 py-glist）"
   (list->vector elems))
 
+(define (vector->glist-buf v)
+  "vector → (容量 2n+8, 有效长度 n) 的 py-glist：之后 append 摊还 O(1)"
+  (let* ((n (vector-length v))
+         (vs (make-vector (max 8 (* 2 n)) py-none)))
+    (do ((i 0 (fx+ i 1))) ((fx>= i n)) (vector-set! vs i (vector-ref v i)))
+    (make-py-glist vs n)))
+
+(define (to-glist x)
+  "把 list 值（vector / py-glist）转成可增长 py-glist（vector 只拷贝一次）"
+  (cond ((py-glist? x) x)
+        ((vector? x) (vector->glist-buf x))
+        ((py-array? x) (vector->glist-buf (as_list x)))
+        (else (py-glist-new))))
+
 (define (py-list-append lst val)
-  "在通用列表末尾追加元素，返回新列表"
-  (list->vector (append (vector->list lst) (list val))))
+  "在通用列表末尾追加元素（py-glist 原地摊还 O(1)，vector 首次升级拷贝）"
+  (cond ((py-array? lst) (py-array-append-h lst val))
+        ((py-glist? lst) (py-glist-push! lst val))
+        (else (py-glist-push! (to-glist lst) val))))
 
 (define (py-list-concat a b)
   "列表拼接（对应 python list + list），返回新列表"
-  (list->vector (append (vector->list a) (vector->list b))))
+  (if (or (py-glist? a) (py-glist? b))
+      (let ((g (py-glist-copy (to-glist a))))
+        (py-glist-extend! g b)
+        g)
+      (if (or (py-array? a) (py-array? b))
+          (py-array-concat-h a b)
+          (list->vector (append (py-items a) (py-items b))))))
 
 (define (py-list-ref lst i)
-  "读取通用列表第 i 个元素"
-  (vector-ref lst i))
+  "读取通用列表第 i 个元素（负下标按 Python 规则折算，越界 → None）"
+  (cond ((py-array? lst) (py-array-get-h lst i))
+        ((py-glist? lst) (py-glist-ref lst i))
+        ;; Scheme 原生 list（如 (argv) 的返回值）也要能按 Python 下标取
+        ((list? lst) (let ((j (py-idx (length lst) i)))
+                       (if j (list-ref lst j) py-none)))
+        (else (let ((j (py-idx (vector-length lst) i)))
+                (if j (vector-ref lst j) py-none)))))
 
 (define (py-list-length lst)
   "通用列表长度"
-  (vector-length lst))
+  (cond ((py-array? lst) (py-array-len-h lst))
+        ((py-glist? lst) (py-glist-n lst))
+        ((list? lst) (length lst))
+        (else (vector-length lst))))
 
 (define (list->py-list lst)
   "把 Scheme list 转为通用列表"
   (list->vector lst))
+
+;; ====== list() / dict() 构造器（plugins/pyarray 载入后覆盖成 C 版） ======
+(define (new_list . args)
+  "list()：vector 表示（append 首次触发升级为 py-glist，之后摊还 O(1)）；
+np 插件可覆盖成 PyArray 版"
+  (list->vector args))
+
+(define (new_dict . kvs)
+  "dict()：未挂 PyArray 时退化为保序 hashtable"
+  (let ((d (make-dict)))
+    (if (and (pair? kvs) (hashtable? (car kvs)))
+        (for-each (lambda (k) (dict-set! d k (hashtable-ref (car kvs) k #f)))
+                  (dict-keys (car kvs))))
+    d))
+
+(define (as_list x)
+  "list(x)：vector/list/string/py-map 键 → 通用列表"
+  (cond ((py-glist? x) x)
+        ((or (py-array? x) (vector? x)) x)
+        ((string? x) (list->vector (map (lambda (c) (string c)) (string->list x))))
+        ((list? x) (list->vector x))
+        ((hashtable? x) (list->vector (dict-keys x)))
+        (else (vector))))
+
+(define (as_dict x)
+  "dict(x)：hashtable 原样，其余建空表"
+  (if (hashtable? x) x (make-dict)))
 
 ;; ====== 兼容 py-list 的 append 方法调用 ======
 (define (py-list-append-mut! lst val)
@@ -1299,7 +1747,9 @@
 (define (py-iter->list x)
   "把 Python 可迭代对象归一成 Scheme list：py-list/vector、str、list、pair、
    tagged array(#(ptr n))、单值兜底"
-  (cond ((py-tagged-array? x) (py-tagged->list x))
+  (cond ((py-tuple? x) (py-tuple-items x))
+        ((py-glist? x) (py-glist-seq x))
+        ((py-tagged-array? x) (py-tagged->list x))
         ((vector? x) (vector->list x))
         ((string? x) (string->list x))
         ((list? x) x)
@@ -1307,20 +1757,101 @@
         ((pair? x) (list x))
         (else (list x))))
 
+;; ====== Python 内建：sum / min / max / sorted / enumerate / zip / any / all ======
+;; 元素级迭代源：把任意 Python 可迭代对象摊成 Scheme list（逐元素，与 CPython 迭代一致）
+(define (py-items x)
+  (cond ((py-array? x) (vector->list (py-array-items-h x)))
+        ((py-tuple? x) (py-tuple-items x))
+        ((py-glist? x) (py-glist-seq x))
+        ((py-tagged-array? x) (py-tagged->list x))
+        ;; Python 迭代 str 得到"1 字符的 str"，不是 Scheme 的 char
+        ((string? x) (map string (string->list x)))
+        ((vector? x) (vector->list x))
+        ((pair? x) (list x))
+        ((null? x) '())
+        (else (list x))))
+
+;; Python 的 < ：数值（int/float 混合）与字符串可比；其余不可比
+(define (py-cmp-lt? a b)
+  (cond ((and (number? a) (number? b)) (< a b))
+        ((and (string? a) (string? b)) (string<? a b))
+        (else #f)))
+
+(define (py-sum seq . start)
+  "sum(iterable[, start])"
+  (let loop ((rest (py-items seq)) (acc (if (null? start) 0 (car start))))
+    (if (null? rest) acc (loop (cdr rest) (+ acc (car rest))))))
+
+(define (py-extremum better? args who)
+  "min/max 共用：单参=可迭代；多参=逐值比较（CPython 语义）"
+  (if (null? args)
+      (error who "expected at least 1 argument, got 0")
+      (let ((src (if (null? (cdr args)) (py-items (car args)) args)))
+        (if (null? src)
+            (error who "arg is an empty sequence")
+            (let loop ((rest (cdr src)) (best (car src)))
+              (cond ((null? rest) best)
+                    ((better? (car rest) best) (loop (cdr rest) (car rest)))
+                    (else (loop (cdr rest) best))))))))
+
+(define (py-min . args) (py-extremum py-cmp-lt? args "min"))
+(define (py-max . args) (py-extremum (lambda (a b) (py-cmp-lt? b a)) args "max"))
+
+(define (py-sorted seq . opts)
+  "sorted(iterable[, key][, reverse])：稳定排序（Chez list-sort 为归并，稳定）"
+  (let* ((keyf (if (pair? opts) (car opts) #f))
+         (rev  (if (and (pair? opts) (pair? (cdr opts))) (py-truthy (cadr opts)) #f))
+         (kfn  (if (procedure? keyf) keyf (lambda (e) e)))
+         (less (lambda (a b) (py-cmp-lt? (kfn a) (kfn b))))
+         (out  (list-sort (if rev (lambda (a b) (less b a)) less) (py-items seq))))
+    (apply py-list out)))
+
+(define (py-enumerate seq . start)
+  "enumerate(iterable[, start]) → [(i, v), ...]（元素为 Python tuple）"
+  (let ((s (if (null? start) 0 (car start))))
+    (let loop ((rest (py-items seq)) (i s) (acc '()))
+      (if (null? rest) (apply py-list (reverse acc))
+          (loop (cdr rest) (+ i 1) (cons (py-tuple i (car rest)) acc))))))
+
+(define (py-zip . seqs)
+  "zip(*iterables) → [(a, b, ...), ...]，长度取最短"
+  (if (null? seqs)
+      (apply py-list '())
+      (let loop ((cols (map py-items seqs)) (acc '()))
+        (if (exists null? cols)
+            (apply py-list (reverse acc))
+            (loop (map cdr cols)
+                  (cons (apply py-tuple (map car cols)) acc))))))
+
+(define (py-any seq)
+  "any(iterable)"
+  (let loop ((rest (py-items seq)))
+    (cond ((null? rest) #f)
+          ((py-truthy (car rest)) #t)
+          (else (loop (cdr rest))))))
+
+(define (py-all seq)
+  "all(iterable)"
+  (let loop ((rest (py-items seq)))
+    (cond ((null? rest) #t)
+          ((py-truthy (car rest)) (loop (cdr rest)))
+          (else #f))))
+
 (define (py-list-slice v start end)
   "py-list/vector 切片 [start,end)；end 为负数时从尾部数。返回 py-list"
-  (let* ((lst (vector->list v))
+  (let* ((lst (if (py-glist? v) (py-glist-seq v) (vector->list v)))
          (n (length lst))
          (hi (if (< end 0) (+ n end) end)))
     (list->vector (if (<= hi start) '()
                       (list-head (list-tail lst start) (- hi start))))))
 
 (define (py-unpack e i)
-  "多目标解包的取第 i 项：vector / 点对 (a . b) / 其它按单值"
-  (cond ((vector? e) (vector-ref e i))
+  "多目标解包的取第 i 项：tuple / vector / 点对 (a . b) / 其它按单值"
+  (cond ((py-tuple? e) (py-tuple-ref e i))
+        ((py-glist? e) (py-glist-ref e i))
+        ((vector? e) (vector-ref e i))
         ((pair? e) (if (= i 0) (car e) (cdr e)))
         (else e)))
-
 ;; ====== IR 节点标签判断（StaticPy 自举编译器用） ======
 ;; Python 的 isinstance(x, EConst) 在 Scheme 里对应 (ir-tag? x 'EConst)
 ;; 因为 EConst(x) 被翻译成 (vector 'EConst x)
@@ -1332,9 +1863,28 @@
           ((eq? (record-type-name rtd) tname) #t)
           (else (loop (record-type-parent rtd))))))
 
+;; 内置类型的 isinstance：isinstance(x, str) -> (ir-tag? x 'str)
+;; 早先 ir-tag? 只认记录/标签向量，对 str/int/float 一律返回 #f，
+;; 于是 isinstance(any, str) 恒假——调用方（含自举版 emit_lib）会静默走错分支。
+(define (ir-builtin-isa? node t)
+  (cond ((eq? t 'object) #t)
+        ((eq? t 'str) (string? node))
+        ((eq? t 'bool) (boolean? node))
+        ((eq? t 'int) (and (integer? node) (not (boolean? node))))
+        ((eq? t 'float) (flonum? node))
+        ((eq? t 'number) (number? node))
+        ((eq? t 'list) (vector? node))
+        ((eq? t 'tuple) (vector? node))
+        ((eq? t 'dict) (hashtable? node))
+        ((eq? t 'set) (hashtable? node))
+        ((eq? t 'none) (or (py-none? node) (null? node)))
+        ((eq? t 'bytes) (string? node))
+        (else 'unknown)))
+
 (define (ir-tag? node tag)
   (let ((t (if (string? tag) (string->symbol tag) tag)))
     (cond
+     ((not (eq? (ir-builtin-isa? node t) 'unknown)) (ir-builtin-isa? node t))
      ((record? node) (ir-record-isa? node t))
      ((vector? node)
       (and (> (vector-length node) 0)

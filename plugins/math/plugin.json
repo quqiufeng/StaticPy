@@ -83,6 +83,7 @@
     "log2",
     "pi",
     "pow",
+    "py_float_repr",
     "py_iter_to_list",
     "py_unpack",
     "round",
