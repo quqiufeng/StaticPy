@@ -36,10 +36,10 @@ bundle.ss ── ③ Chez AOT ──► <stem>.so
 
 ```bash
 # 新入口（推荐）：插件化内核
-python3 -m kernel check app.static.py            # 只翻译成 Scheme（调试）
-python3 -m kernel build app.static.py -o app     # 出 ELF
-python3 -m kernel run   app.static.py -- a b     # 构建并立刻运行
-python3 -m kernel plugins                        # 列出插件与依赖
+staticpy check app.static.py            # 只翻译成 Scheme（调试）
+staticpy build app.static.py -o app     # 出 ELF
+staticpy run   app.static.py -- a b     # 构建并立刻运行
+staticpy plugins                        # 列出插件与依赖
 
 # 兼容入口：等价于「一次性拼上 legacy 全集」的内置插件集
 bash staticpy/static_build_comfycli.sh app.static.py app [extra_ffi.scm]
@@ -92,7 +92,10 @@ C ABI 是**稳定面**：同一份 `lib<lib>.so` 被 StaticPy ELF、Python `ctyp
 | `GLIBC_SYSROOT` | 空 | 目标 glibc sysroot，用于兼容老发行版 |
 | `ORT_DIR` / `ORT_CUDA` | `/data/venv/onnxruntime-linux-x64-gpu-1.26.0` / 0 | ONNX Runtime 目录与 GPU 开关 |
 
-构建依赖：`g++`、`pkg-config`、Chez Scheme；`python3` 仅翻译器需要（只用标准库）。
+构建依赖：`g++`、`pkg-config`、Chez Scheme；**日常构建不需要 CPython**——
+`staticpy` 走自举 ELF 翻译器（`dist/translator`，缺失时按需起爆一次；
+见 [SELFHOST.md](./SELFHOST.md) §7.5）。`python3` 只出现在**起爆那一次**与**验收/差分**
+（拿 CPython / 原库当对照物），不进产物链路。
 
 ## 6. 关键命令速查
 

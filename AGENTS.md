@@ -208,6 +208,10 @@ StaticPy 不是"只能靠宿主"的：它**能自举**。上游 `/opt/ReScheme` 
 # 编译工具链目标（Python → Scheme → ELF）；static_build.sh 是同一实现的转发别名
 bash staticpy/static_build_comfycli.sh input.static.py out_name [ffi.scm]
 
+# 无 CPython 通道：自举翻译器 ELF 出 IR，再走 .scm 输入通道（见 docs/SELFHOST.md §7.5）
+./dist/translator input.static.py > ~/iso_gen/out.code.scm
+bash staticpy/static_build_comfycli.sh ~/iso_gen/out.code.scm out_name
+
 # 库文件（无 main）：加 --lib（或 STATICPY_LIB=1），不生成 (static_main)
 python3 staticpy/static_translate.py --lib imgproc/pil_lib.static.py > lib.ss   # 种子（仅作对照基准）
 

@@ -31,12 +31,15 @@
 ```bash
 cat staticpy/static_translate.static.py staticpy/parse_lib.static.py \
     staticpy/emit_lib.static.py staticpy/emit_dump.static.py > ~/iso_gen/t.static.py
-python3 -m kernel build ~/iso_gen/t.static.py -o translator
+staticpy build ~/iso_gen/t.static.py -o translator
 ./dist/translator imgproc/mirror_gif.static.py | head -20   # 出 Scheme IR
 ```
 
 另外两个 dump 薄壳（`tokenize_dump.static.py` / `parse_dump.static.py`）与上面的 `emit_dump`
 同构，专供**前端形状差分**使用（见 §4）。
+
+> 这个 ELF 翻译器**已经顶替 `static_translate.py`**（连它自己都能编），
+> 无 CPython 的完整构建路径与现状表见 **§7.5**。
 
 ## 3. 种子：`staticpy/static_translate.py` 已冻结
 
@@ -129,6 +132,57 @@ bash selfcheck.sh                        # 一键（其 [4/4] 就是这条比对
 
 环 3（`.sp` 信任根自持）：`staticc.py` 编 `staticc.sp` → `sc1.scm` → 编成 `staticc_self` ELF；
 `staticc_self` 再编 `staticc.sp` → `sc2.scm`；**规范化（去注释 + 去空白）后逐字节一致** → 环 3 成立。
+
+## 7.5 不用 CPython 的构建路径（自举翻译器 ELF，已验证）
+
+环 2 的产物可以**直接替代种子 `static_translate.py`**：四份 `.static.py` concat 成一个程序、
+编译成 ELF，就是生产翻译器；它出 Scheme IR，再把这份 IR 当 `.scm` 喂给兼容入口
+（该入口对 `.scm` 输入跳过翻译阶段），全程不碰 CPython。
+
+```bash
+# ① 起爆（只在翻译器自身改动后才需要 CPython，一次）
+cat staticpy/static_translate.static.py staticpy/parse_lib.static.py \
+    staticpy/emit_lib.static.py staticpy/emit_dump.static.py > ~/iso_gen/t.static.py
+staticpy build ~/iso_gen/t.static.py -o dist/translator   # → dist/translator{,.so}
+
+# ② 之后：翻译 + AOT + 链接，全无 python3
+./dist/translator app.static.py > ~/iso_gen/app.code.scm
+STATICPY_OUTDIR=$PWD/dist bash staticpy/static_build_comfycli.sh ~/iso_gen/app.code.scm app
+./dist/app
+
+# ③ 自举不动点：翻译器编自己 → 新 ELF 再编自己，两份 IR 逐字节相同
+./dist/translator ~/iso_gen/t.static.py > ~/iso_gen/t.code.scm
+STATICPY_OUTDIR=$PWD/dist bash staticpy/static_build_comfycli.sh ~/iso_gen/t.code.scm translator_self
+diff <(./dist/translator_self ~/iso_gen/t.static.py) <(./dist/translator ~/iso_gen/t.static.py)   # 必须空
+```
+
+现状（在 `staticpy/check_translate.sh` 与上述命令下可复现）：
+
+| 环节 | 现在是否要 CPython | 说明 |
+|---|---|---|
+| 翻译 `.static.py` → Scheme IR | **否** | `dist/translator`（自举 ELF）；全量 32 个 `.static.py` 的 `check_translate.sh`：fail=1，唯一例外是 `examples/syntax_plugin/demo.static.py`（它要 `syntax_plugin` 自定义语法，得带插件跑） |
+| IR → AOT → 独立 ELF | **否** | `.scm` 输入跳过翻译；只依赖 `scheme` + `gcc` |
+| 运行产物 | **否** | 独立 ELF，目标机零依赖（见 [DEPLOY.md](./DEPLOY.md)） |
+| 起爆翻译器本身 | 是（**一次**） | 种子 `static_translate.py`；之后靠 ③ 自持，Python 可完全退场 |
+| 插件顺序解析（`STATICPY_PLUGINS`） | 是 | `kernel.plugin` 仍是 Python；不传该变量就不触发 |
+| 验收 / 差分（`check_*`、`semantics_diff`、`difftest`、`coverage`） | 是 | **测量对照**用，按 [AGENTS.md](../AGENTS.md) 约定不进产物链路 |
+
+> 别把"产物不需要 Python"和"仓库工具不需要 Python"混为一谈：**编译链**（①②③）已可无 CPython，
+> **验收链**（用 CPython + Pillow/numpy 当对照物）仍然需要——它是判据，不是依赖。
+
+## 7.6 把 isinstance 的坑记下来（自举时必须裸名）
+
+自举翻译器一度整体崩在 `hashtable-contains?: "\x0;N" is not a hashtable`，根因不在 dict，
+而在**类型标签**——三个必须守住的约定（已修，回归判据是 `check_translate.sh` 全绿）：
+
+1. `isinstance(x, T)` 的 `T` 必须取**裸名**（`'str`/`'int`/`'EConst`），不能走 `translate_expr`：
+   内建类型名在值位置会被换成值包装器（`str → py-str`、`int → ((lambda (x) ...))`），
+   而 prelude 的 `ir-builtin-isa?` 只认 `'str`/`'int`/`'float`…——一旦错位，`isinstance(any, str)`
+   **恒假**，自举版 `emit_lib` 的 `nt()` 就把哨兵字符串当 dict 用，直接崩。
+2. `Tuple` 字面量是 **`py-tuple`**（Python tuple 记录，repr 为 `(..)`），不是 `vector`；
+   `vector` 只给 `EConst(x)` 这类 IR 记录类构造器用。
+3. Python 侧 `py_float_repr` 在 Scheme 预置里叫 **`py-float-repr`**；`scheme_name` 的
+   `RUNTIME_MAP` 漏映射就会在运行时报「variable py_float_repr is not bound」。
 
 ## 8. 文件
 

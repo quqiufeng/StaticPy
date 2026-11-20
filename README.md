@@ -22,12 +22,27 @@ def main() -> int:
 EOF
 
 # 2) 构建并运行（自动推断插件：只有 core/libc）
-python3 -m kernel run app.static.py          # -> hello staticpy
+staticpy run app.static.py          # -> hello staticpy
 
 # 3) 产出的独立 ELF（拷走即可跑，无需 Python）
-python3 -m kernel build app.static.py -o hello
+staticpy build app.static.py -o hello
 ./hello
 ```
+
+**整条构建链都不依赖 CPython**（已自举，见 [docs/SELFHOST.md](docs/SELFHOST.md) §7.5）：
+`dist/translator` 是把 `staticpy/{static_translate,parse_lib,emit_lib,emit_dump}.static.py`
+concat 后编成的 ELF 翻译器，出 IR 就直接喂给兼容入口的 `.scm` 通道：
+
+```bash
+./dist/translator app.static.py > ~/iso_gen/app.code.scm
+bash staticpy/static_build_comfycli.sh ~/iso_gen/app.code.scm app    # 无 CPython
+./app
+```
+
+CPython 只在两处还留着：**起爆翻译器那一次**（`staticpy build … -o dist/translator`，之后
+自持；`dist/` 是构建产物、不入库），以及**验收/差分**（`check_*`、`semantics_diff`、`difftest`、
+`frontend_coverage` 拿 CPython / 原库当**对照物**，不进产物链路）。
+更省事的一条：直接 `staticpy build app.static.py -o app`——没有 python3 时它会自动走上面这条无 CPython 通道。
 
 图像能力（对标 Pillow 的 `imgproc` 样板）：
 
@@ -40,6 +55,7 @@ LD_LIBRARY_PATH=$PWD/cpp/imgproc/build \
 验证（机器判据）：
 
 ```bash
+# 下面两条用 CPython + 原库当「对照物」（测量，不进产物；staticpy 不负责原库自省）
 python3 imgproc/difftest.py -v     # 差分测试：Pillow vs 我们，逐像素 —— 当前 100/100（maxΔ=0）
 python3 imgproc/frontend_coverage.py # 覆盖面：自省核对 —— 当前 100/100
 bash selfcheck.sh                  # 全量自检：构建 + 差分 + 覆盖 + 插件钩子 + 自举比对

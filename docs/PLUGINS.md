@@ -71,7 +71,7 @@ def main() -> int:
 ```
 
 ```bash
-STATICPY_PLUGINS_PATH=/tmp/myplug python3 -m kernel run app.static.py -p core,hello
+STATICPY_PLUGINS_PATH=$PWD/myplug staticpy run app.static.py -p core,hello
 # -> hello plugin
 ```
 
@@ -136,8 +136,9 @@ def register(k):
 
 ```bash
 # 模板自检（selfcheck.sh 的 [0b/4] 会跑这条）
-STATICPY_PLUGINS_PATH=$PWD/examples python3 staticpy/static_translate.py \
-  --plugins syntax_plugin examples/syntax_plugin/demo.static.py
+# 插件只在内核链路生效（自举 ELF 翻译器不带插件）
+STATICPY_PLUGINS_PATH=$PWD/examples staticpy check \
+  examples/syntax_plugin/demo.static.py -p syntax_plugin
 ```
 
 ### ⑤ FFI 翻译分工（谁翻译什么）
@@ -154,14 +155,14 @@ STATICPY_PLUGINS_PATH=$PWD/examples python3 staticpy/static_translate.py \
 ## 4. 命令行
 
 ```bash
-python3 -m kernel plugins                              # 列出插件（含依赖关系）
-python3 -m kernel check app.static.py                  # 只翻译成 Scheme（调试）
-python3 -m kernel build app.static.py -o out           # 出 ELF
-python3 -m kernel run   app.static.py -- arg1 arg2     # 构建并运行（-- 之后是程序参数）
-python3 -m kernel build app.static.py -p core,libc,json  # 显式插件集
-python3 -m kernel build app.static.py --no-auto          # 不按 import 推断
-python3 -m kernel build app.static.py --build-libs       # 顺带跑插件的 C 构建
-python3 -m kernel build app.static.py --emit-ss out.ss   # 保留拼装产物
+staticpy plugins                              # 列出插件（含依赖关系）
+staticpy check app.static.py                  # 只翻译成 Scheme（调试）
+staticpy build app.static.py -o out           # 出 ELF
+staticpy run   app.static.py -- arg1 arg2     # 构建并运行（-- 之后是程序参数）
+staticpy build app.static.py -p core,libc,json  # 显式插件集
+staticpy build app.static.py --no-auto          # 不按 import 推断
+staticpy build app.static.py --build-libs       # 顺带跑插件的 C 构建
+staticpy build app.static.py --emit-ss out.ss   # 保留拼装产物
 ```
 
 插件选择优先级：`-p/--plugin` > `STATICPY_PLUGINS` > 按源码 `import` 自动推断 > `core`。

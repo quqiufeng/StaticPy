@@ -122,8 +122,8 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 校验：
 
 ```bash
-# 种子单独自检（对照基准）
-python3 staticpy/static_translate.py imgproc/mirror_gif.static.py | head
+# 自举翻译器单独出 IR（等价于种子，可逐字节对照）
+staticpy translate imgproc/mirror_gif.static.py | head
 
 # 自举翻译器的四层机器验收（改完必跑，任一红=没完成）
 bash staticpy/check_tokenize.sh  imgproc/pil_lib.static.py   # token 流 vs CPython tokenize

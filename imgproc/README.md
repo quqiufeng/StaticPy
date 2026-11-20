@@ -40,7 +40,12 @@ imgproc/
 bash imgproc/build.sh
 LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/pil convert IN.png OUT.png L
 LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/mirror_gif IN.gif OUT.gif
+```
 
+> 下面三条用 **CPython + 原版 Pillow** 当「对照物」（测量，不进产物）；
+> 构建/翻译一律走 `staticpy` / `bash`，不需要 python3。
+
+```bash
 python3 imgproc/pil_surface.py > imgproc/pil_api.md   # 自省清单
 python3 imgproc/frontend_coverage.py                  # 覆盖 100/100
 python3 imgproc/difftest.py -v                        # 差分 100/100（多数 maxΔ=0）
