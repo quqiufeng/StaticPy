@@ -47,7 +47,6 @@ bash selfcheck.sh                        # 一键（其 [4/4] 就是这条比对
 |---|---|
 | `staticc.py` | 用 StaticPy 子集写的编译器（证明 StaticPy 能编译自身） |
 | `staticc.sp` / `staticc_split.sp` / `staticc.sp.orig` | `.sp` 编译器（信任根）及其拆分/原始版本 |
-| `codegen.sp`、`static_ir.py`、`translate.py`、`translator.ss` | 相关组件（IR、代码生成、翻译） |
 | `run_staticc_py.py` | CPython 兼容垫片（让 `staticc.py` 直接跑） |
 | `tests/` / `examples/` | 自举比对输入与最小示例 |
 

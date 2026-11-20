@@ -16,5 +16,4 @@ diff ~/iso_gen/a.scm ~/iso_gen/b.scm          # 一致 → 自举成立
 | `staticc.py` | 用 StaticPy 子集写的编译器（证明能编译自身） |
 | `staticc.sp` / `staticc_split.sp` / `staticc.sp.orig` | `.sp` 编译器（信任根，~1100 行） |
 | `run_staticc_py.py` | CPython 兼容垫片 |
-| `codegen.sp`、`static_ir.py`、`translate.py`、`translator.ss` | IR / 代码生成 / 翻译组件 |
 | `tests/`、`examples/` | 自举比对输入与最小示例 |
