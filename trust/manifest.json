@@ -2109,6 +2109,24 @@
       "lines": 16
     },
     {
+      "role": "harness",
+      "path": "trust/backend_drill.sh",
+      "why": "判据/证据装置（自动收录：改它=改判据，必须显式重签）",
+      "state": "present",
+      "sha256": "c3722e71ef272054cd990a9959ea6d29a5a3ac5c7aacc150f2b736fdb078a83d",
+      "bytes": 4670,
+      "lines": 114
+    },
+    {
+      "role": "harness",
+      "path": "trust/manifest.py",
+      "why": "判据/证据装置（自动收录：改它=改判据，必须显式重签）",
+      "state": "present",
+      "sha256": "56da85749339d6f5c25d63451390e1cbc1ba066a2fd4c56855752d0a823f95e7",
+      "bytes": 19774,
+      "lines": 430
+    },
+    {
       "role": "lib",
       "path": "libc.so.6",
       "why": "平台 ABI（记录但不判漂移）",

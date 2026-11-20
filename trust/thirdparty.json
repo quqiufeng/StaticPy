@@ -1,0 +1,37 @@
+{
+  "_comment": "第三方源码的上游出处。manifest.json 只锁「我上次记的哈希」= 防本地漂移；这里记「它声称来自哪」，= 防来源传闻。校验方式：文件里的版本串必须与 declared_version 一致（离线可查），哈希与 manifest 一致。",
+  "entries": [
+    {
+      "path": "cpp/thirdparty/stb/stb_image.h",
+      "upstream": "https://github.com/nothings/stb",
+      "declared_version": "v2.28",
+      "version_regex": "stb_image - v[0-9.]+",
+      "local_sha256_16": "38e08c1c5ab8869a",
+      "note": "唯一副本；cpp/annot/stb_image.h 是转发头（#include 此处）"
+    },
+    {
+      "path": "cpp/thirdparty/stb/stb_image_resize.h",
+      "upstream": "https://github.com/nothings/stb",
+      "declared_version": "v0.90",
+      "version_regex": "stb_image_resize - v[0-9.]+",
+      "local_sha256_16": "8b430895b231a541",
+      "note": "唯一副本；cpp/annot/stb_image_resize.h 是转发头"
+    },
+    {
+      "path": "cpp/thirdparty/stb/stb_image_write.h",
+      "upstream": "https://github.com/nothings/stb",
+      "declared_version": "v1.16",
+      "version_regex": "stb_image_write - v[0-9.]+",
+      "local_sha256_16": "683e15c6dfdc2d57",
+      "note": "唯一副本；cpp/annot/stb_image_write.h 是转发头"
+    },
+    {
+      "path": "cpp/thirdparty/stb/stb_truetype.h",
+      "upstream": "https://github.com/nothings/stb",
+      "declared_version": "v1.26",
+      "version_regex": "stb_truetype\\.h - v[0-9.]+",
+      "local_sha256_16": "ecd30b05e0dd4fea",
+      "note": "public domain (MIT 双许可)"
+    }
+  ]
+}

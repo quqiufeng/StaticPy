@@ -7,6 +7,7 @@
   impl        实现（staticpy/*.static.py，环 2 自举编译器）
   tool        .sp 工具链二进制（spark / spboot_self）—— 不可读，只能靠 DDC 兜住
   harness     判定装置（check_*.sh / semantics_diff.py / trust/*）—— 判据本身也要防漂移
+              其中 trust/ 下的脚本由 discover_harness() **自动收全**，不靠人记着登记
   cpp         我们手写的 C/C++（imgproc/ocr/face/…）—— 可审计，但以前没归因
   vendored    随仓库带进来的第三方源码（cpp/thirdparty/stb）—— 可审计，但非我们写
   lib         dlopen/DT_NEEDED 吃进来的系统 .so —— 可审计（有源码），本仓只能锁哈希
@@ -15,6 +16,7 @@
     python3 trust/manifest.py --write            # 重新生成 trust/manifest.json
     python3 trust/manifest.py --verify           # 校验，漂移则退出码 1
     python3 trust/manifest.py --verify-libs      # 只校验系统 .so 的 soname→哈希
+    python3 trust/manifest.py --verify-thirdparty # 第三方源的上游版本串+哈希
     python3 trust/manifest.py --show             # 只看清单
 
 --verify 是给 CI / selfcheck 用的：任何“被信任的文件”被改动，都必须显式重新签清单。
@@ -24,6 +26,7 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -110,6 +113,38 @@ def discover_cpp():
                 out.append((role, rel,
                             "随仓库带入的第三方源码（非我们写）" if role == "vendored"
                             else "我们手写的 C/C++（可审计）"))
+    return out
+
+
+# trust/ 下要自动入清单的判据脚本（证据装置本身也是约定的一部分：
+# 改 backend_drill.sh / fixpoint.sh 就等于改判据，必须让人看见）
+HARNESS_ROOT = "trust"
+HARNESS_EXTS = (".sh", ".py")
+# 不入清单：清单自身（哈希自指无意义）、第三方出处索引（有自己的校验器）、缓存目录
+HARNESS_SKIP = {"manifest.json", "thirdparty.json"}
+
+
+def discover_harness():
+    """枚举 trust/ 下所有 .sh/.py 判据脚本；已在 ENTRIES 里显式登记的不重复收。
+
+    为什么要自动收：显式登记靠人记得住，漏一个就等于留了后门——
+    改掉证据脚本不会有任何报警（这正是缺口 9）。
+    """
+    known = {rel for _role, rel, _why in ENTRIES}
+    out = []
+    base = os.path.join(ROOT, HARNESS_ROOT)
+    if not os.path.isdir(base):
+        return out
+    for dp, dn, fn in os.walk(base):
+        dn[:] = sorted(d for d in dn if d != "__pycache__" and not d.startswith("."))
+        for f in sorted(fn):
+            if not f.endswith(HARNESS_EXTS) or f in HARNESS_SKIP:
+                continue
+            rel = os.path.relpath(os.path.join(dp, f), ROOT)
+            if rel in known:
+                continue
+            out.append(("harness", rel,
+                        "判据/证据装置（自动收录：改它=改判据，必须显式重签）"))
     return out
 
 
@@ -242,6 +277,8 @@ def snapshot(with_libs=True):
         out["entries"].append(_entry(role, rel, why, os.path.join(ROOT, rel)))
     for role, rel, why in discover_cpp():
         out["entries"].append(_entry(role, rel, why, os.path.join(ROOT, rel)))
+    for role, rel, why in discover_harness():
+        out["entries"].append(_entry(role, rel, why, os.path.join(ROOT, rel)))
     if with_libs:
         cmap = _ldconfig_map()
         for role, name, why, policy in discover_libs(cmap):
@@ -252,8 +289,50 @@ def snapshot(with_libs=True):
     return out
 
 
+def verify_thirdparty(root=None):
+    """第三方源码的上游出处校验（离线）：
+    manifest 锁的是「我上次记的哈希」= 防本地漂移；
+    thirdparty.json 记的是「它声称来自哪」= 防来源传闻。
+    判据：文件里声明的版本串必须与 declared_version 一致，哈希与记录一致。
+    """
+    root = root or ROOT
+    idx = os.path.join(root, "trust", "thirdparty.json")
+    if not os.path.exists(idx):
+        print("无 trust/thirdparty.json，跳过")
+        return 0
+    recs = json.load(open(idx, encoding="utf-8"))["entries"]
+    bad, gone = [], []
+    for r in recs:
+        p = os.path.join(root, r["path"])
+        if not os.path.exists(p):
+            gone.append(r["path"])
+            continue
+        data = open(p, "rb").read()
+        sha16 = hashlib.sha256(data).hexdigest()[:16]
+        if sha16 != r["local_sha256_16"]:
+            bad.append((r["path"], "哈希不符", r["local_sha256_16"], sha16))
+            continue
+        m = re.search(r["version_regex"], data.decode("utf-8", "replace"))
+        found = m.group(0).split(" - ")[-1] if m else "?"
+        if found != r["declared_version"]:
+            bad.append((r["path"], "版本串不符", r["declared_version"], found))
+    for x in gone:
+        print("  [缺失] %s（记录在案但文件不在）" % x)
+    if bad:
+        print("第三方出处漂移 %d 项：" % len(bad))
+        for path, why, a, b in bad:
+            print("  [%s] %s  %s vs %s" % (why, path, a, b))
+        print("\n若确实升级了 vendored 副本：同步改 trust/thirdparty.json 的")
+        print("declared_version / local_sha256_16，再跑 trust/manifest.py --write。")
+        return 1
+    print("第三方出处一致（%d 项，版本串与哈希均对）" % len(recs))
+    return 0
+
+
 def main(argv):
     mode = argv[1] if len(argv) > 1 else "--show"
+    if mode == "--verify-thirdparty":
+        return verify_thirdparty()
     snap = snapshot()
 
     if mode == "--write":
