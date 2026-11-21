@@ -21,11 +21,17 @@ KEYWORDS = [
     "while", "with", "yield",
 ]
 
-def in_keywords(word: str) -> bool:
+def build_kwset():
+    d = make_dict()
     for k in KEYWORDS:
-        if k == word:
-            return True
-    return False
+        d[k] = 1
+    return d
+
+# 关键字集合在模块加载时建一次；in_keywords 由 35 次线性 string=? 降到一次哈希查找
+KWSET = build_kwset()
+
+def in_keywords(word: str) -> bool:
+    return word in KWSET
 
 # 多字符运算符，长的放前面（前缀匹配）
 OPS3 = ["**=", "//=", ">>=", "<<=", "..."]
@@ -36,18 +42,19 @@ OPS1 = "+-*/%<>=&|^~(){}[],:.;@"
 # ========== 字符工具 ==========
 
 def sl(s: str, a: int, b: int) -> str:
-    """安全切片：把 [a,b) 夹到字符串范围内（Chez substring 越界会抛异常）"""
-    n: int = str_length(s)
+    """安全切片：负下标夹到 0，越界交给 str_slice 截断（省一次 str_length）"""
     if a < 0:
         a = 0
-    if b > n:
-        b = n
-    if a >= b:
-        return ""
+    if b < 0:
+        b = 0
     return str_slice(s, a, b)
 
 def ch(s: str, i: int) -> str:
-    return sl(s, i, i + 1)
+    if i < 0:
+        return ""
+    if i >= str_length(s):
+        return ""
+    return str_slice(s, i, i + 1)
 
 def is_digit(c: str) -> bool:
     return str_length(c) == 1 and c >= "0" and c <= "9"

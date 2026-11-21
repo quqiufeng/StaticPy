@@ -208,7 +208,8 @@
 ;; 最关键的是 None：它是真实对象，`(not py-none)` 在 Scheme 下是 #f，
 ;; 直接照搬 `(not (not x))` 会把 `bool(None)` 判成 #t。
 (define (py-truthy x)
-  (cond ((py-none? x) #f)
+  (cond ((boolean? x) x)   ; 快路径：#t/#f 常见于 if/while 条件，勿穿 10 个谓词
+        ((py-none? x) #f)
         ((eq? x #f) #f)
         ((number? x) (not (zero? x)))
         ((string? x) (> (string-length x) 0))
@@ -1083,8 +1084,14 @@
 
 (define (slice-string s start end)
   "字符串切片 [start, end)；按 Python 规则折算负下标并截断到 [0, len]"
-  (let* ((n (string-length s))
-         (a (if (< start 0) (+ n start) start))
+  (let ((n (string-length s)))
+   (if (and (fixnum? start) (fixnum? end) (fx>= start 0) (fx>= end 0) (fx<= end n))
+       ;; 快路径：非负且未越界（tokenizer/切片器的常见形状），省 4 次比较
+       (if (fx>= start end) "" (substring s start end))
+       (slice-string-slow s start end n))))
+
+(define (slice-string-slow s start end n)
+  (let* ((a (if (< start 0) (+ n start) start))
          (b (if (< end 0) (+ n end) end))
          (a (if (< a 0) 0 a))
          (b (if (> b n) n b))
