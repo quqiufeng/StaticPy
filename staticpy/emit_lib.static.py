@@ -3963,11 +3963,16 @@ def top_level_reject(s, why) -> str:
 
 
 def emit_module(tree, src: str, lib_mode: int) -> str:
+    """模块级输出：先收集片段、最后一次 str_join。
+    逐个 `out = out + x` 会反复拷贝已有前缀，是 O(n^2)：
+    1790 个顶层语句 / 2MB 输出实测多花数秒、多分配上 GB。"""
     src_set(src)
-    out: str = ";; Source: " + src + "\n\n;; StaticPy functions"
+    out = py_list()
+    head: str = ";; Source: " + src + "\n\n;; StaticPy functions"
     ffi: str = emit_extern_ffi()
     if ffi != "":
-        out = ";; extern FFI functions" + ffi + "\n\n" + out
+        head = ";; extern FFI functions" + ffi + "\n\n" + head
+    out = py_list_append(out, head)
     body = dict_get(tree, "body")
     collect_sigs(body)
     collect_imports(body)
@@ -3977,15 +3982,15 @@ def emit_module(tree, src: str, lib_mode: int) -> str:
         s = py_list_ref(body, i)
         t = nt(s)
         if t == "FunctionDef":
-            out = out + "\n" + translate_function(s, src)
+            out = py_list_append(out, "\n" + translate_function(s, src))
         elif t == "ClassDef":
-            out = out + "\n" + emit_class(s, src)
+            out = py_list_append(out, "\n" + emit_class(s, src))
         elif t == "Assign" or t == "AnnAssign":
             d = top_level_define(s, t)
             if d != "":
-                out = out + "\n" + d
+                out = py_list_append(out, "\n" + d)
         elif t == "Expr":
-            out = out + "\n" + translate_expr(dict_get(s, "value"))
+            out = py_list_append(out, "\n" + translate_expr(dict_get(s, "value")))
         elif t == "Import" or t == "ImportFrom":
             # import 已由 collect_imports 收走，这里不再产出
             pass
@@ -3993,12 +3998,14 @@ def emit_module(tree, src: str, lib_mode: int) -> str:
             # `if __name__ == "__main__":` 守卫：入口是 main() + 自动 (static_main)，
             # 「只含 main() 调用」等价于自动入口；其余写法不再静默丢弃
             if is_canonical_main_guard(s) == 0:
-                out = out + "\n" + top_level_reject(
-                    s, "user __name__ guard other than main()")
+                out = py_list_append(out, "\n" + top_level_reject(
+                    s, "user __name__ guard other than main()"))
         else:
-            out = out + "\n" + top_level_reject(
-                s, "unsupported top-level " + t)
+            out = py_list_append(out, "\n" + top_level_reject(
+                s, "unsupported top-level " + t))
         i = i + 1
     if lib_mode == 1:
-        return out + "\n\n;; Library mode: no (static_main) entry point"
-    return out + "\n\n;; Entry point\n(static_main)"
+        out = py_list_append(out, "\n\n;; Library mode: no (static_main) entry point")
+    else:
+        out = py_list_append(out, "\n\n;; Entry point\n(static_main)")
+    return str_join(out, "")

@@ -729,17 +729,31 @@
                      (reverse (cons (substring s i n) out)))))))))))
 
 (define (str-join parts sep)
-  "用分隔符连接字符串列表或 vector"
-  (if (vector? parts)
-      (let ((n (vector-length parts)))
-        (let loop ((i 0) (result ""))
-          (if (>= i n)
-              result
-              (loop (+ i 1)
-                    (if (= i 0)
-                        (vector-ref parts i)
-                        (string-append result sep (vector-ref parts i)))))))
-      (string-join parts sep)))
+  "用分隔符连接字符串列表、vector 或 py-glist"
+  (cond
+    ;; py-glist（py-list()/append 的结果）：转 vector 后走同一路径；
+    ;; 空分隔符一次性 apply，避免 O(n^2) 前缀拷贝（emit 实测差 80 倍）
+    ((py-glist? parts)
+     (let ((v (py-glist->vector parts)))
+       (if (string=? sep "")
+           (if (= (vector-length v) 0) "" (apply string-append (vector->list v)))
+           (str-join v sep))))
+    ((vector? parts)
+     (if (string=? sep "")
+         (let ((n (vector-length parts)))
+           (if (= n 0) "" (apply string-append (vector->list parts))))
+         (let ((n (vector-length parts)))
+           (let loop ((i 0) (result ""))
+             (if (>= i n)
+                 result
+                 (loop (+ i 1)
+                       (if (= i 0)
+                           (vector-ref parts i)
+                           (string-append result sep (vector-ref parts i)))))))))
+    (else
+     (if (string=? sep "")
+         (if (null? parts) "" (apply string-append parts))
+         (string-join parts sep)))))
 
 (define (str-trim s)
   "去除首尾空白"

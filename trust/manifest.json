@@ -34,9 +34,9 @@
       "path": "tools/seed/prelude.scm",
       "why": "**运行时真源**（split_plugins.py 从它切出 plugins/ 再拼回 prelude）；改语义改这里",
       "state": "present",
-      "sha256": "bec75ab9aa8a1a5c575dba57206223084280212c62df55fcf3b65544cdd1f9a8",
-      "bytes": 123166,
-      "lines": 2976
+      "sha256": "007b6a4bf2f1d5e8d2b6a140735d67977568c28be860fa6fd4c4221ba3ee2a97",
+      "bytes": 123832,
+      "lines": 2990
     },
     {
       "role": "seed",
@@ -52,18 +52,18 @@
       "path": "plugins/core/runtime.scm",
       "why": "切分后的 core 运行时（构建实际读它）：位运算等兜底在此",
       "state": "present",
-      "sha256": "6a521b2ba5cb666f48c2e8684d77c759db1ec2c1c0b10f4bf9a12a96729e220f",
-      "bytes": 94871,
-      "lines": 2243
+      "sha256": "341a15f351d18525cbe5ed4e734e15b88855676bc23d1557e04ccc61fc22b88c",
+      "bytes": 95537,
+      "lines": 2257
     },
     {
       "role": "gen",
       "path": "staticpy/static_prelude.scm",
       "why": "**生成物**（勿手改）：prelude ⇄ plugins 必须同步，check 不过就别提交",
       "state": "present",
-      "sha256": "ebc0d548d7f0900885ebefee919e54bb4f15a086a8e68f8fb7111e164f852476",
-      "bytes": 123116,
-      "lines": 2972
+      "sha256": "dbb309daeb950eef4929d8a20a5c7e75f1fd73e19775a69ccd3c87004c29aab5",
+      "bytes": 123782,
+      "lines": 2986
     },
     {
       "role": "seed",
@@ -97,9 +97,9 @@
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "6ae343a420c2a9be0ec4a03dad18bd17022b8233f5e9cd1f3ff5aae3b6d4cc8b",
-      "bytes": 152838,
-      "lines": 4004
+      "sha256": "786d2686fcec8e47323d1ac1ebd4f46ffe79b93599482f67036aee314272ecba",
+      "bytes": 153277,
+      "lines": 4011
     },
     {
       "role": "impl",
