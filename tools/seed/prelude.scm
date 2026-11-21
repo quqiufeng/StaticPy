@@ -2257,10 +2257,10 @@ np 插件可覆盖成 PyArray 版"
           ((char=? (string-ref fl i) ch) #t)
           (else (loop (fx+ i 1))))))
 
-(define (py-pct-spec fmt i)
-  "解析 fmt[i] 处的 % 格式项 -> (下一位置 标志串 宽度 精度 转换符)"
+(define (py-pct-spec-at fmt j0)
+  "从 j0（% 之后的第一个字符）解析 -> (下一位置 标志串 宽度 精度 转换符)"
   (let* ((n (string-length fmt))
-         (jb (let flags ((j (fx+ i 1)) (acc ""))
+         (jb (let flags ((j j0) (acc ""))
                (if (and (fx< j n)
                         (let ((c (string-ref fmt j)))
                           (or (char=? c #\-) (char=? c #\+) (char=? c #\space)
@@ -2286,9 +2286,36 @@ np 插件可覆盖成 PyArray 版"
           (cond ((not ps) #f) ((string=? ps "") 0) (else (string->number ps)))
           (if (fx< j2 n) (string-ref fmt j2) #\?))))
 
+(define (py-pct-spec fmt i)
+  "解析 fmt[i] 处的 % 格式项 -> (下一位置 标志串 宽度 精度 转换符)"
+  (py-pct-spec-at fmt (fx+ i 1)))
+
+(define (py-pct-mapname fmt i)
+  "fmt[i]='%' 且紧跟 '(' 时 -> (映射键 之后的位置)；否则 #f。
+   对应 CPython 的 \"%(name)s\" % {...}"
+  (let ((n (string-length fmt)))
+    (if (and (fx< (fx+ i 1) n)
+             (char=? (string-ref fmt (fx+ i 1)) #\())
+        (let loop ((j (fx+ i 2)) (acc ""))
+          (cond ((fx>= j n)
+                 (error 'py-str-percent "%-格式的 ( 缺少配对的 )"))
+                ((char=? (string-ref fmt j) #\))
+                 (if (string=? acc "")
+                     (error 'py-str-percent "%-格式的映射键为空")
+                     (list acc (fx+ j 1))))
+                (else (loop (fx+ j 1) (string-append acc (string (string-ref fmt j)))))))
+        #f)))
+
 (define (py-pct-int v)
   "整数取值：浮点按 CPython 向零截断（truncate 仍是不精确数，要 exact 转回整数）"
   (if (inexact? v) (exact (truncate v)) (exact v)))
+
+(define (py-pct-float v conv prec)
+  "浮点的 %e/%E/%g/%G：复用 py-format 的同一套舍入与指数格式"
+  (let* ((fv (exact->inexact v))
+         (p (cond ((not prec) 6) ((and (fx= prec 0) (memv conv (list #\g #\G))) 1) (else prec)))
+         (s (py-format (abs fv) (string-append "." (number->string p) (string conv)))))
+    (list (if (< fv 0) "-" "") s)))
 
 (define (py-pct-render v conv prec)
   "一个转换符 -> (符号串 正文串)；正文不含符号"
@@ -2309,10 +2336,40 @@ np 插件可覆盖成 PyArray 版"
     ((#\o)
      (let ((iv (py-pct-int v)))
        (list (if (< iv 0) "-" "") (number->string (abs iv) 8))))
+    ((#\c)
+     (cond ((string? v)
+            (if (fx= (string-length v) 1) (list "" v)
+                (error 'py-str-percent "%c 需要单字符字符串")))
+           ((char? v) (list "" (string v)))
+           (else
+            (let ((iv (py-pct-int v)))
+              (if (and (>= iv 0) (< iv 1114112))
+                  (list "" (string (integer->char iv)))
+                  (error 'py-str-percent "%c 的值超出 Unicode 范围"))))))
     ((#\F #\f)
      (let ((fv (exact->inexact v)))
        (list (if (< fv 0) "-" "") (float_fixed (abs fv) (if prec prec 6)))))
+    ((#\e #\E #\g #\G)
+     (py-pct-float v conv prec))
     (else (list "" (py-str v)))))
+
+(define (py-pct-numeric? conv)
+  "哪些转换符按数值处理（+/空格 补符号、0 补在符号后）"
+  (and (memv conv (list #\d #\i #\x #\X #\o #\f #\F #\e #\E #\g #\G)) #t))
+
+(define (py-pct-item v sp)
+  "(转换符 宽度 精度 标志) 作用于值 v -> 补齐后的字符串"
+  (let* ((conv (list-ref sp 4))
+         (numeric (py-pct-numeric? conv))
+         (r (py-pct-render v conv (list-ref sp 3)))
+         (body (cadr r))
+         (s0 (car r))
+         (flags (list-ref sp 1))
+         (sign (cond ((not (string=? s0 "")) s0)
+                     ((and numeric (py-pct-has? flags #\+)) "+")
+                     ((and numeric (py-pct-has? flags #\space)) " ")
+                     (else ""))))
+    (py-pct-pad sign body (list-ref sp 2) flags numeric)))
 
 (define (py-pct-pad sign body width flags numeric)
   "按宽度/标志补齐：默认为数值右对齐，- 左对齐，0 补在符号之后"
@@ -2323,6 +2380,22 @@ np 插件可覆盖成 PyArray 版"
           ((and numeric (py-pct-has? flags #\0))
            (string-append sign (make-string padn #\0) body))
           (else (string-append (make-string padn #\space) all)))))
+
+(define py-pct-missing (list 'missing))
+
+(define (py-pct-dict? x)
+  "字典判定：make-dict 造的哈希（带顺序键），或插件注册的 py-map"
+  (or (and (hashtable? x) (hashtable-contains? x py-dict-order-key))
+      (py-dict? x)))
+
+(define (py-pct-field-map args key)
+  "\"%(name)s\" % d：按名字取字典值；右侧不是字典或键缺失都响亮报错"
+  (if (not (py-pct-dict? args))
+      (error 'py-str-percent "%-格式化带 (键) 时右侧必须是字典"))
+  (let ((v (dict-get-default args key py-pct-missing)))
+    (if (eq? v py-pct-missing)
+        (error 'py-str-percent (string-append "%-格式化缺少映射键: " key))
+        v)))
 
 (define (py-str-percent fmt args)
   "Python 的 %-格式化：fmt % args（args 是单值或 tuple/list/vector）"
@@ -2336,27 +2409,21 @@ np 插件可覆盖成 PyArray 版"
             ((and (fx< (fx+ i 1) n) (char=? (string-ref fmt (fx+ i 1)) #\%))
              (loop (fx+ i 2) k (cons "%" acc)))
             (else
-             (let* ((sp (py-pct-spec fmt i))
-                    (conv (list-ref sp 4))
-                    (numeric (memv conv '(#\d #\i #\x #\X #\o #\f #\F))))
+             (let* ((mp (py-pct-mapname fmt i))
+                    (sp (py-pct-spec-at fmt (if mp (cadr mp) (fx+ i 1))))
+                    (conv (list-ref sp 4)))
                (cond
-                 ((not (memv conv '(#\s #\r #\d #\i #\x #\X #\o #\f #\F)))
+                 ((not (memv conv (list #\s #\r #\d #\i #\x #\X #\o #\f #\F
+                                        #\e #\E #\g #\G #\c)))
                   (error 'py-str-percent
                          (string-append "不支持的 %-格式符：%" (string conv))))
-                 ((>= k np)
-                  (error 'py-str-percent "%-格式化缺参数"))
+                 (mp
+                  (loop (list-ref sp 0) k
+                        (cons (py-pct-item (py-pct-field-map args (car mp)) sp) acc)))
+                 ((>= k np) (error 'py-str-percent "%-格式化缺参数"))
                  (else
-                  (let* ((r (py-pct-render (list-ref argv k) conv (list-ref sp 3)))
-                         (body (cadr r))
-                         (s0 (car r))
-                         (flags (list-ref sp 1))
-                         (sign (cond ((not (string=? s0 "")) s0)
-                                     ((and numeric (py-pct-has? flags #\+)) "+")
-                                     ((and numeric (py-pct-has? flags #\space)) " ")
-                                     (else ""))))
-                    (loop (list-ref sp 0) (fx+ k 1)
-                          (cons (py-pct-pad sign body (list-ref sp 2) flags numeric)
-                                acc)))))))))))
+                  (loop (list-ref sp 0) (fx+ k 1)
+                        (cons (py-pct-item (list-ref argv k) sp) acc))))))))))
 
 (define (py-unpack e i)
   "多目标解包的取第 i 项：tuple / vector / 点对 (a . b) / 其它按单值"

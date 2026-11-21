@@ -1,0 +1,18 @@
+# %-格式化：%e/%E/%g/%G/%c 与 %(name)s 映射键
+def main():
+    print("%e" % 1234.5)
+    print("%E" % 0.0)
+    print("%.2e" % -1.5)
+    print("%.0e" % 1.5)
+    print("%g" % 0.0)
+    print("%g" % 999999.5)
+    print("%g" % 1e-05)
+    print("%.3g" % 1234.5)
+    print("%.0g" % 0.5)
+    print("%10.2e|%-10.2e|" % (1.5, 1.5))
+    print("%c" % 65)
+    print("%c" % 20013)
+    print("%c" % "a")
+    print("%(a)s-%(b).2f" % {"a": "x", "b": 1.5})
+    print("%(k)05d" % {"k": 42})
+    print("%s %d" % ("x", 3.9))

@@ -72,11 +72,12 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 | `pow(a, b)` / `pow(a, b, m)` | `py-pow` | 负指数回 float（`pow(2,-1) == 0.5`）、三参走模幂（`pow(2,10,100) == 24`） |
 | `if x:` / `while x:` / `not x` / `a and b` / `a or b` | `py-truthy` | None / `0` / `""` / `[]` / `{}` 为假；`and`/`or` **返回操作数**而非布尔 |
 | `a < b < c` | `emit_chained_compare` | 中间操作数只求值一次，逐对短路 |
-| `"%d-%s" % (a, b)` | `py-str-percent` | CPython 的 %-格式化：右侧**只有 tuple 展开**（`"%s" % [1,2]` → `[1, 2]`）；`%s %r %d %i %x %X %o %f %%` + `- + 空格 0 #` 标志、宽度、精度；`%e/%g/%c/%(name)s` **运行时 error 报错**（不静默算错） |
+| `"%d-%s" % (a, b)` | `py-str-percent` | CPython 的 %-格式化：右侧**只有 tuple 展开**（`"%s" % [1,2]` → `[1, 2]`）；转换符 `%s %r %d %i %x %X %o %f %F %e %E %g %G %c %%`，标志 `- + 空格 0 #`、宽度、精度；`%(name)s` 取字典键（缺键/右侧非字典→运行期 error）；未知转换符（`%z`）**运行期 error**（不静默算错） |
 
 整数与浮点混算时翻译器插 `exact->inexact`（`(fl* 1.5 4)` 会报 `4 is not a flonum`）。
 每条规则都有对应用例：`tests/semantics/{int_arith,float_arith,aug_assign,cmp_chain,`
-`ternary_flow,truthy_flow,bitops,round_builtin,str_format,str_format_spec,fstring_spec,py_builtins,slice_step}.static.py`，跑 `python3 staticpy/semantics_diff.py`。
+`ternary_flow,truthy_flow,bitops,round_builtin,str_format,str_format_spec,str_percent_misc,`
+`fstring_spec,py_builtins,slice_step}.static.py`，跑 `python3 staticpy/semantics_diff.py`。
 
 ### class（记录类型 + 静态分派）
 
@@ -242,6 +243,8 @@ bash selfcheck.sh                                            # 端到端回归
 - `s.strip()/upper()/lower()/split(sep)/join(list)/replace(a,b)/startswith(x)/find(x)/zfill(n)…`
   在种子与环 2 都映射到 prelude 的 `str-*`；**接收者必须是 str**（字面量、f-string 或已推断为 `str`），
   否则仍走旧的 `({recv}-{attr})` 兜底。`split(maxsplit)` **响亮报错**，不静默降级。
+- `%`-格式化：`%e/%E/%g/%G` 复用 `py-format` 的同一套舍入与指数格式（`%.0g` 按 CPython 取 1 位），
+  `%c` 接受整数码位或单字符字符串，`%(name).2f` 这类映射键与位置值走同一条渲染路径。
 - `str.format` 支持 `{}` / `{n}` / `{name}`（关键字实参）/ `{:spec}` / `{{}}`，
   格式说明与 f-string **共用同一套 prelude 函数** `py-format`（见下节）。
   `{}` 与 `{0}` 混用按 CPython 报错（`自动编号与手动编号不能混用`）；
@@ -265,7 +268,8 @@ bash selfcheck.sh                                            # 端到端回归
 - **没有实现的东西一律响亮失败，不许静默降级**：
   - 构建期（`TRANS_ERRORS` → stderr + 退出码 2）：`f"{x!a}"`、格式说明里含**嵌套 `{}`**
     （静态展开不了）、未知字符串方法、`super().attr(..)` 等；
-  - 运行期（prelude `error`）：`%e/%g/%c/%(name)s`、`split(maxsplit)`、`{0[1]}` 字段等。
+  - 运行期（prelude `error`）：未知 `%`转换符（`%z`）、`%(name)s` 缺键或右侧非字典、
+    `split(maxsplit)`、`{0[1]}` 字段等。
 - `TRANS_ERRORS` **只在收集、必须报**：种子在 `main()` 末尾统一写 stderr 并 `sys.exit(2)`
   （`STATICPY_TRANS_ERRORS_WARN=1` 仅告警不退，供存量代码盘点用）。
   环 2 没有构建期失败通道，同样的形状发**运行期** `(error 'f-string …)`——两环都响。
