@@ -90,15 +90,36 @@ def scheme_name(nm: str) -> str:
         return "py-float-repr"
     return nm
 
+def build_word_set(words: str):
+    """空格分隔的名字表 -> 哈希集合
+
+    这两张表（RESERVED ≈ 90 词、PRELUDE_NAMES ≈ 190 词）原本每次调用都做
+    `str_contains(TABLE, " " + nm + " ")`：先分配一个拼接串，再逐位置线性扫。
+    mangle_name 对**每个标识符**都要问一次，是翻译器最大的单点开销（剖面 35%）。
+    改成加载时建一次集合，查表 O(1)。
+    """
+    d = make_dict()
+    parts = list_to_py_list(str_split(words, " "))
+    i: int = 0
+    while i < py_list_length(parts):
+        w = py_list_ref(parts, i)
+        if str_length(w) > 0:
+            d[w] = 1
+        i = i + 1
+    return d
+
+RESERVED_SET = build_word_set(RESERVED)
+PRELUDE_SET = build_word_set(PRELUDE_NAMES)
+
 def is_prelude_fn(nm: str) -> bool:
     # 文件自己定义的同名函数优先（同种子：name not in FUNCTION_SIGS）
     if dict_get(SIGS, nm) is not None:
         return False
-    return str_contains(PRELUDE_NAMES, " " + nm + " ")
+    return nm in PRELUDE_SET
 
 def mangle_name(nm: str) -> str:
     """Python 变量名 -> 合法 Scheme 标识符（保留字加 _py 后缀）"""
-    if str_contains(RESERVED, " " + nm + " "):
+    if nm in RESERVED_SET:
         return nm + "_py"
     return nm
 
