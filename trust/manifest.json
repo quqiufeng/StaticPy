@@ -25,9 +25,9 @@
       "path": "staticpy/static_translate.py",
       "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
       "state": "present",
-      "sha256": "a394e715a22812cf21408af8ad2503001c490e9fe01f3835b23fdbd7f8e4d2bd",
-      "bytes": 202102,
-      "lines": 4602
+      "sha256": "3e61bb7de54b7dc631b347c93c160cf2f9ab2610448b9a4c566c1b6dab368ca3",
+      "bytes": 202508,
+      "lines": 4611
     },
     {
       "role": "seed",
@@ -97,9 +97,9 @@
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "c37d65b179c247de00c284f10c1dc68321dcae15c77d164a29619bff1e81763d",
-      "bytes": 117082,
-      "lines": 3098
+      "sha256": "242d3196e8351f5a6081d1874c548ae7e7dd3feb41af7795e11a4d2583c9bcba",
+      "bytes": 117567,
+      "lines": 3109
     },
     {
       "role": "impl",

@@ -376,6 +376,17 @@ def infer_expr_type(n) -> str:
         if nt(f) == "Attribute":
             return module_ret(module_call_name(dict_get(f, "value"), dict_get(f, "attr")))
         return ""
+    if t == "Attribute":
+        # 方法当值（`f = p.twice` / `P.twice`）：类型记 "fn"，调用点据此不加 static_ 前缀
+        recv = dict_get(n, "value")
+        owner = ""
+        if nt(recv) == "Name" and class_known(dict_get(recv, "id")) == 1:
+            owner = dict_get(recv, "id")
+        else:
+            owner = resolve_expr_class(recv)
+        if owner != "" and member_hit(owner, dict_get(n, "attr")) is not None:
+            return "fn"
+        return ""
     if t == "IfExp":
         a = infer_expr_type(dict_get(n, "body"))
         b = infer_expr_type(dict_get(n, "orelse"))

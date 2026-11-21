@@ -110,9 +110,15 @@ STATICPY_PLUGINS=core,clsx bash staticpy/static_build_comfycli.sh app.static.py 
 bash plugins/clsx/check.sh          # 5 用例（defaults/inherit/multi/over/methodval）
 ```
 
-**注意**：没有动态分派、没有 `isinstance`、没有运算符重载（`__eq__`/`__add__` 不生效）；
-`f = p.twice` 这种「方法值赋给局部变量」两侧都发 `(set! f …)`、读侧却是 `static_f`，
-**当前不可用**——直接传参（`apply1(p.twice, p)`）或类名调用（`P.twice(p)`）都可以。
+**注意**：没有动态分派、没有 `isinstance`、没有运算符重载（`__eq__`/`__add__` 不生效）。
+**方法当值**（`f = P.twice` / `f = p.twice`）可用：类型记作 `fn`，调用点不再加 `static_`
+前缀，值是**裸过程** `static_P_twice`——两处都不做 `self` 绑定，调用时必须显式传。
+
+```python
+f = P.twice          # 或 p.twice（同样是裸过程，不 bind self）
+print(f(p))          # → 6     （CPython 里 p.twice 会绑定，p.twice(p) 报多传参）
+print(apply1(P.twice, p))    # 形参 fn 是函数值，调用 fn(p) 不加 static_ 前缀
+```
 
 **不支持**（也不要绕）：`try`/`except`/`raise`、生成器/`yield`、
 自由变量闭包、`eval`/`exec`、动态 `getattr`/`setattr`。

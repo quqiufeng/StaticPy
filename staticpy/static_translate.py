@@ -1226,6 +1226,15 @@ def infer_expr_type(node):
                     return "list[str]"
                 if scheme_fn == "http_get_simple":
                     return "str"
+    if isinstance(node, ast.Attribute):
+        # 方法当值（`f = p.twice` / `P.twice`）：类型记作 "fn"，调用点据此不加 `static_` 前缀
+        recv = node.value
+        if isinstance(recv, ast.Name) and recv.id in CLASSES:
+            owner = recv.id
+        else:
+            owner = resolve_expr_class(recv)
+        if owner and _member_hit(owner, node.attr):
+            return "fn"
     if isinstance(node, ast.Subscript):
         vt = infer_expr_type(node.value)
         if vt == "str":
