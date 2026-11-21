@@ -74,8 +74,11 @@
 (define (py-glist-len g) (py-glist-n g))
 
 (define (py-glist-ref g k)
-  (let ((j (py-idx (py-glist-n g) k)))
-    (if (and j (< j (py-glist-n g))) (vector-ref (py-glist-vs g) j) py-none)))
+  (let ((n (py-glist-n g)))
+    (if (and (fixnum? k) (fx>= k 0) (fx< k n))
+        (vector-ref (py-glist-vs g) k)
+        (let ((j (py-idx n k)))
+          (if (and j (< j n)) (vector-ref (py-glist-vs g) j) py-none)))))
 
 (define (py-glist-set! g k v)
   (let ((j (py-idx (py-glist-n g) k)))
@@ -268,13 +271,14 @@
 (define (dict-length d)
   (if (py-array? d) (py-array-len-h d) (length (py-dict-order d))))
 
+(define dict-missing (string->symbol "\x1;dict-missing"))
+
 (define (dict-get d key)
-  "读取字典 d[key]；缺失 → None"
+  "读取字典 d[key]；缺失 → None（单次哈希查找，哨兵区分缺失）"
   (if (py-array? d)
       (py-array-get-h d key)
-      (if (hashtable-contains? d key)
-          (hashtable-ref d key #f)
-          py-none)))
+      (let ((v (hashtable-ref d key dict-missing)))
+        (if (eq? v dict-missing) py-none v))))
 
 (define (dict-get-default d key default)
   "d.get(key, default)"
@@ -474,7 +478,10 @@
 
 (define (py-idx n k)
   "Python 下标归一：负数从尾部数；越界 → #f"
-  (cond ((not (number? k)) #f)
+  (cond ((fixnum? k)
+         (cond ((fx>= k 0) (and (fx< k n) k))
+               (else (let ((j (fx+ n k))) (and (fx>= j 0) j)))))
+        ((not (number? k)) #f)
         ((< k 0) (let ((j (+ n k))) (and (>= j 0) (truncate j))))
         ((>= k n) #f)
         (else (truncate k))))
@@ -637,10 +644,17 @@
   (let ((start-idx (if (pair? start) (car start) 0))
         (s-len (string-length s))
         (sub-len (string-length sub)))
-    (let loop ((i start-idx))
-      (cond ((> i (- s-len sub-len)) #f)
-            ((string=? (substring s i (+ i sub-len)) sub) i)
-            (else (loop (+ i 1)))))))
+    (if (fx= sub-len 0)
+        (if (> start-idx s-len) #f start-idx)
+        ;; 首字符预筛 + 单字符快路径：不再每个位置分配一个 substring
+        (let ((last (- s-len sub-len))
+              (c0 (string-ref sub 0)))
+          (let loop ((i start-idx))
+            (cond ((> i last) #f)
+                  ((not (char=? (string-ref s i) c0)) (loop (+ i 1)))
+                  ((fx= sub-len 1) i)
+                  ((string=? (substring s i (+ i sub-len)) sub) i)
+                  (else (loop (+ i 1)))))))))
 
 (define (string-any pred s)
   "检查是否有任意字符满足谓词"
