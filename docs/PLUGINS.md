@@ -141,6 +141,28 @@ STATICPY_PLUGINS_PATH=$PWD/examples staticpy check \
   examples/syntax_plugin/demo.static.py -p syntax_plugin
 ```
 
+**真实案例：`plugins/clsx/`（class 特性补齐）**
+
+内核的 class 子集只有「单继承 + 记录字段 + 方法分派」。`clsx` 用 `k.rewrite` 纯源码降级三件事：
+
+| 写法 | 降级成 | 为什么 |
+|---|---|---|
+| `class C(A, B):` | 单类 + 祖先字段/方法内联（就近覆盖） | 记录类型的子类字段会**遮蔽**基类同名字段，`static_Base_m` 用的 `(Base-x self)` 在子类实例上会读到 `#f` → 必须把方法搬进 C |
+| `super().__init__(args)` | 基类 `__init__` 的赋值就地展开（形参→实参，递归） | 扁平化后没有基类 |
+| `kind: int = 7` / `tag = "hi"` | `kind: int` + `__init__` 里注入 `self.kind = 7` | 内核只认「类体声明字段」，不认默认值 |
+
+三条工程约束（写进代码注释，也是所有 rewrite 类插件的通用经验）：
+
+1. **每个 pass 都重新 `ast.parse` 当前文本**——行号只在单个 pass 内有效，
+   跨 pass 复用行号会让「插入行」把后续编辑挤歪。
+2. **幂等**：改写结果再喂一遍必须完全不变（`check.sh` 有这条断言）。
+3. **不认识就响亮失败**：内联方法引用了未声明字段、残留 `super().<name>()` 都直接
+   `SyntaxError`，不静默生成错代码。
+
+```bash
+bash plugins/clsx/check.sh     # 4 个用例 AOT 双跑（core vs core,clsx），用例落 ~/iso_gen/clsx-check/
+```
+
 ### ⑤ FFI 翻译分工（谁翻译什么）
 
 | 环节 | 归属 | 位置 |
@@ -185,6 +207,7 @@ staticpy build app.static.py --emit-ss out.ss   # 保留拼装产物
 | `torch` | core, np, cuda | libTorch |
 | `xgboost` / `lightgbm` / `onnx` | core, np | 树模型 / ONNX Runtime |
 | `imgproc` | core, libc | Pillow 对标（C++ `.so` + extern fn） |
+| `clsx` | core | 语法：多继承 / `super().__init__` / 类属性默认值（`k.rewrite`） |
 
 ## 6. 兼容性
 

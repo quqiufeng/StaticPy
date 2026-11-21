@@ -768,12 +768,33 @@ def translate_attribute(n) -> str:
             own = class_field_owner(vt, at)
             if own != "":
                 return "(" + own + "-" + at + " " + mangle_name(dict_get(rv, "id")) + ")"
+            # 方法当值用：p.twice -> static_Owner_twice（同种子 _member_hit）
+            mh = member_hit(vt, at)
+            if mh is not None:
+                return "static_" + dict_get(mh, "owner") + "_" + at
         # self.x -> (Owner-x self)，Owner 为字段所属类（含继承链）；同种子 try_class_attr
         if dict_get(rv, "id") == "self" and class_known(cur_class_get()) == 1:
             own = class_field_owner(cur_class_get(), at)
             if own != "":
                 return "(" + own + "-" + at + " self)"
+            mh2 = member_hit(cur_class_get(), at)
+            if mh2 is not None:
+                return "static_" + dict_get(mh2, "owner") + "_" + at
+        # 类名取值：P.twice -> static_Owner_twice
+        if class_known(dict_get(rv, "id")) == 1:
+            mh3 = member_hit(dict_get(rv, "id"), at)
+            if mh3 is not None:
+                return "static_" + dict_get(mh3, "owner") + "_" + at
     value = translate_expr(rv)
+    # 推断类接收者的方法当值用（同种子 try_class_attr 第三段）
+    rc: str = resolve_expr_class(rv)
+    if rc != "":
+        ow2 = class_field_owner(rc, at)
+        if ow2 != "":
+            return "(" + ow2 + "-" + at + " " + value + ")"
+        mh4 = member_hit(rc, at)
+        if mh4 is not None:
+            return "static_" + dict_get(mh4, "owner") + "_" + at
     if at == "copy":
         return "(dict-copy " + value + ")"
     # IR 节点字段：expr.value -> (ir-field expr 'value)

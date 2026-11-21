@@ -97,9 +97,9 @@
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "c5a4ffa1f3d997e2d332cdc05fdd6db309634dd449388041a9c370da0b1b9fd3",
-      "bytes": 113789,
-      "lines": 3028
+      "sha256": "30aecf61fc018b5cc31ee499d07126ff6ca510f7280e71e672e48abb9905bc53",
+      "bytes": 114807,
+      "lines": 3049
     },
     {
       "role": "impl",
