@@ -609,6 +609,18 @@ def translate_subscript(n) -> str:
     slc = dict_get(n, "slice")
     vt = infer_expr_type(dict_get(n, "value"))
     if nt(slc) == "Slice":
+        stp = dict_get(slc, "step")
+        if stp is not None and nt(stp) != "":
+            # 有步长（含负步长 a[::-1]）：统一走运行时归一
+            lo2 = dict_get(slc, "lower")
+            up2 = dict_get(slc, "upper")
+            l_s = "py-none"
+            u_s = "py-none"
+            if lo2 is not None and nt(lo2) != "":
+                l_s = translate_expr(lo2)
+            if up2 is not None and nt(up2) != "":
+                u_s = translate_expr(up2)
+            return "(py-slice-step " + value + " " + l_s + " " + u_s + " " + translate_expr(stp) + ")"
         start: str = "0"
         lo = dict_get(slc, "lower")
         if lo is not None and nt(lo) != "":
@@ -1217,12 +1229,16 @@ def str_method_fn(at: str) -> str:
         return "str-upper"
     if at == "lower":
         return "str-lower"
-    if at == "strip" or at == "lstrip" or at == "rstrip":
-        return "str-trim"
+    if at == "strip":
+        return "py-str-strip"
+    if at == "lstrip":
+        return "py-str-lstrip"
+    if at == "rstrip":
+        return "py-str-rstrip"
     if at == "title":
         return "str-title"
     if at == "split":
-        return "str-split"
+        return "py-str-split"
     if at == "replace":
         return "str-replace"
     if at == "startswith":
@@ -1334,7 +1350,9 @@ def translate_call(n) -> str:
             if at == "splitlines":
                 return f"(str-split-lines {translate_expr(rv)})"
             if at == "format":
-                return "#f ;; error: str.format 尚未支持，改用 str() + 拼接"
+                if a != "":
+                    return f"(py-str-format {translate_expr(rv)} {a})"
+                return f"(py-str-format {translate_expr(rv)})"
             sm: str = str_method_fn(at)
             if sm != "":
                 if a != "":
@@ -1364,10 +1382,10 @@ def translate_call(n) -> str:
         # 表达式位置（for 头由 block_for 单独化 do 循环）
         return f"(py-range->list {a})"
     if nm == "int":
-        # CPython int() 是截断（int(2.9) -> 2、int(-2.9) -> -2），不是四舍五入
+        # CPython int()：数字截断；字符串按进制解析（int("ff", 16) -> 255）
         if a == "":
             return "0"
-        return f"(exact (truncate {a}))"
+        return f"(py-int {a})"
     if nm == "round":
         # Python 3：四舍六入五取偶，round(x) 返回 int
         if a == "":
@@ -1380,6 +1398,9 @@ def translate_call(n) -> str:
         return f"(py-float {a})"
     if nm == "bool":
         return f"(py-truthy {a})"
+    if nm == "pow":
+        # pow(a, b) / pow(a, b, m)：负指数回 float、三参走模幂
+        return f"(py-pow {a})" if a != "" else "0"
     if nm == "abs":
         return f"(abs {a})"
     if nm == "divmod":

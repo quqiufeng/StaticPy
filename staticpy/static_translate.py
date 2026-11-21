@@ -1043,7 +1043,7 @@ def collect_assigned_names(stmts):
 BUILTIN_VALUE_WRAPPERS = {
     "len": "py-len",
     "str": "py-str",
-    "int": "(lambda (x) (exact (truncate x)))",
+    "int": "py-int",
     "float": "py-float",
     "bool": "py-truthy",
     "abs": "abs",
@@ -3930,7 +3930,13 @@ def translate_expr(node):
             # Pythonic from import: from math import sin
             if name in MATH_FUNCTIONS:
                 # round 要银行家舍入 + 返回 int（C/Chez 的 round 是远离零 + flonum）
-                fn = "py-round" if name == "round" else name
+                # pow 与 round 同理：语义在 prelude（负指数/模幂/银行家舍入）
+                if name == "round":
+                    fn = "py-round"
+                elif name == "pow":
+                    fn = "py-pow"
+                else:
+                    fn = name
                 return f"({fn} {' '.join(args)})"
             # 外部 FFI 函数
             if name in EXTERN_FUNCTIONS:
@@ -3973,8 +3979,8 @@ def translate_expr(node):
             if name == "range":
                 return f"({args[0]})"  # simplified
             if name == "int":
-                # CPython int() 是**截断**（int(2.9) → 2，int(-2.9) → -2），不是四舍五入
-                return f"(exact (truncate {args[0]}))" if args else "0"
+                # CPython int()：数字截断；字符串按进制解析（int("ff", 16) → 255）
+                return f"(py-int {' '.join(args)})" if args else "0"
             if name == "round":
                 # Python 3：四舍六入五取偶，round(x) 返回 int（见 prelude py-round）
                 return f"(py-round {' '.join(args)})" if args else "0"
@@ -3984,6 +3990,9 @@ def translate_expr(node):
             if name == "bool":
                 # CPython 真值语义：None/0/""/[]/{} 都为假
                 return f"(py-truthy {args[0]})" if args else "#f"
+            if name == "pow":
+                # pow(a, b) / pow(a, b, m)：整数负指数回 float、三参走模幂
+                return f"(py-pow {' '.join(args)})" if args else "0"
             if name == "abs":
                 return f"(abs {args[0]})" if args else "0"
             # 内建迭代/聚合函数（语义见 plugins/core/runtime.scm）
@@ -4007,7 +4016,8 @@ def translate_expr(node):
             if name in ("any", "all"):
                 return f"(py-{name} {' '.join(args)})" if args else ("#f" if name == "any" else "#t")
             if name == "pow":
-                return f"(pow {args[0]} {args[1]})" if len(args) >= 2 else "1"
+                # pow(a, b) / pow(a, b, m)：与 py-pow 一致（负指数回 float、三参模幂）
+                return f"(py-pow {' '.join(args)})" if args else "1"
             if name == "divmod":
                 # CPython divmod：商向下取整、余数随除数符号（见 prelude py-divmod）
                 if len(args) != 2:
@@ -4122,9 +4132,9 @@ def translate_expr(node):
             if _is_str_recv:
                 STR_METHODS = {
                     "upper": "str-upper", "lower": "str-lower",
-                    "strip": "str-trim", "lstrip": "str-trim",
-                    "rstrip": "str-trim",
-                    "split": "str-split", "replace": "str-replace",
+                    "strip": "py-str-strip", "lstrip": "py-str-lstrip",
+                    "rstrip": "py-str-rstrip",
+                    "split": "py-str-split", "replace": "str-replace",
                     "startswith": "str-starts-with?",
                     "endswith": "str-ends-with?",
                     "find": "py-str-find", "count": "py-str-count",
@@ -4146,16 +4156,11 @@ def translate_expr(node):
                 if attr == "splitlines":
                     return f"(str-split-lines {value})"
                 if attr == "format":
-                    TRANS_ERRORS.append(
-                        f"第 {getattr(node, 'lineno', 0)} 行: str.format 尚未支持，改用 str() + 拼接")
-                    return "#f"
+                    # "{} {}".format(a, b)：支持 {} / {n}，格式说明（:>8）响亮报错
+                    rest = " ".join(args)
+                    return f"(py-str-format {value} {rest})" if rest else f"(py-str-format {value})"
                 fn = STR_METHODS.get(attr)
                 if fn:
-                    # maxsplit / count 之类 Python 专有实参不支持：多给就响亮报错
-                    if attr == "split" and len(args) > 1:
-                        TRANS_ERRORS.append(
-                            f"第 {getattr(node, 'lineno', 0)} 行: str.split 的 maxsplit 尚未支持")
-                        return "#f"
                     # 无实参时不留尾随空格：`(str-trim s )` 与环 2 的 `(str-trim s)`
                     # 不是逐字节相等的 IR（check_translate 会判 DIFF）
                     rest = " ".join(args)
@@ -4421,6 +4426,11 @@ def translate_expr(node):
                 return f"(torch-tensor-index-select {value} {idx})"
         # 切片
         if isinstance(slc, ast.Slice):
+            if slc.step is not None:
+                # 有步长（含负步长 a[::-1]）：一律走运行时，按 Python 规则归一
+                lo = translate_expr(slc.lower) if slc.lower else "py-none"
+                up = translate_expr(slc.upper) if slc.upper else "py-none"
+                return f"(py-slice-step {value} {lo} {up} {translate_expr(slc.step)})"
             start = translate_expr(slc.lower) if slc.lower else "0"
             end_expr = slc.upper
             if end_expr is None:

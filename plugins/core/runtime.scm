@@ -395,19 +395,35 @@
       (- a (* b (floor (/ a b))))))
 
 ;; ** ：负指数在 Python 返回 float（2**-1 → 0.5），Chez 的 expt 给 1/2 有理数
-(define (py-pow a b)
-  (if (and (exact? b) (negative? b)) (expt (exact->inexact a) b) (expt a b)))
+(define (py-pow a b . md)
+  "pow(a, b) / pow(a, b, m)：与 Python 一致，整数负指数回 float"
+  (if (null? md)
+      (if (and (exact? b) (negative? b)) (expt (exact->inexact a) b) (expt a b))
+      ;; 模幂：平方-乘（Chez 无保证存在的 expt-mod）
+      (let ((m (car md)))
+        (if (= m 0) (error 'pow "pow() 的三参模式不能为 0"))
+        (if (negative? b) (error 'pow "负指数不支持模幂"))
+        (let loop ((aa (modulo a m)) (bb b) (acc 1))
+          (cond ((= bb 0) (modulo acc m))
+                ((odd? bb)
+                 (loop (modulo (* aa aa) m) (quotient bb 2) (modulo (* acc aa) m)))
+                (else
+                 (loop (modulo (* aa aa) m) (quotient bb 2) acc)))))))
 
 ;; round()：四舍六入五取偶（banker's），且 round(x) **返回 int**（C round 是远离零）
 ;; (round 2.5) → 2，(round -2.5) → -2；给了 ndigits 才回 float。
 (define (py-round x . nd)
   (if (null? nd)
       (if (exact? x) x (exact (round x)))
-      (let ((n (car nd)))
-        (if (fx= n 0)
+      (let ((k (car nd)))
+        (if (fx= k 0)
             (py-round x)
-            (inexact (/ (py-round (* (inexact x) (expt 10 n)))
-                        (expt 10 n)))))))
+            ;; CPython 先在 double 的**精确十进制值**上做 half-even：
+            ;; round(2.675, 2) → 2.67（因为 2.675 的二进制值其实是 2.67499…），
+            ;; 所以这里必须走 exact 有理数，不能 (inexact x)*100 → 267.5 → 268
+            (let* ((p (expt 10 k))
+                   (scaled (if (exact? x) (* x p) (* (exact x) p))))
+              (inexact (/ (round scaled) p)))))))
 
 ;; float(x)：数字转 flonum，字符串按 Python 字面量解析（float("2.5") → 2.5）
 (define (py-float x)
@@ -662,6 +678,41 @@
                   (cons (substring s i pos) result))
             (reverse (cons (substring s i (string-length s)) result)))))))
 
+(define (py-str-split-ws s mx)
+  "str.split() 的空白切分：折叠空白、丢弃首尾空段；mx>=0 时限切 mx 次"
+  (let ((n (string-length s)))
+    (let loop ((i 0) (start -1) (out '()) (k 0))
+      (cond
+        ((fx= i n)
+         (reverse (if (>= start 0) (cons (substring s start n) out) out)))
+        ((char-whitespace? (string-ref s i))
+         (cond ((< start 0) (loop (fx+ i 1) -1 out k))
+               ((and (>= mx 0) (fx= k mx))
+                (reverse (cons (substring s start n) out)))
+               (else (loop (fx+ i 1) -1 (cons (substring s start i) out) (fx+ k 1)))))
+        (else (loop (fx+ i 1) (if (>= start 0) start i) out k))))))
+
+(define (py-str-split s . rest)
+  "Python 的 str.split(sep=None, maxsplit=-1)：
+   不给 sep → 按任意空白切分并丢弃空段（同 CPython）；
+   给 sep → 保留空段；maxsplit>=0 时最多切 maxsplit 次（余下整段留着）。"
+  (let* ((sep (if (null? rest) #f (car rest)))
+         (mx (if (or (null? rest) (null? (cdr rest))) -1 (cadr rest))))
+    (cond
+      ((not sep) (py-str-split-ws s mx))
+      ((fx= (string-length sep) 0)
+       (error 'py-str-split "空分隔符"))
+      (else
+       (let ((sl (string-length sep))
+             (n (string-length s)))
+         (let loop ((i 0) (out '()) (k 0))
+           (if (and (>= mx 0) (fx>= k mx))
+               (reverse (cons (substring s i n) out))
+               (let ((pos (str-find s sep i)))
+                 (if pos
+                     (loop (+ pos sl) (cons (substring s i pos) out) (fx+ k 1))
+                     (reverse (cons (substring s i n) out)))))))))))
+
 (define (str-join parts sep)
   "用分隔符连接字符串列表或 vector"
   (if (vector? parts)
@@ -681,6 +732,89 @@
     (let ((start (do ((i 0 (+ i 1))) ((or (>= i len) (not (char-whitespace? (string-ref s i)))) i)))
           (end (do ((i (- len 1) (- i 1))) ((or (< i 0) (not (char-whitespace? (string-ref s i)))) (+ i 1)))))
       (if (>= start end) "" (substring s start end)))))
+
+(define (py-str-charset? ch chars)
+  "chars 为空/未给 -> 按空白判定（同 CPython 的 strip 默认）；否则按字符集合"
+  (if (not chars)
+      (char-whitespace? ch)
+      (let loop ((i 0))
+        (cond ((fx= i (string-length chars)) #f)
+              ((char=? (string-ref chars i) ch) #t)
+              (else (loop (fx+ i 1)))))))
+
+;; str.strip / lstrip / rstrip：可选 chars（默认白空），两侧各自语义
+(define (py-str-strip-run s chars from-left from-right)
+  (let* ((n (string-length s))
+         (a (if from-left
+                (let loop ((i 0))
+                  (if (and (fx< i n) (py-str-charset? (string-ref s i) chars))
+                      (loop (fx+ i 1)) i))
+                0))
+         (b (if from-right
+                (let loop ((i n))
+                  (if (and (fx> i a) (py-str-charset? (string-ref s (fx- i 1)) chars))
+                      (loop (fx- i 1)) i))
+                n)))
+    (if (fx>= a b) "" (substring s a b))))
+
+(define (py-str-strip s . rest)
+  "str.strip([chars])"
+  (py-str-strip-run s (if (null? rest) #f (car rest)) #t #t))
+
+(define (py-str-lstrip s . rest)
+  "str.lstrip([chars])"
+  (py-str-strip-run s (if (null? rest) #f (car rest)) #t #f))
+
+(define (py-str-rstrip s . rest)
+  "str.rstrip([chars])"
+  (py-str-strip-run s (if (null? rest) #f (car rest)) #f #t))
+
+;; ---- int(x) / int(s, base)：CPython 语义（数字截断、字符串按进制解析） ----
+(define (py-int-digit ch)
+  (let ((c (char->integer ch)))
+    (cond ((and (>= c 48) (<= c 57)) (- c 48))
+          ((and (>= c 97) (<= c 122)) (+ 10 (- c 97)))
+          ((and (>= c 65) (<= c 90)) (+ 10 (- c 65)))
+          (else -1))))
+
+(define (py-int-str s base)
+  "按 base 解析（base=0 时按前缀自动判定）；非法即 error（对应 CPython 的 ValueError）"
+  (let* ((t (py-str-strip s))
+         (n (string-length t)))
+    (if (= n 0) (error 'int "空字符串不能转 int"))
+    (let* ((neg? (char=? (string-ref t 0) #\-))
+           (plus? (char=? (string-ref t 0) #\+))
+           (i0 (if (or neg? plus?) 1 0))
+           (b (if (= base 0) 10 base))
+           (i1 (if (and (> (- n i0) 1) (char=? (string-ref t i0) #\0))
+                   (let ((c (char-downcase (string-ref t (+ i0 1)))))
+                     (cond ((and (or (= base 16) (= base 0)) (char=? c #\x)) (set! b 16) (+ i0 2))
+                           ((and (or (= base 8) (= base 0)) (char=? c #\o)) (set! b 8) (+ i0 2))
+                           ((and (or (= base 2) (= base 0)) (char=? c #\b)) (set! b 2) (+ i0 2))
+                           (else i0)))
+                   i0)))
+      (if (>= i1 n) (error 'int (string-append "无效的 int 字面量: " s)))
+      (let loop ((i i1) (acc 0) (seen 0))
+        (cond
+          ((>= i n)
+           (if (= seen 0) (error 'int (string-append "无效的 int 字面量: " s)))
+           (if neg? (- acc) acc))
+          ((char=? (string-ref t i) #\_) (loop (+ i 1) acc seen))
+          (else
+           (let ((d (py-int-digit (string-ref t i))))
+             (if (or (< d 0) (>= d b))
+                 (error 'int (string-append "无效的 int 字面量: " s)))
+             (loop (+ i 1) (+ (* acc b) d) (+ seen 1)))))))))
+
+(define (py-int x . rest)
+  "int() / int(3.9) 截断 / int(\"ff\", 16) 按进制解析"
+  (if (null? rest)
+      (cond ((string? x) (py-int-str x 10))
+            ((boolean? x) (if x 1 0))
+            (else (exact (truncate x))))
+      (if (string? x)
+          (py-int-str x (car rest))
+          (error 'int "int(x, base) 的 x 必须是字符串"))))
 
 (define (str-lower s)
   "转小写"
@@ -805,12 +939,14 @@
     (py-str-pad s width fill (max 0 (- width (string-length s))) 0)))
 
 (define (py-str-center s width . rest)
-  "s.center(width)：Python 把多出的一个填充放右边"
+  "s.center(width, fill)：CPython 的 left = pad/2 + (pad & width & 1)
+   （多出的那一个填充：宽度是奇数时放**左**边，例 \"abc\".center(8) -> \"  abc   \"）"
   (let* ((fill (py-fillchar rest))
          (pad (- width (string-length s))))
     (if (<= pad 0)
         s
-        (let ((left (quotient pad 2)))
+        (let* ((extra (if (and (odd? pad) (odd? width)) 1 0))
+               (left (+ (quotient pad 2) extra)))
           (py-str-pad s width fill left (- pad left))))))
 
 (define (py-str-zfill s width)
@@ -1441,6 +1577,62 @@ np 插件可覆盖成 PyArray 版"
         (list->vector (if (<= b a) '()
                           (list-head (list-tail lst a) (- b a)))))))
 
+(define (py-slice-step v start end step)
+  "v[start:end:step]（步长可为负）：slice-string / py-slice 的带步长版本"
+  (let ((st (if (py-none? step) 1 step)))
+    (if (= st 0) (error 'py-slice "slice step cannot be zero"))
+    (let* ((str? (string? v))
+           (items (if str? #f (py-items v)))
+           (n (if str? (string-length v) (length items)))
+           (ref (if str?
+                    (lambda (i) (string (string-ref v i)))
+                    (lambda (i) (list-ref items i))))
+           (a0 (if (py-none? start) (if (> st 0) 0 (- n 1)) start))
+           (a1 (if (< a0 0) (+ a0 n) a0))
+           (b0 (if (py-none? end) (if (> st 0) n -1) end))
+           (b1 (if (and (not (py-none? end)) (< b0 0)) (+ b0 n) b0)))
+      (if (> st 0)
+          (let loop ((i (max a1 0)) (acc '()) (lim (min b1 n)))
+            (if (>= i lim) (let ((r (reverse acc)))
+                             (if str? (apply string-append r) (list->vector r)))
+                (loop (+ i st) (cons (ref i) acc) lim)))
+          (let loop ((i (min a1 (- n 1))) (acc '()) (lim (max b1 -1)))
+            (if (<= i lim) (let ((r (reverse acc)))
+                             (if str? (apply string-append r) (list->vector r)))
+                (loop (+ i st) (cons (ref i) acc) lim)))))))
+
+(define (py-str-format fmt . args)
+  "str.format：支持 {} / {n} / {{ }}；带 :spec 或 {name} 一律响亮报错"
+  (let ((n (string-length fmt)))
+    (let loop ((i 0) (next 0) (acc '()))
+      (cond
+        ((fx>= i n) (apply string-append (reverse acc)))
+        ((and (char=? (string-ref fmt i) #\{) (fx< (fx+ i 1) n)
+              (char=? (string-ref fmt (fx+ i 1)) #\{))
+         (loop (+ i 2) next (cons "{" acc)))
+        ((and (char=? (string-ref fmt i) #\}) (fx< (fx+ i 1) n)
+              (char=? (string-ref fmt (fx+ i 1)) #\}))
+         (loop (+ i 2) next (cons "}" acc)))
+        ((char=? (string-ref fmt i) #\{)
+         (let ((j (str-find fmt "}" i)))
+           (if (not j) (error 'str-format "format 字符串缺少 }")
+               (let ((spec (substring fmt (fx+ i 1) j)))
+                 (cond
+                   ((string=? spec "")
+                    (if (>= next (length args)) (error 'str-format "format 实参不足"))
+                    (loop (+ j 1) (+ next 1) (cons (py-str (list-ref args next)) acc)))
+                   ((char-numeric? (string-ref spec 0))
+                    (let ((k (string->number spec)))
+                      (if (or (not k) (>= k (length args)))
+                          (error 'str-format (string-append "无效的 format 位置参数: " spec))
+                          (loop (+ j 1) next (cons (py-str (list-ref args k)) acc)))))
+                   (else
+                    (error 'str-format
+                           (string-append "暂不支持格式字段: {" spec "}"))))))))
+        ((char=? (string-ref fmt i) #\})
+         (error 'str-format "format 字符串里有单个 }"))
+        (else (loop (fx+ i 1) next (cons (string (string-ref fmt i)) acc)))))))
+
 (define (py-str-repeat s n)
   "str * int / int * str：Python 的重复拼接（n<=0 → 空串）"
   (let loop ((k n) (acc ""))
@@ -1455,12 +1647,9 @@ np 插件可覆盖成 PyArray 版"
 ;; 其它转换符（%e/%g/%c/%(name)s）一律 error 报错——宁可响，不静默算错。
 
 (define (py-pct-argv args)
-  "%-格式的右侧：tuple / list / vector 展开成参数表，其它按单值"
-  (cond ((py-tuple? args) (py-tuple-items args))
-        ((vector? args) (vector->list args))
-        ((py-glist? args) (py-glist-seq args))
-        ((list? args) args)
-        (else (list args))))
+  "%-格式的右侧：**只有 tuple 会展开**（CPython 语义）；list 是单个值：
+   \"%s\" % [1, 2] → \"[1, 2]\""
+  (if (py-tuple? args) (py-tuple-items args) (list args)))
 
 (define (py-pct-has? fl ch)
   "标志串里有没有字符 ch"
