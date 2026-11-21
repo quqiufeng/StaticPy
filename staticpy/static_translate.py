@@ -2070,6 +2070,18 @@ def record_field_type(rec, attr):
     return None
 
 
+def _inherited_fields(rec):
+    """该记录（含继承链）是否真的声明过槽位——零字段标记类不算"""
+    cur, guard = rec, 0
+    while cur and guard < 32:
+        if RECORD_FIELDS.get(cur):
+            return True
+        info = CLASSES.get(cur)
+        cur = info.get("base") if info else ""
+        guard += 1
+    return False
+
+
 def _lookup_member(cls, name, kind="methods"):
     """沿单继承链查找方法/字段；返回 (owner_class, node)"""
     cur = cls
@@ -2622,7 +2634,10 @@ def typecheck_function(node, function_arities, module_env=None):
                         return ft
                     # 零字段基类（如 class IRExpr: pass）是鸭子类型的标记类，
                     # 实际对象是子类，字段未知 → 不下结论，返回 None
-                    if RECORD_FIELDS[vtype.base]:
+                    # 方法当值：p.twice → 裸过程 static_P_twice，类型未知（不是字段错）
+                    if _lookup_member(vtype.base, expr.attr, "methods"):
+                        return None
+                    if RECORD_FIELDS[vtype.base] or _inherited_fields(vtype.base):
                         typecheck_error(expr, f"record '{vtype.base}' has no field '{expr.attr}'")
             # module.attr：返回未知类型
             return None

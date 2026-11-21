@@ -1242,13 +1242,20 @@ def block_assign(exprs, s, t: str):
             tenv_set(nm, iv)
         return py_list_append(exprs, f"(set! {mangle_name(nm)} {translate_expr(v)})")
     if nt(tg) == "Attribute":
-        # self.x = v -> (Cls-x-set! self v)；obj.x = v 需要类型，自举侧只认 self
-        fld = self_assign_field(s)
-        owner = ""
-        if fld != "" and cur_class_get() != "":
-            owner = class_field_owner(cur_class_get(), fld)
-        if owner != "":
-            return py_list_append(exprs, "(" + owner + "-" + fld + "-set! self " + translate_expr(v) + ")")
+        # self.x = v -> (Cls-x-set! self v)；obj.x = v -> (Owner-x-set! obj v)
+        # （同种子 try_field_set：先认 self，再按 resolve_expr_class 推静态类型）
+        obj = dict_get(tg, "value")
+        attr: str = dict_get(tg, "attr")
+        if nt(obj) == "Name" and dict_get(obj, "id") == "self" and cur_class_get() != "":
+            owner = class_field_owner(cur_class_get(), attr)
+            if owner != "":
+                return py_list_append(exprs, "(" + owner + "-" + attr + "-set! self " + translate_expr(v) + ")")
+            return py_list_append(exprs, ";; " + t)
+        rc: str = resolve_expr_class(obj)
+        if rc != "":
+            owner2: str = class_field_owner(rc, attr)
+            if owner2 != "":
+                return py_list_append(exprs, "(" + owner2 + "-" + attr + "-set! " + translate_expr(obj) + " " + translate_expr(v) + ")")
         return py_list_append(exprs, ";; " + t)
     if nt(tg) == "Subscript":
         # d[k] = v / a[i] = v -> py-set! 统一分派（dict / list / str 都对）
