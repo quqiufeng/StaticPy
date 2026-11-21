@@ -234,3 +234,12 @@ bash selfcheck.sh                                            # 端到端回归
   否则调用会被加上 `static_` 前缀当成用户函数。
 - **新的语法只走插件**（`hooks.py`），不往翻译器加规则——核心语法已冻结；
   确需动核心语法，改自举链（`staticpy/*-lib.static.py`）并重跑四层差分，**不要动种子**。
+
+### 字符串方法 / 函数值
+
+- `s.strip()/upper()/lower()/split(sep)/join(list)/replace(a,b)/startswith(x)/find(x)/zfill(n)…`
+  在种子与环 2 都映射到 prelude 的 `str-*`；**接收者必须是 str**（字面量、f-string 或已推断为 `str`），
+  否则仍走旧的 `({recv}-{attr})` 兜底。`str.format` 与 `split(maxsplit)` **响亮报错**，不静默降级。
+- 函数值调用的 `static_` 前缀：形参、`f = lambda …`、**元素全是函数值的 list** 的循环变量
+  （`for f in [inc, dbl]: f(1)`）与下标取用（`fs[0](7)`）都不加前缀；
+  对应环境类型记 `fn` / `fn-list`，仅用于代码生成。

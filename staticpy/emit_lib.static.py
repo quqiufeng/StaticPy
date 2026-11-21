@@ -620,6 +620,8 @@ def translate_subscript(n) -> str:
                 end = "(string-length " + value + ")"
             elif str_starts_with(vt, "list["):
                 end = "(tagged-array-len " + value + ")"
+            elif str_starts_with(vt, "list"):
+                end = "py-none"
             else:
                 end = "(vector-length " + value + ")"
         else:
@@ -628,7 +630,7 @@ def translate_subscript(n) -> str:
             return "(slice-string " + value + " " + start + " " + end + ")"
         if str_starts_with(vt, "list["):
             return "(make-tagged-array (slice-array (tagged-array-data " + value + ") " + start + " " + end + ") (- " + end + " " + start + "))"
-        return "(if (string? " + value + ") (slice-string " + value + " " + start + " " + end + ") (slice-array " + value + " " + start + " " + end + "))"
+        return "(py-slice " + value + " " + start + " " + end + ")"
     idx = translate_expr(slc)
     if nt(slc) == "Constant" and dict_get(slc, "_k") == "str":
         return "(py-get " + value + " " + idx + ")"
@@ -637,7 +639,8 @@ def translate_subscript(n) -> str:
     if vt == "tuple":
         # tuple 是独立记录类型（repr 为 (..)），下标统一走 py-get
         return "(py-get " + value + " " + idx + ")"
-    if vt == "list":
+    if vt == "list" or vt == "fn-list":
+        # fn-list = 元素全是函数值的 list（[inc, dbl]），下标取用同 list
         return "(py-list-ref " + value + " " + idx + ")"
     if str_starts_with(vt, "vector["):
         return "(vector-ref " + value + " " + idx + ")"
@@ -949,6 +952,11 @@ def translate_binop(op: str, ln, rn) -> str:
             return f"(py-pow {left} {right})"
     if (lt == "str" or rt == "str") and op == "Add":
         return f"(string-append {left} {right})"
+    if (lt == "str" or rt == "str") and op == "Mult":
+        # "ab" * 3 / 3 * "ab" -> (py-str-repeat "ab" 3)
+        if lt == "str":
+            return f"(py-str-repeat {left} {right})"
+        return f"(py-str-repeat {right} {left})"
     if op == "Add":
         return f"(+ {left} {right})"
     if op == "Sub":
@@ -1013,7 +1021,7 @@ def translate_cmp_typed(op: str, ln, rn) -> str:
     rt = infer_expr_type(rn)
     sym = cmp_sym(op)
     if sym == "":
-        return f"(equal? {left} {right})"
+        return f"(py-equal? {left} {right})"
     if lt == "int" and rt == "int":
         return f"(fx{sym} {left} {right})"
     if (lt == "int" or lt == "float") and (rt == "int" or rt == "float"):
@@ -1026,7 +1034,18 @@ def translate_cmp_typed(op: str, ln, rn) -> str:
     if lt == "str" or rt == "str":
         return f"(string{sym}? {left} {right})"
     if op == "Eq":
-        return f"(equal? {left} {right})"
+        # 双方类型都未知：py-equal?（number/string/char/tuple/list 通吃）
+        return f"(py-equal? {left} {right})"
+    # 类型未知或序列（tuple/list）：交给 py-cmp-lt?（数值/字符串/字典序），
+    # 不能发裸 `<`：tuple < tuple 会撞 `is not a real number`
+    if op == "Lt":
+        return f"(py-cmp-lt? {left} {right})"
+    if op == "Gt":
+        return f"(py-cmp-lt? {right} {left})"
+    if op == "LtE":
+        return f"(not (py-cmp-lt? {right} {left}))"
+    if op == "GtE":
+        return f"(not (py-cmp-lt? {left} {right}))"
     return f"({sym} {left} {right})"
 
 def expr_is_bool(n) -> int:
@@ -1189,6 +1208,67 @@ def call_args(args_l) -> str:
         i = i + 1
     return out
 
+def str_method_fn(at: str) -> str:
+    """str 方法名 -> prelude str-* 函数名；未登记返回空串"""
+    if at == "upper":
+        return "str-upper"
+    if at == "lower":
+        return "str-lower"
+    if at == "strip" or at == "lstrip" or at == "rstrip":
+        return "str-trim"
+    if at == "title":
+        return "str-title"
+    if at == "split":
+        return "str-split"
+    if at == "replace":
+        return "str-replace"
+    if at == "startswith":
+        return "str-starts-with?"
+    if at == "endswith":
+        return "str-ends-with?"
+    if at == "find":
+        return "py-str-find"
+    if at == "count":
+        return "py-str-count"
+    if at == "index":
+        return "py-str-index"
+    if at == "isdigit":
+        return "py-str-isdigit?"
+    if at == "isalpha":
+        return "py-str-isalpha?"
+    if at == "isspace":
+        return "py-str-isspace?"
+    if at == "islower":
+        return "py-str-islower?"
+    if at == "isupper":
+        return "py-str-isupper?"
+    if at == "capitalize":
+        return "py-str-capitalize"
+    if at == "zfill":
+        return "py-str-zfill"
+    if at == "ljust":
+        return "py-str-ljust"
+    if at == "rjust":
+        return "py-str-rjust"
+    if at == "center":
+        return "py-str-center"
+    return ""
+
+def is_str_receiver(n) -> int:
+    """接收者是不是 str：字面量 / f-string / 已推断为 str"""
+    if n is None:
+        return 0
+    t: str = nt(n)
+    if t == "Constant":
+        if dict_get(n, "_k") == "str":
+            return 1
+        return 0
+    if t == "JoinedStr":
+        return 1
+    if infer_expr_type(n) == "str":
+        return 1
+    return 0
+
 def translate_call(n) -> str:
     f = dict_get(n, "func")
     a = call_args(dict_get(n, "args"))
@@ -1240,6 +1320,23 @@ def translate_call(n) -> str:
                     fast = "py-m-get3"
                 return str_replace(f"({fast} {translate_expr(rv)} {a})", "  ", " ")
             return f"(py-m-{at} {translate_expr(rv)} {a})"
+        # ── 字符串方法：接收者是 str 时映射到 str-*
+        # 之前落到下面的 ({recv}-{at}) 兜底，生成 (s-strip) 这种丢接收者、丢实参的
+        # 垃圾：构建期看不见，运行时变量未绑定。
+        if is_str_receiver(rv) == 1:
+            if at == "join":
+                if py_list_length(al) != 1:
+                    return "#f ;; error: join 需要 1 个实参"
+                return f"(str-join {a} {translate_expr(rv)})"
+            if at == "splitlines":
+                return f"(str-split-lines {translate_expr(rv)})"
+            if at == "format":
+                return "#f ;; error: str.format 尚未支持，改用 str() + 拼接"
+            sm: str = str_method_fn(at)
+            if sm != "":
+                if a != "":
+                    return f"({sm} {translate_expr(rv)} {a})"
+                return f"({sm} {translate_expr(rv)})"
         # 未知对象的属性调用：content.splitlines() -> (content-splitlines)
         # 与旧版一致：通用属性调用不展开实参
         return f"({translate_expr(rv)}-{at})"
@@ -1282,6 +1379,12 @@ def translate_call(n) -> str:
         return f"(py-truthy {a})"
     if nm == "abs":
         return f"(abs {a})"
+    if nm == "divmod":
+        # CPython divmod：商向下取整、余数随除数符号（prelude py-divmod）
+        al0 = dict_get(n, "args")
+        if py_list_length(al0) == 2:
+            return f"(py-divmod {translate_expr(py_list_ref(al0, 0))} {translate_expr(py_list_ref(al0, 1))})"
+        return f"(py-divmod {a} 1)"
     if nm == "exit":
         return f"(exit_program {a})"
     if nm == "isinstance":
@@ -1459,6 +1562,11 @@ def block_assign(exprs, s, t: str):
         # 覆盖掉就丢了元素类型（`items[0].n` 会退化成 `(n …)`）——同种子
         if iv != "" and tenv_is_ann(nm) == 0:
             tenv_set(nm, iv)
+        # f = lambda ...: 记 "fn"，调用点据此不加 static_ 前缀（同种子）
+        if nt(v) == "Lambda":
+            tenv_set(nm, "fn")
+        if all_fn_list(v) == 1:
+            tenv_set(nm, "fn-list")
         return py_list_append(exprs, f"(set! {mangle_name(nm)} {translate_expr(v)})")
     if nt(tg) == "Attribute":
         # self.x = v -> (Cls-x-set! self v)；obj.x = v -> (Owner-x-set! obj v)
@@ -1636,12 +1744,37 @@ def block_while(s) -> str:
         return f"(let loop () (call/cc (lambda (__break__) (if {test} (begin {inner} (loop))))))"
     return f"(let loop () (if {test} (begin {bs} (loop))))"
 
+def all_fn_list(n) -> int:
+    """裸 list 且元素全是已登记的 "fn"（[inc, dbl]）——元素即函数值"""
+    if nt(n) != "List":
+        return 0
+    el = dict_get(n, "elts")
+    if py_list_length(el) == 0:
+        return 0
+    i: int = 0
+    while i < py_list_length(el):
+        e = py_list_ref(el, i)
+        if nt(e) != "Name" or tenv_get(dict_get(e, "id")) != "fn":
+            return 0
+        i = i + 1
+    return 1
+
 def block_for(s, lvl: int) -> str:
     tg = dict_get(s, "target")
     nm: str = "i"
     if nt(tg) == "Name":
         nm = mangle_name(dict_get(tg, "id"))
     it = dict_get(s, "iter")
+    # 列表里全是函数值时，循环变量就是函数值：记 "fn"，调用不加 static_ 前缀
+    # （`for f in [inc, dbl]: f(1)` 否则发 (static_f 1) -> 变量未绑定）
+    if nt(tg) == "Name":
+        _fnlist: int = 0
+        if all_fn_list(it) == 1:
+            _fnlist = 1
+        if nt(it) == "Name" and tenv_get(dict_get(it, "id")) == "fn-list":
+            _fnlist = 1
+        if _fnlist == 1:
+            tenv_set(dict_get(tg, "id"), "fn")
     bs = jn(translate_block(dict_get(s, "body"), 0))
     # for a, b in <iter>：元素按下标取（tuple/pair/vector 统一 py-get）
     if nt(tg) == "Tuple" or nt(tg) == "List":

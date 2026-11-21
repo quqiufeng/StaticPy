@@ -718,6 +718,124 @@
   (and (>= (string-length s) (string-length suffix))
        (string=? (substring s (- (string-length s) (string-length suffix)) (string-length s)) suffix)))
 
+;; ---- 字符串方法（.find/.count/.isdigit/... 的 CPython 语义）
+;; 语义对齐 Python。注意 Scheme 侧 str-find 返回 #f 是内部历史约定，
+;; Python 的 s.find 必须返回 -1，否则 `if s.find(x) >= 0` 直接崩。
+(define (py-str-find s sub . rest)
+  "s.find(sub[, start])：找不到返回 -1（不是 #f）"
+  (let* ((start (if (pair? rest) (car rest) 0))
+         (start (if (< start 0) (max 0 (+ (string-length s) start)) start))
+         (pos (apply str-find s sub (list start))))
+    (if pos pos -1)))
+
+(define (py-str-index s sub . rest)
+  "s.index(sub)：找不到抛错（Python 行为）"
+  (let ((pos (apply py-str-find s sub rest)))
+    (if (= pos -1)
+        (error 'str-index "substring not found")
+        pos)))
+
+(define (py-str-count s sub)
+  "s.count(sub)：不重叠出现次数"
+  (let ((len (string-length s)) (slen (string-length sub)))
+    (if (= slen 0)
+        (+ len 1)
+        (let loop ((i 0) (n 0))
+          (if (> (+ i slen) len)
+              n
+              (if (string=? (substring s i (+ i slen)) sub)
+                  (loop (+ i slen) (+ n 1))
+                  (loop (+ i 1) n)))))))
+
+(define (py-str-every? pred s)
+  "非空且每个字符都满足 pred（Python 的 isX 族都要求 len>0）"
+  (and (> (string-length s) 0)
+       (let loop ((i 0))
+         (or (>= i (string-length s))
+             (and (pred (string-ref s i)) (loop (+ i 1)))))))
+
+(define (py-str-isdigit? s) (py-str-every? char-numeric? s))
+(define (py-str-isalpha? s) (py-str-every? char-alphabetic? s))
+(define (py-str-isspace? s) (py-str-every? char-whitespace? s))
+
+(define (py-str-islower? s)
+  (and (py-str-every? char-alphabetic? s)
+       (let loop ((i 0))
+         (or (>= i (string-length s))
+             (and (not (char-upper-case? (string-ref s i))) (loop (+ i 1)))))))
+
+(define (py-str-isupper? s)
+  (and (py-str-every? char-alphabetic? s)
+       (let loop ((i 0))
+         (or (>= i (string-length s))
+             (and (not (char-lower-case? (string-ref s i))) (loop (+ i 1)))))))
+
+(define (str-title s)
+  "s.title()：每个词首字母大写、其余小写"
+  (let ((n (string-length s)))
+    (let loop ((i 0) (prev-alpha? #f) (acc '()))
+      (if (>= i n)
+          (apply string-append (reverse acc))
+          (let* ((c (string-ref s i))
+                 (a? (char-alphabetic? c))
+                 (c (if (and a? (not prev-alpha?))
+                        (char-upcase c)
+                        (if a? (char-downcase c) c))))
+            (loop (+ i 1) a? (cons (string c) acc)))))))
+
+(define (py-str-capitalize s)
+  "s.capitalize()：首字母大写，其余小写"
+  (if (= (string-length s) 0)
+      s
+      (string-append (string (char-upcase (string-ref s 0)))
+                     (string-downcase (substring s 1 (string-length s))))))
+
+(define (py-str-pad s width fill left right)
+  "ljust/rjust/center 的公共实现：left/right 是两侧填充个数"
+  (if (<= width (string-length s))
+      s
+      (string-append (if (> left 0) (apply string-append (map (lambda (i) fill) (iota left))) "")
+                     s
+                     (if (> right 0) (apply string-append (map (lambda (i) fill) (iota right))) ""))))
+
+(define (py-fillchar rest)
+  (if (and (pair? rest) (= (string-length (car rest)) 1)) (car rest) " "))
+
+(define (py-str-ljust s width . rest)
+  (let ((fill (py-fillchar rest)))
+    (py-str-pad s width fill 0 (max 0 (- width (string-length s))))))
+
+(define (py-str-rjust s width . rest)
+  (let ((fill (py-fillchar rest)))
+    (py-str-pad s width fill (max 0 (- width (string-length s))) 0)))
+
+(define (py-str-center s width . rest)
+  "s.center(width)：Python 把多出的一个填充放右边"
+  (let* ((fill (py-fillchar rest))
+         (pad (- width (string-length s))))
+    (if (<= pad 0)
+        s
+        (let ((left (quotient pad 2)))
+          (py-str-pad s width fill left (- pad left))))))
+
+(define (py-str-zfill s width)
+  "s.zfill(width)：左侧补 0，符号位保持在最前"
+  (let ((n (string-length s)))
+    (if (<= width n)
+        s
+        (let* ((pad (apply string-append (map (lambda (i) "0") (iota (- width n)))))
+               (signed? (and (> n 0) (memv (string-ref s 0) '(#\+ #\-)))))
+          (if signed?
+              (string-append (string (string-ref s 0)) pad (substring s 1 n))
+              (string-append pad s))))))
+
+(define (str-split-lines s)
+  "s.splitlines()：按换行拆分并丢掉末尾空项"
+  (let loop ((p (reverse (str-split s "\n"))))
+    (if (and (pair? p) (string=? (car p) ""))
+        (loop (cdr p))
+        (reverse p))))
+
 ;; ====== 字符串转数字（用于读取数据文件） ======
 (define (string_to_float s)
   (let ((n (string->number s)))
@@ -906,8 +1024,8 @@
 ;; repr(str)：单引号 + CPython 转义（双引号不转义）
 (define (py-str-repr s)
   ;; CPython 选引号：默认单引号；若含 ' 且含 " 则仍用单引号，若含 ' 而无 " 则改用双引号
-  (let* ((has-sq (py-str-find s #\'))
-         (has-dq (py-str-find s #\"))
+  (let* ((has-sq (py-str-has-char? s #\'))
+         (has-dq (py-str-has-char? s #\"))
          (q (if (and has-sq (not has-dq)) #\" #\'))
          (qstr (string q)))
     (let loop ((i 0) (acc '()))
@@ -931,7 +1049,8 @@
     (string (string-ref digits (fxand (quotient n 16) 15))
             (string-ref digits (fxand n 15)))))
 
-(define (py-str-find s ch)
+(define (py-str-has-char? s ch)
+  "s 里是否出现字符 ch（py-repr 判断引号用；不是 Python 的 find）"
   (let loop ((i 0))
     (cond ((fx= i (string-length s)) #f)
           ((char=? (string-ref s i) ch) #t)
@@ -1194,14 +1313,47 @@ np 插件可覆盖成 PyArray 版"
         ;; Python 迭代 str 得到"1 字符的 str"，不是 Scheme 的 char
         ((string? x) (map string (string->list x)))
         ((vector? x) (vector->list x))
-        ((pair? x) (list x))
-        ((null? x) '())
+        ;; 原生 Scheme list 已经是「Python list」：原样返回，别再包一层
+        ((list? x) x)
         (else (list x))))
 
 ;; Python 的 < ：数值（int/float 混合）与字符串可比；其余不可比
+(define (py-seq-like? x)
+  "是否按元素顺序排列的序列（tuple / list / vector / py-glist / 类型化数组）"
+  (or (py-tuple? x) (py-array? x) (py-glist? x) (vector? x) (list? x)))
+
+(define (py-equal? a b)
+  "Python 的 ==：数值按值比、字符串按内容、tuple/list/vector 逐元素，其余 eqv?"
+  (cond ((and (number? a) (number? b)) (= a b))
+        ((and (string? a) (string? b)) (string=? a b))
+        ((and (py-tuple? a) (py-tuple? b))
+         (let ((ra (py-tuple-items a)) (rb (py-tuple-items b)))
+           (and (= (length ra) (length rb))
+                (let loop ((x ra) (y rb))
+                  (cond ((null? x) #t)
+                        ((py-equal? (car x) (car y)) (loop (cdr x) (cdr y)))
+                        (else #f))))))
+        ((and (py-seq-like? a) (py-seq-like? b))
+         (let ((ra (py-items a)) (rb (py-items b)))
+           (and (= (length ra) (length rb))
+                (let loop ((x ra) (y rb))
+                  (cond ((null? x) #t)
+                        ((py-equal? (car x) (car y)) (loop (cdr x) (cdr y)))
+                        (else #f))))))
+        ((and (py-none? a) (py-none? b)) #t)
+        (else (equal? a b))))
+
 (define (py-cmp-lt? a b)
+  "Python 的 a < b：数值 / 字符串 / 序列（tuple、list 等按字典序逐元素）"
   (cond ((and (number? a) (number? b)) (< a b))
         ((and (string? a) (string? b)) (string<? a b))
+        ((and (py-seq-like? a) (py-seq-like? b))
+         ;; 字典序：首个不等元素决定；前缀相等则短的更小（与 CPython 一致）
+         (let loop ((x (py-items a)) (y (py-items b)))
+           (cond ((null? x) (not (null? y)))
+                 ((null? y) #f)
+                 ((py-equal? (car x) (car y)) (loop (cdr x) (cdr y)))
+                 (else (py-cmp-lt? (car x) (car y))))))
         (else #f)))
 
 (define (py-sum seq . start)
@@ -1271,6 +1423,37 @@ np 插件可覆盖成 PyArray 版"
          (hi (if (< end 0) (+ n end) end)))
     (list->vector (if (<= hi start) '()
                       (list-head (list-tail lst start) (- hi start))))))
+
+(define (py-slice v start end)
+  "v[start:end]：Python 切片统一入口（str / tagged-array / vector / py-glist）；
+   start/end 可为 py-none（缺省 → 从 0 / 到末尾），负下标从尾部数"
+  (if (string? v)
+      (let* ((n (string-length v))
+             (a (if (py-none? start) 0 start))
+             (b (if (py-none? end) n end))
+             (a (if (< a 0) (max 0 (+ n a)) a))
+             (b (if (< b 0) (max 0 (+ n b)) b)))
+        (slice-string v a (min b n)))
+      ;; 其余序列：先摊成 Scheme list，再按 Python 规则截（负下标 / 越界都折算）
+      (let* ((lst (py-items v))
+             (n (length lst))
+             (a (if (py-none? start) 0 start))
+             (b (if (py-none? end) n end))
+             (a (if (< a 0) (max 0 (+ n a)) a))
+             (b (if (< b 0) (max 0 (+ n b)) b))
+             (a (min a n))
+             (b (min b n)))
+        (list->vector (if (<= b a) '()
+                          (list-head (list-tail lst a) (- b a)))))))
+
+(define (py-str-repeat s n)
+  "str * int / int * str：Python 的重复拼接（n<=0 → 空串）"
+  (let loop ((k n) (acc ""))
+    (if (<= k 0) acc (loop (- k 1) (string-append acc s)))))
+
+(define (py-divmod a b)
+  "divmod(a, b)：商向下取整、余数与除数同号（与 py-floordiv / py-mod 一致）"
+  (py-tuple (py-floordiv a b) (py-mod a b)))
 
 (define (py-unpack e i)
   "多目标解包的取第 i 项：tuple / vector / 点对 (a . b) / 其它按单值"

@@ -248,6 +248,10 @@ def _binop_result(lt, rt, op_name):
         return Type("int")
     if lt.base == "str" and rt.base == "str" and op_name == "+":
         return Type("str")
+    # "ab" * 3 / 3 * "ab"：字符串重复，结果仍是 str
+    if op_name == "*" and ((lt.base == "str" and rt.base == "int")
+                           or (lt.base == "int" and rt.base == "str")):
+        return Type("str")
     if lt.base == "list" and rt.base == "list" and op_name == "+":
         # 列表拼接：元素类型取公共类型
         if lt.params and rt.params:
@@ -909,6 +913,7 @@ TYPE_ENV = {}
 # 种子与自举翻译器就会一边出 `+` 一边出 `fx+`（IR 不一致）。
 ANNOT_ENV = set()
 CURRENT_PARAMS = set()   # 当前作用域的参数名（调用时不加 static_ 前缀）
+RUNTIME_VARS = set()     # 被赋值/循环绑定过的名字：可能是函数值，调用时不加 static_
 
 def parse_type_annotation(node):
     """从 ast.AnnAssign / ast.arg 解析 Python 类型字符串"""
@@ -1313,6 +1318,17 @@ def translate_binop(op_name, left_node, right_node):
         return f"({fl_op} {left} {right})"
     if (is_str or lt == "str" or rt == "str") and op_name == "Add":
         return f"(string-append {left} {right})"
+    if op_name == "Mod" and lt == "str":
+        # "%d-%s" % (a, b)：Python 的 %-格式化尚未实现。宁可构建期响亮失败，
+        # 也不能静默发出 py-mod 算出一堆垃圾。
+        TRANS_ERRORS.append(
+            f"第 {getattr(left_node, 'lineno', 0)} 行: str 的 % 格式化尚未支持，改用 str() + 拼接 或 f-string")
+        return f"(py-str-format-unsupported {left} {right})"
+    if op_name == "Mult" and (lt == "str" or rt == "str"):
+        # "ab" * 3 / 3 * "ab"：Python 的字符串重复（Scheme 的 * 只吃数）
+        if lt == "str":
+            return f"(py-str-repeat {left} {right})"
+        return f"(py-str-repeat {right} {left})"
     # 张量二元运算：任一侧是张量表达式/变量 → torch-tensor-<op>（带标量提升）
     if op_name in ("Add", "Sub", "Mult", "Div"):
         if expr_is_tensor(left_node) or expr_is_tensor(right_node):
@@ -1388,7 +1404,17 @@ def translate_compare(op, left_node, right_node):
     fx_op, fl_op, generic = op_map_num.get(type(op).__name__, (None, None, None))
     if type(op).__name__ == "Eq":
         # 双方类型都未知：用 equal?（number/string/char 通吃），别发 (= ...)
-        return f"(equal? {left} {right})"
+        return f"(py-equal? {left} {right})"
+    # 类型未知或序列（tuple/list）：交给运行时 py-cmp-lt?（数值/字符串/字典序都在里面），
+    # 不能发裸 `<`：tuple < tuple 会撞 `is not a real number`
+    if type(op).__name__ == "Lt":
+        return f"(py-cmp-lt? {left} {right})"
+    if type(op).__name__ == "Gt":
+        return f"(py-cmp-lt? {right} {left})"
+    if type(op).__name__ == "LtE":
+        return f"(not (py-cmp-lt? {right} {left}))"
+    if type(op).__name__ == "GtE":
+        return f"(not (py-cmp-lt? {left} {right}))"
     return f"({generic} {left} {right})"
 
 
@@ -1584,6 +1610,14 @@ def emit_for_stmt(stmt, indent="        "):
     """for 循环 → do 循环 / 向量遍历（translate_block 与函数体共用）"""
     target = mangle_name(stmt.target.id) if isinstance(stmt.target, ast.Name) else "i"
     it = stmt.iter
+    # 循环变量是运行时值（可能是 lambda/函数值）：先登记，body 里 f(x) 才不当成
+    # 用户函数一样加 static_ 前缀（否则 (static_f 100) → variable static_f is not bound）
+    if isinstance(stmt.target, ast.Name):
+        RUNTIME_VARS.add(stmt.target.id)
+    elif isinstance(stmt.target, (ast.Tuple, ast.List)):
+        for _e in stmt.target.elts:
+            if isinstance(_e, ast.Name):
+                RUNTIME_VARS.add(_e.id)
     body_str = " ".join(translate_block(stmt.body))
     # for a, b in <iter>：元素按 Python 下标取（tuple/pair/vector 统一走 py-get）
     if isinstance(stmt.target, (ast.Tuple, ast.List)) and stmt.target.elts \
@@ -3974,6 +4008,11 @@ def translate_expr(node):
                 return f"(py-{name} {' '.join(args)})" if args else ("#f" if name == "any" else "#t")
             if name == "pow":
                 return f"(pow {args[0]} {args[1]})" if len(args) >= 2 else "1"
+            if name == "divmod":
+                # CPython divmod：商向下取整、余数随除数符号（见 prelude py-divmod）
+                if len(args) != 2:
+                    return gen_error(node, "divmod expects 2 arguments")
+                return f"(py-divmod {args[0]} {args[1]})"
             if name == "none":
                 return "(None)"
             # Option/Result helper functions
@@ -4000,6 +4039,9 @@ def translate_expr(node):
                 return f"({mangle_name(name)} {' '.join(args)})"
             # 局部变量可能是函数值（高阶函数），不加 static_ 前缀
             if name in TYPE_ENV:
+                return f"({mangle_name(name)} {' '.join(args)})"
+            # 被赋值/循环绑定过的名字也可能是函数值（fs[0](x) / for f in fs: f(x)）
+            if name in RUNTIME_VARS:
                 return f"({mangle_name(name)} {' '.join(args)})"
             # 当前作用域的参数也可能是函数值
             if name in CURRENT_PARAMS:
@@ -4069,6 +4111,60 @@ def translate_expr(node):
                 }
                 mapped = MATH_MAP.get(attr, attr)
                 return f"({mapped} {' '.join(args)})"
+            # ── 字符串方法：接收者是 str（字面量或已推断为 str）时映射到 str-*
+            # 之前这里会落到下面的 `({value}-{attr})` 兜底，生成 (s-strip) 这种
+            # 丢接收者、丢实参的垃圾，构建期看不见、运行时变量未绑定。
+            _recv_t = infer_expr_type(func.value)
+            _is_str_recv = (_recv_t == "str"
+                            or (isinstance(func.value, ast.Constant)
+                                and isinstance(func.value.value, str))
+                            or (isinstance(func.value, ast.JoinedStr)))
+            if _is_str_recv:
+                STR_METHODS = {
+                    "upper": "str-upper", "lower": "str-lower",
+                    "strip": "str-trim", "lstrip": "str-trim",
+                    "rstrip": "str-trim",
+                    "split": "str-split", "replace": "str-replace",
+                    "startswith": "str-starts-with?",
+                    "endswith": "str-ends-with?",
+                    "find": "py-str-find", "count": "py-str-count",
+                    "index": "py-str-index",
+                    "isdigit": "py-str-isdigit?", "isalpha": "py-str-isalpha?",
+                    "isspace": "py-str-isspace?", "islower": "py-str-islower?",
+                    "isupper": "py-str-isupper?",
+                    "capitalize": "py-str-capitalize",
+                    "zfill": "py-str-zfill", "ljust": "py-str-ljust",
+                    "rjust": "py-str-rjust", "center": "py-str-center",
+                    "title": "str-title",
+                }
+                if attr == "join":
+                    # sep.join(parts) → (str-join parts sep)
+                    if len(args) != 1:
+                        TRANS_ERRORS.append(f"第 {getattr(node, 'lineno', 0)} 行: join 需要 1 个实参")
+                        return "#f"
+                    return f"(str-join {args[0]} {value})"
+                if attr == "splitlines":
+                    return f"(str-split-lines {value})"
+                if attr == "format":
+                    TRANS_ERRORS.append(
+                        f"第 {getattr(node, 'lineno', 0)} 行: str.format 尚未支持，改用 str() + 拼接")
+                    return "#f"
+                fn = STR_METHODS.get(attr)
+                if fn:
+                    # maxsplit / count 之类 Python 专有实参不支持：多给就响亮报错
+                    if attr == "split" and len(args) > 1:
+                        TRANS_ERRORS.append(
+                            f"第 {getattr(node, 'lineno', 0)} 行: str.split 的 maxsplit 尚未支持")
+                        return "#f"
+                    # 无实参时不留尾随空格：`(str-trim s )` 与环 2 的 `(str-trim s)`
+                    # 不是逐字节相等的 IR（check_translate 会判 DIFF）
+                    rest = " ".join(args)
+                    if rest == "":
+                        return f"({fn} {value})"
+                    return f"({fn} {value} {rest})"
+                TRANS_ERRORS.append(
+                    f"第 {getattr(node, 'lineno', 0)} 行: 字符串方法 .{attr}() 尚未支持")
+                return "#f"
             # dict.copy() / list.copy() 等无参方法
             if attr == "copy":
                 return f"(dict-copy {value})"
@@ -4253,7 +4349,13 @@ def translate_expr(node):
             t = translate_tensor_method(value, attr, node)
             if t:
                 return t
-        return f"({ast.dump(func)} {' '.join(args)})"
+        # 调用者是表达式（fs[0](x) / f()(x)）：Scheme 直接 ((expr) args...)
+        if isinstance(func, (ast.Subscript, ast.Call)):
+            return f"({translate_expr(func)} {' '.join(args)})"
+        # 其余形状：响亮失败，别让 ast.dump 垃圾进 IR
+        TRANS_ERRORS.append(
+            f"line {node.lineno}: unsupported call target '{type(func).__name__}'")
+        return "#f ;; error: unsupported call target"
     elif isinstance(node, ast.Dict):
         # {"a": 1, "b": 2} → dict literal
         keys = [translate_expr(k) for k in node.keys]
@@ -4326,6 +4428,8 @@ def translate_expr(node):
                     end = f"(string-length {value})"
                 elif vt and str(vt).startswith("list["):
                     end = f"(tagged-array-len {value})"
+                elif vt and str(vt).startswith("list"):
+                    end = "py-none"       # py-slice 的「到末尾」约定
                 else:
                     end = f"(vector-length {value})"
             else:
@@ -4334,8 +4438,8 @@ def translate_expr(node):
                 return f"(slice-string {value} {start} {end})"
             if vt and str(vt).startswith("list["):
                 return f"(make-tagged-array (slice-array (tagged-array-data {value}) {start} {end}) (- {end} {start}))"
-            # fallback: runtime dispatch between string and vector/array slices
-            return f"(if (string? {value}) (slice-string {value} {start} {end}) (slice-array {value} {start} {end}))"
+            # 通用：运行时按实际类型分派（str / 带类型数组 / py-list / glist / vector）
+            return f"(py-slice {value} {start} {end})"
         # 索引
         idx = translate_expr(slc)
         # If the index is a string literal, use dict-get
@@ -4598,6 +4702,9 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                 si += 1
                 continue
             target = mangle_name(stmt.target.id) if isinstance(stmt.target, ast.Name) else "i"
+            # 循环变量是运行时值（可能是 lambda/函数值）：body 里 f(x) 不能加 static_ 前缀
+            if isinstance(stmt.target, ast.Name):
+                RUNTIME_VARS.add(stmt.target.id)
             if isinstance(stmt.iter, ast.Call) and hasattr(stmt.iter.func, 'id') and stmt.iter.func.id == 'range':
                 rargs = stmt.iter.args
                 if len(rargs) == 1:
@@ -4633,7 +4740,9 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                 body_str = " ".join(body_parts)
                 body_exprs.append(f"(let* ((__iter (py-iter-seq {iter_name})) (__n (vector-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({target} (vector-ref __iter __i))) {body_str})))")
             else:
-                body_exprs.append(f";; for loop (untranslated)")
+                # 其余可迭代（字符串常量 / zip / enumerate / 属性调用…）统一交给 emit_for_stmt，
+                # 不再静默产注释（静默降级 = 程序悄悄少跑一段）
+                body_exprs.append(emit_for_stmt(stmt))
         elif isinstance(stmt, ast.Match):
             body_exprs.append(translate_match(stmt))
         elif isinstance(stmt, ast.While):
