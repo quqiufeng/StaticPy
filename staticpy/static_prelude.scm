@@ -2440,7 +2440,12 @@ np 插件可覆盖成 PyArray 版"
     (libc-nanosleep ts 0)
     (foreign-free ts)))
 
-(define (clock) (libc-time 0))
+(define (clock)
+  "当前时间戳（float 秒；与 CPython time.time() 一致，含小数）"
+  (let* ((t (current-time 'time-utc))
+         (s (time-second t))
+         (ns (time-nanosecond t)))
+    (+ (exact->inexact s) (/ ns 1000000000.0))))
 
 ;; ====== 命令行参数 ======
 (define True #t)
