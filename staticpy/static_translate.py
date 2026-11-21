@@ -248,6 +248,9 @@ def _binop_result(lt, rt, op_name):
         return Type("int")
     if lt.base == "str" and rt.base == "str" and op_name == "+":
         return Type("str")
+    # "%d-%s" % (a, b)：%-格式化，右侧可以是任意单值/元组/字典，结果仍是 str
+    if op_name == "%" and lt.base == "str":
+        return Type("str")
     # "ab" * 3 / 3 * "ab"：字符串重复，结果仍是 str
     if op_name == "*" and ((lt.base == "str" and rt.base == "int")
                            or (lt.base == "int" and rt.base == "str")):
@@ -1318,12 +1321,9 @@ def translate_binop(op_name, left_node, right_node):
         return f"({fl_op} {left} {right})"
     if (is_str or lt == "str" or rt == "str") and op_name == "Add":
         return f"(string-append {left} {right})"
-    if op_name == "Mod" and lt == "str":
-        # "%d-%s" % (a, b)：Python 的 %-格式化尚未实现。宁可构建期响亮失败，
-        # 也不能静默发出 py-mod 算出一堆垃圾。
-        TRANS_ERRORS.append(
-            f"第 {getattr(left_node, 'lineno', 0)} 行: str 的 % 格式化尚未支持，改用 str() + 拼接 或 f-string")
-        return f"(py-str-format-unsupported {left} {right})"
+    if op_name == "Mod" and (lt == "str" or rt == "str"):
+        # "%d-%s" % (a, b)：Python 的 %-格式化（运行时 py-str-percent 按 CPython 渲染）
+        return f"(py-str-percent {left} {right})"
     if op_name == "Mult" and (lt == "str" or rt == "str"):
         # "ab" * 3 / 3 * "ab"：Python 的字符串重复（Scheme 的 * 只吃数）
         if lt == "str":

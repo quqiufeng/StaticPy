@@ -952,6 +952,9 @@ def translate_binop(op: str, ln, rn) -> str:
             return f"(py-pow {left} {right})"
     if (lt == "str" or rt == "str") and op == "Add":
         return f"(string-append {left} {right})"
+    if (lt == "str" or rt == "str") and op == "Mod":
+        # "%d-%s" % (a, b) -> (py-str-percent fmt args)
+        return f"(py-str-percent {left} {right})"
     if (lt == "str" or rt == "str") and op == "Mult":
         # "ab" * 3 / 3 * "ab" -> (py-str-repeat "ab" 3)
         if lt == "str":

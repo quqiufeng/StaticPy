@@ -1450,6 +1450,126 @@ np 插件可覆盖成 PyArray 版"
   "divmod(a, b)：商向下取整、余数与除数同号（与 py-floordiv / py-mod 一致）"
   (py-tuple (py-floordiv a b) (py-mod a b)))
 
+;; ====== %-格式化（"%s-%d" % (a, b)） ======
+;; 对齐 CPython：%s %r %d %i %x %X %o %f %%；支持 - + 空格 0 # 标志、宽度、精度。
+;; 其它转换符（%e/%g/%c/%(name)s）一律 error 报错——宁可响，不静默算错。
+
+(define (py-pct-argv args)
+  "%-格式的右侧：tuple / list / vector 展开成参数表，其它按单值"
+  (cond ((py-tuple? args) (py-tuple-items args))
+        ((vector? args) (vector->list args))
+        ((py-glist? args) (py-glist-seq args))
+        ((list? args) args)
+        (else (list args))))
+
+(define (py-pct-has? fl ch)
+  "标志串里有没有字符 ch"
+  (let loop ((i 0))
+    (cond ((fx= i (string-length fl)) #f)
+          ((char=? (string-ref fl i) ch) #t)
+          (else (loop (fx+ i 1))))))
+
+(define (py-pct-spec fmt i)
+  "解析 fmt[i] 处的 % 格式项 -> (下一位置 标志串 宽度 精度 转换符)"
+  (let* ((n (string-length fmt))
+         (jb (let flags ((j (fx+ i 1)) (acc ""))
+               (if (and (fx< j n)
+                        (let ((c (string-ref fmt j)))
+                          (or (char=? c #\-) (char=? c #\+) (char=? c #\space)
+                              (char=? c #\0) (char=? c #\#))))
+                   (flags (fx+ j 1) (string-append acc (string (string-ref fmt j))))
+                   (cons j acc))))
+         (jw (let width ((j (car jb)) (acc ""))
+               (if (and (fx< j n) (char-numeric? (string-ref fmt j)))
+                   (width (fx+ j 1) (string-append acc (string (string-ref fmt j))))
+                   (cons j acc))))
+         (jp (if (and (fx< (car jw) n) (char=? (string-ref fmt (car jw)) #\.))
+                 (let prec ((j (fx+ (car jw) 1)) (acc ""))
+                   (if (and (fx< j n) (char-numeric? (string-ref fmt j)))
+                       (prec (fx+ j 1) (string-append acc (string (string-ref fmt j))))
+                       (cons j acc)))
+                 (cons (car jw) #f)))
+         (j2 (car jp))
+         (ws (cdr jw))
+         (ps (cdr jp)))
+    (list (if (fx< j2 n) (fx+ j2 1) j2)
+          (cdr jb)
+          (if (string=? ws "") #f (string->number ws))
+          (cond ((not ps) #f) ((string=? ps "") 0) (else (string->number ps)))
+          (if (fx< j2 n) (string-ref fmt j2) #\?))))
+
+(define (py-pct-int v)
+  "整数取值：浮点按 CPython 向零截断（truncate 仍是不精确数，要 exact 转回整数）"
+  (if (inexact? v) (exact (truncate v)) (exact v)))
+
+(define (py-pct-render v conv prec)
+  "一个转换符 -> (符号串 正文串)；正文不含符号"
+  (case conv
+    ((#\s)
+     (let ((s (py-str v)))
+       (list "" (if (and prec (fx< prec (string-length s))) (substring s 0 prec) s))))
+    ((#\r) (list "" (py-repr v)))
+    ((#\d #\i)
+     (let ((iv (py-pct-int v)))
+       (list (if (< iv 0) "-" "") (number->string (abs iv)))))
+    ((#\x #\X)
+     ;; Chez 的 number->string 十六进制是大写，%x 要小写
+     (let* ((iv (py-pct-int v))
+            (d (number->string (abs iv) 16)))
+       (list (if (< iv 0) "-" "")
+             (if (char=? conv #\X) (string-upcase d) (string-downcase d)))))
+    ((#\o)
+     (let ((iv (py-pct-int v)))
+       (list (if (< iv 0) "-" "") (number->string (abs iv) 8))))
+    ((#\F #\f)
+     (let ((fv (exact->inexact v)))
+       (list (if (< fv 0) "-" "") (float_fixed (abs fv) (if prec prec 6)))))
+    (else (list "" (py-str v)))))
+
+(define (py-pct-pad sign body width flags numeric)
+  "按宽度/标志补齐：默认为数值右对齐，- 左对齐，0 补在符号之后"
+  (let* ((all (string-append sign body))
+         (padn (if width (max 0 (- width (string-length all))) 0)))
+    (cond ((fx=? padn 0) all)
+          ((py-pct-has? flags #\-) (string-append all (make-string padn #\space)))
+          ((and numeric (py-pct-has? flags #\0))
+           (string-append sign (make-string padn #\0) body))
+          (else (string-append (make-string padn #\space) all)))))
+
+(define (py-str-percent fmt args)
+  "Python 的 %-格式化：fmt % args（args 是单值或 tuple/list/vector）"
+  (let* ((argv (py-pct-argv args))
+         (np (length argv))
+         (n (string-length fmt)))
+    (let loop ((i 0) (k 0) (acc '()))
+      (cond ((fx= i n) (apply string-append (reverse acc)))
+            ((not (char=? (string-ref fmt i) #\%))
+             (loop (fx+ i 1) k (cons (string (string-ref fmt i)) acc)))
+            ((and (fx< (fx+ i 1) n) (char=? (string-ref fmt (fx+ i 1)) #\%))
+             (loop (fx+ i 2) k (cons "%" acc)))
+            (else
+             (let* ((sp (py-pct-spec fmt i))
+                    (conv (list-ref sp 4))
+                    (numeric (memv conv '(#\d #\i #\x #\X #\o #\f #\F))))
+               (cond
+                 ((not (memv conv '(#\s #\r #\d #\i #\x #\X #\o #\f #\F)))
+                  (error 'py-str-percent
+                         (string-append "不支持的 %-格式符：%" (string conv))))
+                 ((>= k np)
+                  (error 'py-str-percent "%-格式化缺参数"))
+                 (else
+                  (let* ((r (py-pct-render (list-ref argv k) conv (list-ref sp 3)))
+                         (body (cadr r))
+                         (s0 (car r))
+                         (flags (list-ref sp 1))
+                         (sign (cond ((not (string=? s0 "")) s0)
+                                     ((and numeric (py-pct-has? flags #\+)) "+")
+                                     ((and numeric (py-pct-has? flags #\space)) " ")
+                                     (else ""))))
+                    (loop (list-ref sp 0) (fx+ k 1)
+                          (cons (py-pct-pad sign body (list-ref sp 2) flags numeric)
+                                acc)))))))))))
+
 (define (py-unpack e i)
   "多目标解包的取第 i 项：tuple / vector / 点对 (a . b) / 其它按单值"
   (cond ((py-tuple? e) (py-tuple-ref e i))

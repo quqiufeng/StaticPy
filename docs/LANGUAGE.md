@@ -71,10 +71,11 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 | `round(x)` | `py-round` | 银行家舍入 + 返回 int（不是 flonum） |
 | `if x:` / `while x:` / `not x` / `a and b` / `a or b` | `py-truthy` | None / `0` / `""` / `[]` / `{}` 为假；`and`/`or` **返回操作数**而非布尔 |
 | `a < b < c` | `emit_chained_compare` | 中间操作数只求值一次，逐对短路 |
+| `"%d-%s" % (a, b)` | `py-str-percent` | CPython 的 %-格式化：右侧单值或 tuple/list；`%s %r %d %i %x %X %o %f %%` + `- + 空格 0 #` 标志、宽度、精度；`%e/%g/%c/%(name)s` **运行时 error 报错**（不静默算错） |
 
 整数与浮点混算时翻译器插 `exact->inexact`（`(fl* 1.5 4)` 会报 `4 is not a flonum`）。
 每条规则都有对应用例：`tests/semantics/{int_arith,float_arith,aug_assign,cmp_chain,`
-`ternary_flow,truthy_flow,bitops,round_builtin}.static.py`，跑 `python3 staticpy/semantics_diff.py`。
+`ternary_flow,truthy_flow,bitops,round_builtin,str_format}.static.py`，跑 `python3 staticpy/semantics_diff.py`。
 
 ### class（记录类型 + 静态分派）
 
