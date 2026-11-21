@@ -1,4 +1,9 @@
 # difftest.py — 缓动差分：Python 独立实现 vs libeasing（同规范，双实现互验）
+# [自举豁免 · 对照端] 本文件**故意**保留 CPython 实现，不提供 .static.py 版本。
+# 它是差分的「裁判」：一边跑 CPython/原库，一边跑我们的产物，逐行/逐像素比对。
+# 若把它改写进 StaticPy，被测物就成了自己的考官，判据立刻失效（AGENTS §0/§2）。
+# 这里的 Python 只用于「测量对照」，不进任何产物链路。
+
 import ctypes as C, math, os, sys
 lib = C.CDLL(os.environ.get("EASING_SO", os.path.join(os.path.dirname(__file__), "..", "cpp", "easing", "build", "libeasing.so")))
 lib.ease.restype = C.c_double; lib.ease.argtypes = [C.c_char_p, C.c_double]

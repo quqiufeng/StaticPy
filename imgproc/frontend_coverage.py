@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# [自举豁免 · 对照端] 本文件**故意**保留 CPython 实现，不提供 .static.py 版本。
+# 它是差分的「裁判」：一边跑 CPython/原库，一边跑我们的产物，逐行/逐像素比对。
+# 若把它改写进 StaticPy，被测物就成了自己的考官，判据立刻失效（AGENTS §0/§2）。
+# 这里的 Python 只用于「测量对照」，不进任何产物链路。
+
 """frontend_coverage.py — 用 PIL 自省清单核对我们的覆盖面。
 
 把 PIL 顶层函数/类/方法 映射到 libimgproc 的 C ABI 名（MAP 表），

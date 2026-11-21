@@ -1,4 +1,9 @@
 # difftest.py — warp3d 差分：仿射 vs cv2（±1，cv2 定点插值舍入）
+# [自举豁免 · 对照端] 本文件**故意**保留 CPython 实现，不提供 .static.py 版本。
+# 它是差分的「裁判」：一边跑 CPython/原库，一边跑我们的产物，逐行/逐像素比对。
+# 若把它改写进 StaticPy，被测物就成了自己的考官，判据立刻失效（AGENTS §0/§2）。
+# 这里的 Python 只用于「测量对照」，不进任何产物链路。
+
 import ctypes as C, numpy as np, cv2, os, sys, tempfile
 from PIL import Image
 lib=C.CDLL(os.environ.get("WARP3D_SO", os.path.join(os.path.dirname(__file__),"..","cpp","warp3d","build","libwarp3d.so")))

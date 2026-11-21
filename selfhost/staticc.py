@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# [命名说明] 本文件**已经是 StaticPy 源**（Python 子集语法），只沿用 .py 命名：
+# selfcheck.sh 直接 `static_build_comfycli.sh selfhost/staticc.py staticc`，trust/ddc.sh 的 C1 也是它。
+# 所以它不是「缺 .static.py」的欠账，而是环 2 的编译器本体。
+
 from typing import Tuple
 
 """staticc.py — minimal StaticPy compiler written in StaticPy.

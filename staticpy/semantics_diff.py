@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# [自举豁免 · 对照端] 本文件**故意**保留 CPython 实现，不提供 .static.py 版本。
+# 它是差分的「裁判」：一边跑 CPython/原库，一边跑我们的产物，逐行/逐像素比对。
+# 若把它改写进 StaticPy，被测物就成了自己的考官，判据立刻失效（AGENTS §0/§2）。
+# 这里的 Python 只用于「测量对照」，不进任何产物链路。
+
 """semantics_diff.py — 翻译器语义差分：CPython 输出 vs StaticPy ELF 输出。
 
 tokenize_diff.py / parse_diff.py 只守住**前端形状**，守不住"翻过去了但语义跑偏"。

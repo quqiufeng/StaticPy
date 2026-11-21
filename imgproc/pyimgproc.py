@@ -1,3 +1,8 @@
+# [自举豁免 · 对照端] 本文件**故意**保留 CPython 实现，不提供 .static.py 版本。
+# 它是差分的「裁判」：一边跑 CPython/原库，一边跑我们的产物，逐行/逐像素比对。
+# 若把它改写进 StaticPy，被测物就成了自己的考官，判据立刻失效（AGENTS §0/§2）。
+# 这里的 Python 只用于「测量对照」，不进任何产物链路。
+
 """pyimgproc — libimgproc.so 的 ctypes 绑定（镜像 C ABI）。
 
 用途：自动化差分测试（对比 Pillow）用，迭代快。生产走 imgproc/*.static.py（StaticPy ELF）。

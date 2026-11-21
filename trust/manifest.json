@@ -115,9 +115,9 @@
       "path": "selfhost/staticc.py",
       "why": "环3 的另一份实现：Python 子集语法的编译器（DDC 的 C1）",
       "state": "present",
-      "sha256": "0c61a646ff73af3addd3d7429f2d7b88ef9f7f30233fdc7893d6bd6ec070ef5e",
-      "bytes": 34288,
-      "lines": 1128
+      "sha256": "3968290c2213e0a431467d7bca303b7a99a2504c16677fd8fda63370578b6e0b",
+      "bytes": 34588,
+      "lines": 1132
     },
     {
       "role": "harness",
@@ -160,9 +160,9 @@
       "path": "staticpy/semantics_diff.py",
       "why": "判据：语义差分（CPython 跑 vs ELF 跑）",
       "state": "present",
-      "sha256": "20e88a0cb8f3953e013638ff36832db005ec3409a8a2f170c5a02c3392ab23e4",
-      "bytes": 4027,
-      "lines": 96
+      "sha256": "50ada1f3ae2cf296fb1ff05d7329bc3cb7b85d0bf6869067db816da74c497dd2",
+      "bytes": 4431,
+      "lines": 101
     },
     {
       "role": "harness",
@@ -2122,9 +2122,9 @@
       "path": "trust/manifest.py",
       "why": "判据/证据装置（自动收录：改它=改判据，必须显式重签）",
       "state": "present",
-      "sha256": "56da85749339d6f5c25d63451390e1cbc1ba066a2fd4c56855752d0a823f95e7",
-      "bytes": 19774,
-      "lines": 430
+      "sha256": "ca4ac0079253f6dddf1a25db941c0a641cfcf0ff75c17e427dcdaea37fa55d48",
+      "bytes": 20096,
+      "lines": 434
     },
     {
       "role": "harness",
