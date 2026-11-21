@@ -12,3 +12,5 @@ def main():
     print("%s" % 3.5, "%d" % 3.9, "%f" % 1)
     s = "n=%d" % a
     print(s, len(s))
+    print("{a:>4}-{}".format(7, a="x"))
+    print("{k}-{k}".format(k=9))

@@ -34,9 +34,9 @@
       "path": "tools/seed/prelude.scm",
       "why": "**运行时真源**（split_plugins.py 从它切出 plugins/ 再拼回 prelude）；改语义改这里",
       "state": "present",
-      "sha256": "e994e293452e4b8535aaf1de370a6f54216793bfc98f04110fdad15c94e6d856",
-      "bytes": 120073,
-      "lines": 2911
+      "sha256": "eaf095713f36ad55e37e9e9789e62eff5051d43b42e9de37435ea383c171fdf4",
+      "bytes": 121826,
+      "lines": 2950
     },
     {
       "role": "seed",
@@ -52,18 +52,18 @@
       "path": "plugins/core/runtime.scm",
       "why": "切分后的 core 运行时（构建实际读它）：位运算等兜底在此",
       "state": "present",
-      "sha256": "0ae27dd32ee4345238f3a95a868ac61f22415f991f659b0ddc9ad49757e3ec56",
-      "bytes": 91994,
-      "lines": 2183
+      "sha256": "927b423413cfa05b662761fce2e320549a23f6cbd46c95b60bba73c94226833a",
+      "bytes": 93747,
+      "lines": 2222
     },
     {
       "role": "gen",
       "path": "staticpy/static_prelude.scm",
       "why": "**生成物**（勿手改）：prelude ⇄ plugins 必须同步，check 不过就别提交",
       "state": "present",
-      "sha256": "2160d6340fb4a057c00409a2e4c8fd07d234b3bb220c12b52d678f60e8229f37",
-      "bytes": 120023,
-      "lines": 2907
+      "sha256": "4d34839a91577b5d6c6e67a769b22979395f7683abeb386a45a2a0b478891aaa",
+      "bytes": 121776,
+      "lines": 2946
     },
     {
       "role": "seed",

@@ -1637,23 +1637,59 @@ np 插件可覆盖成 PyArray 版"
                    (flags (fx+ j 1) (string-append acc (string (string-ref fmt j))))
                    (cons j acc))))
          (jw (let width ((j (car jb)) (acc ""))
-               (if (and (fx< j n) (char-numeric? (string-ref fmt j)))
-                   (width (fx+ j 1) (string-append acc (string (string-ref fmt j))))
-                   (cons j acc))))
+               (cond ((and (fx< j n) (char=? (string-ref fmt j) #\*))
+                      (cons (fx+ j 1) 'star))
+                     ((and (fx< j n) (char-numeric? (string-ref fmt j)))
+                      (width (fx+ j 1) (string-append acc (string (string-ref fmt j)))))
+                     (else (cons j acc)))))
          (jp (if (and (fx< (car jw) n) (char=? (string-ref fmt (car jw)) #\.))
                  (let prec ((j (fx+ (car jw) 1)) (acc ""))
-                   (if (and (fx< j n) (char-numeric? (string-ref fmt j)))
-                       (prec (fx+ j 1) (string-append acc (string (string-ref fmt j))))
-                       (cons j acc)))
+                   (cond ((and (fx< j n) (char=? (string-ref fmt j) #\*))
+                          (cons (fx+ j 1) 'star))
+                         ((and (fx< j n) (char-numeric? (string-ref fmt j)))
+                          (prec (fx+ j 1) (string-append acc (string (string-ref fmt j)))))
+                         (else (cons j acc))))
                  (cons (car jw) #f)))
          (j2 (car jp))
          (ws (cdr jw))
          (ps (cdr jp)))
     (list (if (fx< j2 n) (fx+ j2 1) j2)
           (cdr jb)
-          (if (string=? ws "") #f (string->number ws))
-          (cond ((not ps) #f) ((string=? ps "") 0) (else (string->number ps)))
+          (cond ((eq? ws 'star) 'star) ((string=? ws "") #f) (else (string->number ws)))
+          (cond ((eq? ps 'star) 'star)
+                ((not ps) #f)
+                ((string=? ps "") 0)
+                (else (string->number ps)))
           (if (fx< j2 n) (string-ref fmt j2) #\?))))
+
+(define (py-pct-take argv k np)
+  "* 宽度/精度取值：把对应位置参数按整数取出"
+  (if (fx>= k np) (error 'py-str-percent "%-格式化的 * 缺少宽度/精度参数"))
+  (py-pct-int (list-ref argv k)))
+
+(define (py-pct-stars sp mp k argv np)
+  "把 %-格式里的 * 宽度/精度换成实际位置参数 -> (新sp 新k)。
+   负数宽度等价于 - 标志；负精度按 CPython 当 0（%.*f 与 %.0f 同结果）。"
+  (let* ((w (list-ref sp 2))
+         (p (list-ref sp 3))
+         (hw (eq? w 'star))
+         (hp (eq? p 'star)))
+    (cond
+      ((not (or hw hp)) (list sp k))
+      (mp (error 'py-str-percent "%-格式的 (键) 不能配 * 宽度/精度"))
+      (else
+       (let* ((wv (if hw (py-pct-take argv k np) #f))
+              (k1 (if hw (fx+ k 1) k))
+              (pv (if hp (py-pct-take argv k1 np) #f))
+              (k2 (if hp (fx+ k1 1) k1))
+              (flags (if (and hw (fx< wv 0))
+                         (string-append (list-ref sp 1) "-")
+                         (list-ref sp 1))))
+         (list (list (list-ref sp 0) flags
+                     (if hw (abs wv) w)
+                     (if hp (max 0 pv) p)
+                     (list-ref sp 4))
+               k2))))))
 
 (define (py-pct-spec fmt i)
   "解析 fmt[i] 处的 % 格式项 -> (下一位置 标志串 宽度 精度 转换符)"
@@ -1789,10 +1825,13 @@ np 插件可覆盖成 PyArray 版"
                  (mp
                   (loop (list-ref sp 0) k
                         (cons (py-pct-item (py-pct-field-map args (car mp)) sp) acc)))
-                 ((>= k np) (error 'py-str-percent "%-格式化缺参数"))
                  (else
-                  (loop (list-ref sp 0) (fx+ k 1)
-                        (cons (py-pct-item (list-ref argv k) sp) acc))))))))))
+                  (let* ((rs (py-pct-stars sp #f k argv np))
+                         (sp2 (car rs))
+                         (k2 (cadr rs)))
+                    (if (>= k2 np) (error 'py-str-percent "%-格式化缺参数"))
+                    (loop (list-ref sp2 0) (fx+ k2 1)
+                          (cons (py-pct-item (list-ref argv k2) sp2) acc)))))))))))
 
 (define (py-unpack e i)
   "多目标解包的取第 i 项：tuple / vector / 点对 (a . b) / 其它按单值"
