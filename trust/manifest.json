@@ -25,18 +25,18 @@
       "path": "staticpy/static_translate.py",
       "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
       "state": "present",
-      "sha256": "e182d391987131ea5f3ff08ee5fb092322c0d3b7132df7337a1d4b9ed8e98cf0",
-      "bytes": 219930,
-      "lines": 4977
+      "sha256": "58d6e6c033702b5b0712da17542768803272efee070ad589c12e68f87b954328",
+      "bytes": 226548,
+      "lines": 5086
     },
     {
       "role": "seed",
       "path": "tools/seed/prelude.scm",
       "why": "**运行时真源**（split_plugins.py 从它切出 plugins/ 再拼回 prelude）；改语义改这里",
       "state": "present",
-      "sha256": "044ac79c2e6085c7424ce5a9f062110715c7ab79ec546c0774ba72ce0a30e19e",
-      "bytes": 78147,
-      "lines": 2004
+      "sha256": "37177898f6019693285ede17213dd7f0fe8d47dbd0e9957de9dbe460e427d4be",
+      "bytes": 85927,
+      "lines": 2187
     },
     {
       "role": "seed",
@@ -52,18 +52,18 @@
       "path": "plugins/core/runtime.scm",
       "why": "切分后的 core 运行时（构建实际读它）：位运算等兜底在此",
       "state": "present",
-      "sha256": "acbbdbf42c5980eda2f581b6408b2d3050764ad491549beb5444315b5be961c6",
-      "bytes": 50068,
-      "lines": 1276
+      "sha256": "a2e64579216e670451d8432d2db1b92fc817f540829222caa2791bac79aa6b4f",
+      "bytes": 57848,
+      "lines": 1459
     },
     {
       "role": "gen",
       "path": "staticpy/static_prelude.scm",
       "why": "**生成物**（勿手改）：prelude ⇄ plugins 必须同步，check 不过就别提交",
       "state": "present",
-      "sha256": "9e12efc56130d086645397bc33d18d6a24dd0fff1e07322dc0c1637d14824040",
-      "bytes": 78097,
-      "lines": 2000
+      "sha256": "62005ba2bbefb9badbcc4e663907bc37224e0631244d014d8e8c5ef5d1afa62e",
+      "bytes": 85877,
+      "lines": 2183
     },
     {
       "role": "seed",
@@ -97,9 +97,9 @@
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "6d0e4ea57c95b94f3cd87e005388ac8e88b7d8d014fbd3762d95eb8f7a3260ae",
-      "bytes": 140883,
-      "lines": 3686
+      "sha256": "db6fabaf003f752ff9e6fdda7efde1bf63acc8d6c33377957878d287f40ea480",
+      "bytes": 145769,
+      "lines": 3819
     },
     {
       "role": "impl",
