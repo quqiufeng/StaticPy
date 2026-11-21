@@ -89,7 +89,9 @@ class Shape:                      # 单继承：class Square(Shape)
 
 | 能 | 说明 |
 |---|---|
-| 单继承 + `super().__init__(...)` / `super().m()` | 子类 record 含基类槽，基类方法在子类实例上可用 |
+| 单继承 `class Sub(Base)` + `super().__init__(...)` | 子类 record 含基类槽，基类方法在子类实例上可用（`super().m()` 不支持，会报错） |
+| 多基 `class C(A, B)` | 主基类 `A` 挂 record 父槽；`B` 链的字段/方法**并进** C（就近覆盖） |
+| 类属性默认值 `k: int = 7` / `tag = "hi"` | 字段声明 + `__init__` 里注入 `self.k = 7`（`__init__` 自己赋过的字段不注入） |
 | 字段读写 `self.x = v` / `p.x` | 按**静态类型**解析字段归属（`(Owner-x p)`） |
 | `@classmethod` / `@staticmethod` | 装饰器在编译期吃掉，不产生运行时对象 |
 | 方法当值 | `p.twice` / `P.twice` → 裸过程值 `static_P_twice`（可直接传给 `fn` 形参） |
@@ -98,16 +100,17 @@ class Shape:                      # 单继承：class Square(Shape)
 在 `Dog` 实例上照样成立（字段归属由「谁声明了这个槽位」决定，不是调用者）。
 继承来的方法不必复制，`Dog` 只声明自己新增的槽位。
 
-| 不能（`plugins/clsx` 补齐部分） | 插件降级成 |
-|---|---|
-| `class C(A, B):` 多基 | `class C(A)` + 把 `B` 链的方法/类属性内联进 C 类体（就近覆盖） |
-| `class C: k: int = 7` 类属性默认值 | 字段声明 + `__init__` 里注入 `self.k = 7` |
-| `super().__init__(args)` 对「只有类属性默认值、没有 `__init__`」的基类 | 基类 `__init__` 的赋值就地展开 |
+多继承与类属性默认值都在**核心里**（种子与自举环 2 同一套语义），不是插件降级：
+
+| 写法 | 编译成 | 限制 |
+|---|---|---|
+| `class C(A, B, ...)` | `(parent A)` + `B` 链成员内联（顺序：接近的基类优先，C 自己的声明最高） | 额外基类**不能有 `__init__`**（记录只有一条父槽位链，种子会响亮报错；环 2 只合字段/方法）；内联方法里**不能有 `super()`** |
+| `class C: k: int = 7` | 字段声明 + `__init__` 首部注入 `self.k = 7`；无 `__init__` 的类合成一个 | 默认值须是字面量（`_literal_type` 只认 str/int/float/bool/None） |
+| `super().__init__(args)` | 直接发 `(static_<Base>___init__ self args...)`（主基类；基类没有 `__init__` 且不传参 = 空操作） | 只支持 `__init__`；没有 `super()` 对象、不能 `super().m()` |
 
 ```bash
-# 插件链路上才有多继承/默认值；自举环 2（staticc.sp）不带插件
-STATICPY_PLUGINS=core,clsx bash staticpy/static_build_comfycli.sh app.static.py app
-bash plugins/clsx/check.sh          # 5 用例（defaults/inherit/multi/over/methodval）
+# 语义判据（CPython 输出 vs AOT ELF 输出逐行比）
+python3 staticpy/semantics_diff.py class_     # class_defaults / class_inherit / class_methods / class_methodval / class_multi
 ```
 
 **注意**：没有动态分派、没有 `isinstance`、没有运算符重载（`__eq__`/`__add__` 不生效）。

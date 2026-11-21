@@ -141,33 +141,27 @@ STATICPY_PLUGINS_PATH=$PWD/examples staticpy check \
   examples/syntax_plugin/demo.static.py -p syntax_plugin
 ```
 
-**真实案例：`plugins/clsx/`（class 特性补齐）**
+**曾经的真实案例：`plugins/clsx/`（已进核心，插件已删除）**
 
-内核的 class 子集是**原生单继承记录**：子类 `(parent A)` 共享祖先槽位，`static_A_m`
-在子类实例上照常可用（见 [LANGUAGE.md](./LANGUAGE.md)「class」）。`clsx` 用 `k.rewrite`
-纯源码补三件事，**一个 pass 一件事**：
+内核的 class 子集一度只有「原生单继承记录 + 类体声明字段」。当时三个缺口用 `k.rewrite`
+纯源码补：多基类（`class C(A, B)` 把 `B` 链的方法/类属性内联进 C）、`super().__init__(args)`
+（基类赋值的就地展开）、类属性默认值（`kind: int = 7` → 声明 + `__init__` 注入）。
 
-| 写法 | 降级成 | 为什么 |
-|---|---|---|
-| `class C(A, B):` | `class C(A)` + 把 `B` 链的方法/类属性内联进 C 类体（就近覆盖：C 自己 > A 链 > B 链） | 记录只有一条父槽位链，第二个基类没有槽位可挂 → 只能当 mixin 搬方法 |
-| `super().__init__(args)` | 基类 `__init__` 的赋值就地展开（形参→实参，递归） | 多基内联后可能已没有基类；也让「类属性默认值」对子类生效 |
-| `kind: int = 7` / `tag = "hi"` | `kind: int` + `__init__` 里注入 `self.kind = 7` | 内核只认「类体声明字段」，不认默认值 |
+这三件事现在都**长进了核心**（种子 `static_translate.py` 与环 2 `emit_lib.static.py` 同步）：
+`bases` 多基类合并、`defaults` 默认值注入、无 `__init__` 时合成一个，见
+[LANGUAGE.md](./LANGUAGE.md)「class」。于是 `plugins/clsx/` 被删掉——**这是插件的正常归宿**：
 
-pass 顺序 `mixin → defaults → super`：先内联（多基收敛成单基），再合成默认值的
-`__init__`，最后展开 `super()`——这样 `super().__init__()` 一定能读到刚合成的基类 `__init__`。
-非主基类定义了 `__init__` 会响亮报错（记录不能有两条父槽位链）。
+> 插件适合做「内核还没答应的语法约定」的实验田。一旦语义定型、需要进产物又不想带插件，
+> 就该照原样搬进核心（**种子 + 环 2 两处**），再用四层验收（`check_tokenize` / `check_parse`
+> / `check_translate` / `semantics_diff`）钉住，最后删插件。留下来只会多一条「内核 vs 插件」
+> 双语义的裂缝。
 
-三条工程约束（写进代码注释，也是所有 rewrite 类插件的通用经验）：
+写 rewrite 类插件的三条通用经验（clsx 实践留下的）：
 
 1. **每个 pass 都重新 `ast.parse` 当前文本**——行号只在单个 pass 内有效，
    跨 pass 复用行号会让「插入行」把后续编辑挤歪。
-2. **幂等**：改写结果再喂一遍必须完全不变（`check.sh` 有这条断言）。
-3. **不认识就响亮失败**：内联方法引用了未声明字段、残留 `super().<name>()` 都直接
-   `SyntaxError`，不静默生成错代码。
-
-```bash
-bash plugins/clsx/check.sh     # 5 个用例 AOT 双跑（core vs core,clsx）：defaults/inherit/multi/over/methodval
-```
+2. **幂等**：改写结果再喂一遍必须完全不变。
+3. **不认识就响亮失败**：不静默生成错代码，直接 `SyntaxError`。
 
 ### ⑤ FFI 翻译分工（谁翻译什么）
 
@@ -213,7 +207,6 @@ staticpy build app.static.py --emit-ss out.ss   # 保留拼装产物
 | `torch` | core, np, cuda | libTorch |
 | `xgboost` / `lightgbm` / `onnx` | core, np | 树模型 / ONNX Runtime |
 | `imgproc` | core, libc | Pillow 对标（C++ `.so` + extern fn） |
-| `clsx` | core | 语法：多继承 / `super().__init__` / 类属性默认值（`k.rewrite`） |
 
 ## 6. 兼容性
 

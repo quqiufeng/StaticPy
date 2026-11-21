@@ -2651,6 +2651,228 @@ def is_trivial_init(info) -> int:
         i = i + 1
     return 1
 
+def lit_type(n) -> str:
+    """字面量 -> 子集类型名（无注解的类属性 `x = v` 用它补类型；同种子 _literal_type）"""
+    if nt(n) != "Constant":
+        return ""
+    k = dict_get(n, "_k")
+    if k == "bool" or k == "int" or k == "float" or k == "str":
+        return k
+    return ""
+
+def cls_lineage(nm: str) -> py_list:
+    """类及其祖先链（近 → 远）；同种子 _lineage"""
+    out = py_list()
+    seen = make_dict()
+    cur: str = nm
+    guard: int = 0
+    while cur != "" and class_known(cur) == 1 and dict_get(seen, cur) is None and guard < 32:
+        dict_set(seen, cur, 1)
+        out = py_list_append(out, cur)
+        cur = dict_get(dict_get(CLASSES, cur), "base")
+        guard = guard + 1
+    return out
+
+def cls_extra_bases(info) -> py_list:
+    """额外基类（bases[1:]）的成员来源顺序（近 → 远）；同种子 _extra_bases"""
+    nm = dict_get(info, "name")
+    skip = make_dict()
+    dict_set(skip, nm, 1)
+    prim = cls_lineage(dict_get(info, "base"))
+    i: int = 0
+    while i < py_list_length(prim):
+        dict_set(skip, py_list_ref(prim, i), 1)
+        i = i + 1
+    out = py_list()
+    bl = dict_get(info, "bases")
+    j: int = 1
+    while j < py_list_length(bl):
+        chain = cls_lineage(py_list_ref(bl, j))
+        k: int = 0
+        while k < py_list_length(chain):
+            c = py_list_ref(chain, k)
+            if dict_get(skip, c) is None and py_list_has(out, c) == 0:
+                out = py_list_append(out, c)
+            k = k + 1
+        j = j + 1
+    return out
+
+def src_lines_has(a: int, b: int, want: str) -> int:
+    """源码第 a..b 行（1-based，含）里是否出现 want（成员级粗检，如 super）"""
+    if a <= 0 or b < a:
+        return 0
+    lines = str_split(src_get(), "\n")
+    i: int = a
+    while i <= b:
+        if i <= py_list_length(lines):
+            if str_contains(py_list_ref(lines, i - 1), want):
+                return 1
+        i = i + 1
+    return 0
+
+def kind_label(kind: str) -> str:
+    """成员容器键 -> 单数装饰器类别（emit_class 的排序键：method/classmethod/staticmethod）"""
+    if kind == "classmethods":
+        return "classmethod"
+    if kind == "staticmethods":
+        return "staticmethod"
+    return "method"
+
+def kind_order_key(kind: str) -> str:
+    """成员类别 -> 声明顺序表的键（环 2 的哈希表不能按序迭代，另存名字表）"""
+    if kind == "classmethods":
+        return "cm_order"
+    if kind == "staticmethods":
+        return "sm_order"
+    return "m_order"
+
+def injectable_defaults(info) -> py_list:
+    """类属性默认值里需要注入 __init__ 的字段（自己 __init__ 赋过值的跳过：赋值赢）"""
+    out = py_list()
+    dl = dict_get(info, "defaults")
+    if py_list_length(dl) == 0:
+        return out
+    assigned = make_dict()
+    init = dict_get(info, "init")
+    if init is not None:
+        ib = dict_get(init, "body")
+        i: int = 0
+        while i < py_list_length(ib):
+            f = self_assign_field(py_list_ref(ib, i))
+            if f != "":
+                dict_set(assigned, f, 1)
+            i = i + 1
+    cf = dict_get(info, "ctor_fields")
+    i = 0
+    while i < py_list_length(dl):
+        f = py_list_ref(dl, i)
+        if dict_get(assigned, f) is None and py_list_has(cf, f) == 1:
+            out = py_list_append(out, f)
+        i = i + 1
+    return out
+
+def synth_init_params(info) -> py_list:
+    """没有自己的 __init__ 但要落默认值/复用父类构造：合成构造的形参（父类的，去 self）"""
+    out = py_list()
+    base = dict_get(info, "base")
+    if class_known(base) == 0:
+        return out
+    bi = dict_get(dict_get(CLASSES, base), "init")
+    if bi is None:
+        return out
+    a = dict_get(bi, "args")
+    if py_list_length(dict_get(a, "defaults")) > 0 or ir_present(dict_get(a, "vararg")) == 1:
+        return out
+    if ir_present(dict_get(a, "kwarg")) == 1 or py_list_length(dict_get(a, "kwonlyargs")) > 0:
+        return out
+    raw = drop_self_params(bi)
+    i: int = 0
+    while i < py_list_length(raw):
+        out = py_list_append(out, mangle_name(py_list_ref(raw, i)))
+        i = i + 1
+    return out
+
+def needs_synth_init(info) -> int:
+    """没有自己的 __init__，却需要合成一个（落地默认值 / 复用父类构造）"""
+    if dict_get(info, "init") is not None:
+        return 0
+    if py_list_length(injectable_defaults(info)) > 0:
+        return 1
+    if py_list_length(synth_init_params(info)) > 0:
+        return 1
+    return 0
+
+def ctor_params(info) -> py_list:
+    """构造函数形参：自己的 __init__ 去 self / 合成的父类形参"""
+    init = dict_get(info, "init")
+    if init is None:
+        return synth_init_params(info)
+    out = py_list()
+    raw = drop_self_params(init)
+    i: int = 0
+    while i < py_list_length(raw):
+        out = py_list_append(out, mangle_name(py_list_ref(raw, i)))
+        i = i + 1
+    return out
+
+def cls_has_member(chain, kind: str, mn: str) -> int:
+    """主基类链上是否已提供该成员（同名时主基类优先，免得多搬一份）"""
+    i: int = 0
+    while i < py_list_length(chain):
+        c = py_list_ref(chain, i)
+        if class_known(c) == 1:
+            d = dict_get(dict_get(CLASSES, c), kind)
+            if d is not None and dict_get(d, mn) is not None:
+                return 1
+        i = i + 1
+    return 0
+
+def merge_extra_bases(info, inherited) -> int:
+    """多继承：把额外基类链上的字段与方法并进本类（近 → 远，先到先得）
+
+    记录是 `(parent 主基类)`，额外基类的槽位只能在子类里自己声明（因而落进
+    record_fields），它们的方法也得搬进来——否则 `(B-m self)` 里的访问器
+    作用在子类实例上失效。搬进来的方法以子类为属主重新翻译。
+    环 2 没有 TRANS_ERRORS 通道：额外基类带 __init__ 时只合字段与方法；
+    内联方法用了 super() 的跳过（内联后没有基类上下文可用）。
+    """
+    extra = cls_extra_bases(info)
+    if py_list_length(extra) == 0:
+        return 0
+    prim = cls_lineage(dict_get(info, "base"))
+    own = dict_get(info, "fields")
+    ftypes = dict_get(info, "field_types")
+    merged = dict_get(info, "merged")
+    kinds = py_list()
+    kinds = py_list_append(kinds, "methods")
+    kinds = py_list_append(kinds, "classmethods")
+    kinds = py_list_append(kinds, "staticmethods")
+    ei: int = 0
+    while ei < py_list_length(extra):
+        c = py_list_ref(extra, ei)
+        ci = dict_get(CLASSES, c)
+        cfs = dict_get(ci, "fields")
+        k: int = 0
+        while k < py_list_length(cfs):
+            f = py_list_ref(cfs, k)
+            if py_list_has(own, f) == 0 and py_list_has(inherited, f) == 0:
+                own = py_list_append(own, f)
+                dict_set(info, "fields", own)
+                cft = dict_get(ci, "field_types")
+                if dict_get(cft, f) is not None and dict_get(ftypes, f) is None:
+                    dict_set(ftypes, f, dict_get(cft, f))
+            k = k + 1
+        ki: int = 0
+        while ki < py_list_length(kinds):
+            kind = py_list_ref(kinds, ki)
+            cdict = dict_get(ci, kind)
+            cord = dict_get(ci, kind_order_key(kind))
+            mi: int = 0
+            while mi < py_list_length(cord):
+                mn = py_list_ref(cord, mi)
+                if dict_get(dict_get(info, kind), mn) is None:
+                    if cls_has_member(prim, kind, mn) == 0:
+                        mnode = dict_get(cdict, mn)
+                        ml: int = 0
+                        me: int = 0
+                        if nt(mnode) != "":
+                            if dict_get(mnode, "lineno") is not None:
+                                ml = dict_get(mnode, "lineno")
+                            if dict_get(mnode, "end_lineno") is not None:
+                                me = dict_get(mnode, "end_lineno")
+                        if src_lines_has(ml, me, "super") == 0:
+                            dict_set(dict_get(info, kind), mn, mnode)
+                            rec = py_list()
+                            rec = py_list_append(rec, kind_label(kind))
+                            rec = py_list_append(rec, mn)
+                            rec = py_list_append(rec, mnode)
+                            merged = py_list_append(merged, rec)
+                            dict_set(info, "merged", merged)
+                mi = mi + 1
+            ki = ki + 1
+        ei = ei + 1
+    return 0
+
 def collect_classes(body) -> int:
     """两趟登记：① 字段/基类/__init__ ② 继承后的完整字段表与构造策略"""
     i: int = 0
@@ -2668,8 +2890,23 @@ def collect_classes(body) -> int:
             sms = make_dict()
             ftypes = make_dict()
             bs = dict_get(s, "bases")
+            bases = py_list()
+            bi: int = 0
+            while bi < py_list_length(bs):
+                b0 = py_list_ref(bs, bi)
+                if nt(b0) == "Name":
+                    bases = py_list_append(bases, dict_get(b0, "id"))
+                bi = bi + 1
             if py_list_length(bs) > 0 and nt(py_list_ref(bs, 0)) == "Name":
                 base = dict_get(py_list_ref(bs, 0), "id")
+            if class_known(base) == 0:
+                base = ""
+            dl = py_list()
+            dvals = make_dict()
+            merged = py_list()
+            mord = py_list()
+            cmord = py_list()
+            smord = py_list()
             sb = dict_get(s, "body")
             j: int = 0
             while j < py_list_length(sb):
@@ -2694,16 +2931,41 @@ def collect_classes(body) -> int:
                     ft = ann_str(dict_get(it, "annotation"))
                     if ft != "" and dict_get(ftypes, fnm) is None:
                         dict_set(ftypes, fnm, ft)
+                    dv = dict_get(it, "value")
+                    if nt(dv) != "":
+                        if py_list_has(dl, fnm) == 0:
+                            dl = py_list_append(dl, fnm)
+                        dict_set(dvals, fnm, dv)
+                        if dict_get(ftypes, fnm) is None:
+                            lt = lit_type(dv)
+                            if lt != "":
+                                dict_set(ftypes, fnm, lt)
+                elif nt(it) == "Assign" and py_list_length(dict_get(it, "targets")) == 1:
+                    at = py_list_ref(dict_get(it, "targets"), 0)
+                    if nt(at) == "Name":
+                        anm: str = dict_get(at, "id")
+                        fs = field_add(fs, seen, anm)
+                        dv = dict_get(it, "value")
+                        lt = lit_type(dv)
+                        if lt != "" and dict_get(ftypes, anm) is None:
+                            dict_set(ftypes, anm, lt)
+                        if nt(dv) == "Constant":
+                            if py_list_has(dl, anm) == 0:
+                                dl = py_list_append(dl, anm)
+                            dict_set(dvals, anm, dv)
                 elif nt(it) == "FunctionDef":
                     # 方法分类（同种子 analyze_class）：@classmethod / @staticmethod / 实例方法
                     dn: str = dict_get(it, "name")
                     dk = deco_kind(it)
                     if dk == "classmethod":
                         dict_set(cms, dn, it)
+                        cmord = py_list_append(cmord, dn)
                     elif dk == "staticmethod":
                         dict_set(sms, dn, it)
+                        smord = py_list_append(smord, dn)
                     else:
                         dict_set(methods, dn, it)
+                        mord = py_list_append(mord, dn)
                 j = j + 1
             dict_set(info, "name", nm)
             dict_set(info, "node", s)
@@ -2714,6 +2976,13 @@ def collect_classes(body) -> int:
             dict_set(info, "classmethods", cms)
             dict_set(info, "staticmethods", sms)
             dict_set(info, "field_types", ftypes)
+            dict_set(info, "bases", bases)
+            dict_set(info, "defaults", dl)
+            dict_set(info, "default_vals", dvals)
+            dict_set(info, "merged", merged)
+            dict_set(info, "m_order", mord)
+            dict_set(info, "cm_order", cmord)
+            dict_set(info, "sm_order", smord)
             dict_set(CLASSES, nm, info)
         i = i + 1
     i = 0
@@ -2730,6 +2999,7 @@ def collect_classes(body) -> int:
                 while k < py_list_length(bl):
                     cf = py_list_append(cf, py_list_ref(bl, k))
                     k = k + 1
+            merge_extra_bases(info, bl)
             fs = dict_get(info, "fields")
             k = 0
             while k < py_list_length(fs):
@@ -2755,40 +3025,80 @@ def collect_classes(body) -> int:
                     own = py_list_append(own, fn)
                 k = k + 1
             dict_set(info, "record_fields", own)
-            dict_set(info, "trivial", is_trivial_init(info))
+            dict_set(info, "synth_init", needs_synth_init(info))
+            trivial: int = 0
+            if dict_get(info, "init") is None:
+                if dict_get(info, "synth_init") == 0:
+                    trivial = 1
+            elif is_trivial_init(info) == 1:
+                if py_list_length(injectable_defaults(info)) == 0:
+                    trivial = 1
+            dict_set(info, "trivial", trivial)
         i = i + 1
     return 0
 
-def emit_class_init(nm: str, init) -> str:
-    """__init__ -> static_<Cls>___init__(self, …)：就地填字段并返回 self"""
+def emit_class_init(nm: str, info) -> str:
+    """__init__ -> static_<Cls>___init__(self, …)：就地填字段并返回 self
+
+    没有 __init__ 但有类属性默认值 / 父类可复用构造时合成一个
+    （同种子 translate_class_methods）；默认值在末尾注入 set!，自己赋过的跳过。
+    """
     cur_class_set(nm)
     lines = py_list()
-    ib = dict_get(init, "body")
-    i: int = 0
-    while i < py_list_length(ib):
-        st = py_list_ref(ib, i)
-        f = self_assign_field(st)
-        if f != "" and dict_get(st, "value") is not None:
-            owner: str = nm
-            if py_list_has(dict_get(dict_get(CLASSES, nm), "record_fields"), f) == 0:
-                owner = class_field_owner(nm, f)
-            if owner == "":
-                lines = py_list_append(lines, "  (void)")
+    init = dict_get(info, "init")
+    rfields = dict_get(info, "record_fields")
+    params: str = "self"
+    if init is not None:
+        params = params_of(init)
+        ib = dict_get(init, "body")
+        i: int = 0
+        while i < py_list_length(ib):
+            st = py_list_ref(ib, i)
+            f = self_assign_field(st)
+            if f != "" and nt(dict_get(st, "value")) != "":
+                owner: str = nm
+                if py_list_has(rfields, f) == 0:
+                    owner = class_field_owner(nm, f)
+                if owner == "":
+                    lines = py_list_append(lines, "  (void)")
+                else:
+                    lines = py_list_append(
+                        lines, "  (" + owner + "-" + f + "-set! self " + translate_expr(dict_get(st, "value")) + ")")
             else:
-                lines = py_list_append(
-                    lines, "  (" + owner + "-" + f + "-set! self " + translate_expr(dict_get(st, "value")) + ")")
-        else:
-            tr = translate_block(py_list_append(py_list(), st), 1)
-            if py_list_length(tr) > 0:
-                lines = py_list_append(lines, "  " + py_list_ref(tr, 0))
+                tr = translate_block(py_list_append(py_list(), st), 1)
+                if py_list_length(tr) > 0:
+                    lines = py_list_append(lines, "  " + py_list_ref(tr, 0))
+            i = i + 1
+    else:
+        base = dict_get(info, "base")
+        if class_known(base) == 1 and dict_get(dict_get(CLASSES, base), "init") is not None:
+            ps = synth_init_params(info)
+            call: str = "  (static_" + base + "___init__ self"
+            if py_list_length(ps) > 0:
+                call = call + " " + cls_join(ps, " ")
+            lines = py_list_append(lines, call + ")")
+            if py_list_length(ps) > 0:
+                params = "self " + cls_join(ps, " ")
+    inj = injectable_defaults(info)
+    dvals = dict_get(info, "default_vals")
+    i = 0
+    while i < py_list_length(inj):
+        f = py_list_ref(inj, i)
+        owner: str = nm
+        if py_list_has(rfields, f) == 0:
+            owner = class_field_owner(nm, f)
+        if owner == "":
+            owner = nm
+        lines = py_list_append(
+            lines, "  (" + owner + "-" + f + "-set! self " + translate_expr(dict_get(dvals, f)) + ")")
         i = i + 1
     if py_list_length(lines) == 0:
         lines = py_list_append(lines, "  (void)")
     cur_class_set("")
-    return "(define (static_" + nm + "___init__ " + params_of(init) + ")\n" + cls_join(lines, "\n") + "\n  self)"
+    return "(define (static_" + nm + "___init__ " + params + ")\n" + cls_join(lines, "\n") + "\n  self)"
 
-def emit_class_ctor(nm: str, info, init) -> str:
-    """非平凡 __init__ 的构造函数：make-Cls 占位后调 __init__"""
+def emit_class_ctor(nm: str, info) -> str:
+    """非平凡构造：make-Cls 占位后调 __init__（形参来自真 __init__ 或合成的父类形参）"""
     cf = dict_get(info, "ctor_fields")
     blanks = py_list()
     i: int = 0
@@ -2798,12 +3108,7 @@ def emit_class_ctor(nm: str, info, init) -> str:
     make_call: str = "(make-" + nm + ")"
     if py_list_length(blanks) > 0:
         make_call = "(make-" + nm + " " + cls_join(blanks, " ") + ")"
-    ps = py_list()
-    raw = drop_self_params(init)
-    i = 0
-    while i < py_list_length(raw):
-        ps = py_list_append(ps, mangle_name(py_list_ref(raw, i)))
-        i = i + 1
+    ps = ctor_params(info)
     call: str = "(static_" + nm + "___init__ __m)"
     if py_list_length(ps) > 0:
         call = "(static_" + nm + "___init__ __m " + cls_join(ps, " ") + ")"
@@ -2840,16 +3145,17 @@ def emit_class(n, src: str) -> str:
     else:
         out = out + "\n(define-record-type " + nm + " (fields)" + parent + ")"
     init = dict_get(info, "init")
-    if init is not None:
-        out = out + "\n" + emit_class_init(nm, init)
+    if init is not None or dict_get(info, "synth_init") == 1:
+        out = out + "\n" + emit_class_init(nm, info)
         if dict_get(info, "trivial") == 0:
-            out = out + "\n" + emit_class_ctor(nm, info, init)
+            out = out + "\n" + emit_class_ctor(nm, info)
     # 方法输出顺序同种子：实例方法 → @classmethod → @staticmethod（只本类定义的）
     kinds = py_list()
     kinds = py_list_append(kinds, "method")
     kinds = py_list_append(kinds, "classmethod")
     kinds = py_list_append(kinds, "staticmethod")
     sb = dict_get(n, "body")
+    merged = dict_get(info, "merged")
     ki: int = 0
     while ki < py_list_length(kinds):
         want = py_list_ref(kinds, ki)
@@ -2860,6 +3166,13 @@ def emit_class(n, src: str) -> str:
                 if deco_kind(it) == want:
                     out = out + "\n" + emit_class_method(nm, it, src)
             i = i + 1
+        # 多继承搬进来的方法：同样以本类为属主翻译（self.x 走本类访问器）
+        mi: int = 0
+        while mi < py_list_length(merged):
+            rec = py_list_ref(merged, mi)
+            if py_list_ref(rec, 0) == want:
+                out = out + "\n" + emit_class_method(nm, py_list_ref(rec, 2), src)
+            mi = mi + 1
         ki = ki + 1
     return out
 
@@ -3112,8 +3425,15 @@ def try_class_call(n) -> str:
             if class_known(cur) == 1:
                 base = dict_get(dict_get(CLASSES, cur), "base")
                 if class_known(base) == 1:
-                    fa = fill_defaults_s(dict_get(dict_get(CLASSES, base), "init"), tl, 1)
-                    return ir_call("static_" + base + "___init__", py_list_cons("self", fa))
+                    bi = dict_get(dict_get(CLASSES, base), "init")
+                    if attr == "__init__":
+                        if bi is not None:
+                            fa = fill_defaults_s(bi, tl, 1)
+                            return ir_call("static_" + base + "___init__", py_list_cons("self", fa))
+                        if py_list_length(tl) == 0:
+                            return "self"      # 基类没有 __init__：super().__init__() 是空操作
+                    # 其余形状（super().m(..) / 基类无 __init__ 却传了参数）不认 → 交回内核
+                    return ""
             return ""
     # 类名调用：Cls.m(..)
     if nt(recv) == "Name":

@@ -1,9 +1,0 @@
-{
-  "name": "clsx",
-  "version": "0.1.0",
-  "kind": "syntax",
-  "order": 40,
-  "requires": ["core"],
-  "syntax": "hooks.py",
-  "description": "类特性补齐（核心语法冻结，扩展只走插件）：① 类属性默认值 `kind: int = 7` → 字段 + __init__ 注入 `self.kind = 7`；② 多继承 `class C(A, B)` → 额外基类成员按 MRO 内联（C 已定义/主基类已定义者不覆盖）"
-}

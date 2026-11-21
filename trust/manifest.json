@@ -25,9 +25,9 @@
       "path": "staticpy/static_translate.py",
       "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
       "state": "present",
-      "sha256": "94fda0683c4c31f41f649421ebe074cc83739085116ee841ec9efae2f5c5163b",
-      "bytes": 204540,
-      "lines": 4659
+      "sha256": "5f833603dbb38e36965de1826f3ff42105fd0c699cfe6da5f18705308659311b",
+      "bytes": 214865,
+      "lines": 4879
     },
     {
       "role": "seed",
@@ -97,9 +97,9 @@
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "d7e2c989505f1b17da0f072695f6cde230c3985e7397c4fb09ae037598eef838",
-      "bytes": 120417,
-      "lines": 3174
+      "sha256": "ec3d2e80e9115862ebc79d2b58c70f48cfd292554a3c850e5558f67bc412f05f",
+      "bytes": 133608,
+      "lines": 3494
     },
     {
       "role": "impl",
@@ -151,8 +151,8 @@
       "path": "staticpy/check_translate.sh",
       "why": "判据：IR 逐字节差分（自举 vs 冻结种子）",
       "state": "present",
-      "sha256": "cd5c5cf0238de493db155ff8fa7ebbf10733d10a2cece9525189c3f2c5eb0e3e",
-      "bytes": 2318,
+      "sha256": "4e8ccd4f0be9bc214116f58ed3d4c57bd3dfd96c51a968dc42f0a741ac15866b",
+      "bytes": 2304,
       "lines": 46
     },
     {

@@ -541,6 +541,7 @@ CURRENT_CLASS = None  # 正在翻译的方法所属类（self 的类型上下文
 RECORD_FIELDS = {}  # 记录类名 → 字段顺序（供 match 的位置参数模式使用）
 SELF_PARAMS = ("self", "cls")
 TRANS_ERRORS = []   # 翻译期的“响亮失败”记录（stderr 报告）
+INSTANTIATED = set()  # 模块里被调用过的类名（Cls(...)）
 
 
 # 内置模块及其函数映射（模块名 -> {函数名: Scheme 函数名})
@@ -1816,6 +1817,14 @@ def typecheck_warn(node, msg):
     sys.stderr.write(f"StaticPy type warning{loc}: {msg}\n")
 
 
+def collect_instantiated(tree):
+    """记下被实例化的类名：Cls(...)。class Color: RED = 1 是枚举命名空间，
+    但同一个类一旦被实例化（r = R()），Python 语义下它就是记录类。"""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            INSTANTIATED.add(node.func.id)
+
+
 def collect_record_types(tree):
     """收集模块中所有 dataclass 类型定义及其字段类型"""
     for node in tree.body:
@@ -1855,6 +1864,8 @@ def is_enum_class(node):
     for base in node.bases:
         if isinstance(base, ast.Name) and base.id == "Enum":
             return True
+    if node.name in INSTANTIATED:
+        return False
     # 无继承但所有 body 都是 Assign Constant(int)
     if all(isinstance(item, ast.Assign) and len(item.targets) == 1
            and isinstance(item.targets[0], ast.Name)
@@ -1936,6 +1947,21 @@ def _decorator_names(fn):
     return out
 
 
+def _literal_type(node):
+    """字面量 -> 子集类型名（无注解的类属性 `x = v` 用它补类型），推不出返回 None"""
+    if isinstance(node, ast.Constant):
+        v = node.value
+        if isinstance(v, bool):
+            return "bool"
+        if isinstance(v, int):
+            return "int"
+        if isinstance(v, float):
+            return "float"
+        if isinstance(v, str):
+            return "str"
+    return None
+
+
 def _self_assign_target(stmt):
     """若语句是 self.x = ... / self.x: T = ...，返回字段名"""
     if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Attribute):
@@ -1960,7 +1986,10 @@ def analyze_class(node):
         "staticmethods": {},   # @staticmethod
         "mutable": set(),      # 需要 setter 的字段
         "init": None,
-        "base": None,
+        "base": None,          # 主基类（第一条 (parent …) 用它）
+        "bases": [],           # 全部基类名（bases[1:] = 额外基类，成员按序内联）
+        "defaults": {},        # 字段 -> 类属性默认值表达式（字形 `x: T = v` / `x = v`）
+        "default_lineno": {},
     }
     seen = {}
 
@@ -1974,6 +2003,17 @@ def analyze_class(node):
     for item in node.body:
         if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
             add_field(item.target.id, parse_type(item))
+            if item.value is not None:
+                # `x: T = v`：字段声明保留类型，值降级成 __init__ 里的 self.x = v
+                info["defaults"][item.target.id] = item.value
+                info["default_lineno"][item.target.id] = getattr(item, "lineno", 0)
+        elif isinstance(item, ast.Assign) and len(item.targets) == 1 \
+                and isinstance(item.targets[0], ast.Name) and isinstance(item.value, ast.Constant):
+            # `x = v`（无注解）：按字面量补类型，同样降级成字段 + 默认值
+            fname = item.targets[0].id
+            add_field(fname, _literal_type(item.value))
+            info["defaults"][fname] = item.value
+            info["default_lineno"][fname] = getattr(item, "lineno", 0)
         elif isinstance(item, ast.FunctionDef):
             decos = _decorator_names(item)
             if item.name == "__init__":
@@ -1998,11 +2038,12 @@ def analyze_class(node):
                     elif isinstance(sub, ast.AugAssign) and isinstance(sub.target, ast.Attribute) \
                             and isinstance(sub.target.value, ast.Name) and sub.target.value.id in SELF_PARAMS:
                         info["mutable"].add(sub.target.attr)
-    # 基类（单继承）
+    # 基类：第一条做主基类（Chez 原生 (parent …)），其余按序内联成员
     for b in node.bases:
         if isinstance(b, ast.Name):
-            info["base"] = b.id
-            break
+            info["bases"].append(b.id)
+    if info["bases"]:
+        info["base"] = info["bases"][0]
     # 字段一律可变：__init__ 在 make- 之后填值，方法里也可能 self.x = ...
     info["mutable"] = set(info["fields"])
     return info
@@ -2026,6 +2067,41 @@ def all_fields(cls):
     return _dedup(inherited + list(info["fields"]))
 
 
+def _lineage(name):
+    """类及其祖先链（近 → 远），未登记的类不算"""
+    out, cur, seen = [], name, set()
+    while cur and cur not in seen and cur in CLASSES:
+        seen.add(cur)
+        out.append(cur)
+        cur = CLASSES[cur].get("base")
+    return out
+
+
+def _extra_bases(info):
+    """额外基类（bases[1:]）的成员来源顺序（近 → 远）
+
+    主基类链由 `(parent Base)` 原生继承提供，不在此列。多继承只合并**成员**
+    （字段 + 方法），不合并 `__init__`：两个构造没法同时满足，宁可响亮失败。
+    """
+    name = info["name"]
+    primary = set(_lineage(info["base"])) if info.get("base") in CLASSES else set()
+    skip = primary | {name}
+    out = []
+    for b in list(info.get("bases", []))[1:]:
+        for c in _lineage(b):
+            if c in skip or c in out:
+                continue
+            out.append(c)
+    return out
+
+
+def _uses_super(node):
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Name) and sub.id == "super":
+            return True
+    return False
+
+
 def finalize_class(info):
     """补齐继承后的完整字段表与构造策略
 
@@ -2034,6 +2110,7 @@ def finalize_class(info):
     """
     cls = info["name"]
     inherited = all_fields(info.get("base")) if info.get("base") in CLASSES else []
+    _merge_extra_bases(info, inherited)
     info["ctor_fields"] = _dedup(inherited + list(info["fields"]))
     # 记录用 Chez 原生继承：(parent Base) 共享父类槽位，子类只声明自己新增的字段。
     # 父类访问器（Base-x）天然接受子类实例，所以继承来的方法不必拷贝。
@@ -2042,8 +2119,51 @@ def finalize_class(info):
     for c in mro_chain(info["name"]):
         muts |= CLASSES[c]["mutable"]
     info["record_mutable"] = muts
-    info["ctor"] = "make" if (info["init"] is None or _is_trivial_init(info)) else "static"
+    info["synth_init"] = _needs_synth_init(info)
+    trivial = (info["init"] is None and not info["synth_init"]) or _is_trivial_init(info)
+    info["ctor"] = "make" if trivial else "static"
     return info
+
+
+def _merge_extra_bases(info, inherited):
+    """多继承：把额外基类链上的成员并进本类（近 → 远，先到先得）
+
+    记录是 `(parent 主基类)`，额外基类的槽位只能在子类里**自己声明**，它们的
+    方法也得搬进子类——否则 `(B-m self)` 用的是 B 的访问器，作用在子类实例上失效。
+    搬进来的方法一律以子类为属主重新翻译，于是 `self.x` 取的是 `(C-x self)`。
+    """
+    name = info["name"]
+    extra = _extra_bases(info)
+    if not extra:
+        return
+    primary = set(_lineage(info["base"])) if info.get("base") in CLASSES else set()
+    own_fields = set(info["fields"])
+    own_types = dict(info["field_types"])
+    for c in extra:
+        ci = CLASSES[c]
+        if ci.get("init") is not None:
+            TRANS_ERRORS.append(
+                f"class {name}(…, {c}): 多继承只合并字段与方法，不合并 __init__"
+                f"（{c} 定义了 __init__，请显式声明 {name}.__init__ 并由主基类构造）")
+        for f in ci["fields"]:
+            if f in own_fields or f in inherited:
+                continue
+            info["fields"].append(f)
+            own_fields.add(f)
+            if ci["field_types"].get(f) and f not in own_types:
+                info["field_types"][f] = ci["field_types"][f]
+        for kind in ("methods", "classmethods", "staticmethods"):
+            for mn, mnode in ci[kind].items():
+                if mn in info[kind]:
+                    continue
+                if any(mn in CLASSES[p][kind] for p in primary if p in CLASSES):
+                    continue          # 主基类链原生继承已提供（同名时主基类优先）
+                if _uses_super(mnode):
+                    TRANS_ERRORS.append(
+                        f"class {name}(…, {c}): 内联的方法 {c}.{mn} 用了 super()，"
+                        f"内联后没有基类可用，请改写成祖先的具体实现")
+                    continue
+                info[kind][mn] = mnode
 
 
 def mro_chain(cls):
@@ -2131,11 +2251,62 @@ def cls_field_index(cls, field):
     return None
 
 
+def _injectable_defaults(info):
+    """类属性默认值里需要注入 __init__ 的那些（自己 __init__ 赋过值的跳过：赋值赢）
+
+    Python 语义：类属性是**所有实例共享**的兜底值，实例字段赋值会遮蔽它。子集里
+    没有类属性，因此降级成「字段声明 + __init__ 里 self.x = v」——`class` 语法本来
+    就接受 `x: int = 7` / `x = "hi"`，静默丢弃才对不上 Python。
+    """
+    defaults = info.get("defaults") or {}
+    if not defaults:
+        return []
+    assigned = set()
+    init = info.get("init")
+    if init is not None:
+        for st in init.body:
+            f = _self_assign_target(st)
+            if f:
+                assigned.add(f)
+    out = []
+    for f, v in defaults.items():
+        if f in assigned or f not in info.get("ctor_fields", []):
+            continue
+        out.append((f, v, info.get("default_lineno", {}).get(f, 0)))
+    return out
+
+
+def _synth_init_params(info):
+    """类没有 __init__ 但有默认值/父类构造：合成构造的形参（父类 __init__ 的形参）
+
+    父类 __init__ 带默认值/*args/**kwargs 时不合成（形参表无法原样搬过来），
+    维持 make- 直通——宁可少一层构造，也不静默丢参数。
+    """
+    base = info.get("base")
+    if base in CLASSES:
+        bi = CLASSES[base].get("init")
+        if bi is not None:
+            a = bi.args
+            if a.defaults or a.vararg or a.kwarg or a.kwonlyargs:
+                return []
+            return [mangle_name(x.arg) for x in a.args][1:]
+    return []
+
+
+def _needs_synth_init(info):
+    """没有自己的 __init__，却需要合成一个（落地默认值 / 复用父类构造）"""
+    if info.get("init") is not None:
+        return False
+    return bool(_injectable_defaults(info) or _synth_init_params(info))
+
+
 def _is_trivial_init(info):
     """__init__ 是否等价于 (make-Cls 参数...) —— 位置/名字一一对应"""
     init = info["init"]
     if init is None:
         return False
+    if _injectable_defaults(info):
+        return False          # 注入的 self.x = v 会让 __init__ 不再是 make- 的直通
     inherited = all_fields(info.get("base")) if info.get("base") in CLASSES else []
     ctor_fields = inherited + list(info["fields"])
     params = [a.arg for a in init.args.args]
@@ -2183,6 +2354,7 @@ def translate_class_methods(node, source_file=""):
 
     # __init__：就地填字段，返回 self（供子类 super().__init__() 复用）
     init = info["init"]
+    defaults = _injectable_defaults(info)
     if init is not None:
         saved = CURRENT_CLASS
         CURRENT_CLASS = name
@@ -2199,16 +2371,38 @@ def translate_class_methods(node, source_file=""):
                         f"字段 {f} 未声明（在 __init__ 中先赋值即可自动登记）")
             else:
                 body_lines.append("  " + translate_stmt(st))
+        for f, v, ln in defaults:
+            owner = name if f in rfields else (_field_owner(name, f) or name)
+            body_lines.append(f"  ({owner}-{f}-set! self {translate_expr(v)})")
         CURRENT_CLASS = saved
         params = [mangle_name(a.arg) for a in init.args.args]
         lines.append(f"(define (static_{name}___init__ {' '.join(params)})")
-        lines.append("\n".join(body_lines))
+        lines.append("\n".join(body_lines) if body_lines else "  (void)")
+        lines.append("  self)")
+    elif defaults or _synth_init_params(info):
+        # 没有 __init__ 但需要落地默认值：合成一个（先跑父类 __init__，再填自己的默认值）
+        saved = CURRENT_CLASS
+        CURRENT_CLASS = name
+        base = info.get("base")
+        body_lines = []
+        if base in CLASSES and CLASSES[base].get("init") is not None:
+            ps = _synth_init_params(info)
+            call = f"  (static_{base}___init__ self" + ("" if not ps else " " + " ".join(ps)) + ")"
+            body_lines.append(call)
+        for f, v, ln in defaults:
+            owner = name if f in rfields else (_field_owner(name, f) or name)
+            body_lines.append(f"  ({owner}-{f}-set! self {translate_expr(v)})")
+        CURRENT_CLASS = saved
+        sargs = " ".join(["self"] + _synth_init_params(info))
+        lines.append(f"(define (static_{name}___init__ {sargs})")
+        lines.append("\n".join(body_lines) if body_lines else "  (void)")
         lines.append("  self)")
 
     # 构造函数
-    if init is not None and not _is_trivial_init(info):
-        params = [mangle_name(a.arg) for a in init.args.args][1:]
+    if (init is not None or defaults or _synth_init_params(info)) and not _is_trivial_init(info):
+        params = [mangle_name(a.arg) for a in init.args.args][1:] if init is not None else _synth_init_params(info)
         call = f"(static_{name}___init__ __m {' '.join(params)})" if params else f"(static_{name}___init__ __m)"
+        # Chez 的 make-<子类> 收「父类槽位 + 自有槽位」= ctor_fields（不是 record_fields）
         blanks = " ".join("#f" for _ in info["ctor_fields"])
         make_call = f"(make-{name} {blanks})" if blanks else f"(make-{name})"
         lines.append(f"(define (static_{name} {' '.join(params)})")
@@ -2389,10 +2583,30 @@ def try_class_call(node, args):
 
     # super().__init__(...) → 基类的 __init__ 就地初始化
     if isinstance(recv, ast.Call) and isinstance(recv.func, ast.Name) and recv.func.id == "super":
+        if attr != "__init__":
+            TRANS_ERRORS.append(
+                f"第 {getattr(node, 'lineno', 0)} 行: 只支持 super().__init__(..)，"
+                f"super().{attr}(..) 请改写成祖先的具体实现")
+            return None
         base = CLASSES.get(CURRENT_CLASS or "", {}).get("base") if CURRENT_CLASS else None
         if base and base in CLASSES:
-            allargs = _fill_defaults(CLASSES[base].get("init"), allargs, skip=1)
-            return f"(static_{base}___init__ self {' '.join(allargs)})".replace(" )", ")")
+            binit = CLASSES[base].get("init")
+            if binit is not None:
+                allargs = _fill_defaults(binit, allargs, skip=1)
+                return f"(static_{base}___init__ self {' '.join(allargs)})".replace(" )", ")")
+            if _needs_synth_init(CLASSES[base]):
+                # 基类有合成的 __init__（类属性默认值 / 可复用父构造）：照常调用
+                if not allargs:
+                    return f"(static_{base}___init__ self)"
+                TRANS_ERRORS.append(
+                    f"第 {getattr(node, 'lineno', 0)} 行: {base} 没有显式 __init__，"
+                    f"super().__init__(..) 不能传参")
+                return None
+            if not allargs:
+                return "(void)"        # 基类没有 __init__：super().__init__() 是空操作
+            TRANS_ERRORS.append(
+                f"第 {getattr(node, 'lineno', 0)} 行: {base} 没有 __init__，"
+                f"super().__init__(..) 不能传参")
         return None
 
     # 类名调用：Cls.sm(..) / Cls.cm(..)
@@ -2780,6 +2994,11 @@ def typecheck_function(node, function_arities, module_env=None):
                             nparams = None
                         # 缺参在调用点补 nil，只在实参过多时报错
                         if nparams is not None and nargs > nparams:
+                            typecheck_error(expr, f"'{fname}' expects {nparams} args, got {nargs}")
+                    elif _needs_synth_init(_info):
+                        # 合成构造：形参来自父类 __init__（默认值注入不占形参）
+                        nparams = len(_synth_init_params(_info))
+                        if nargs > nparams:
                             typecheck_error(expr, f"'{fname}' expects {nparams} args, got {nargs}")
                     elif nargs != len(_info["ctor_fields"]):
                         typecheck_error(expr, f"'{fname}' expects {len(_info['ctor_fields'])} fields, got {nargs}")
@@ -4578,7 +4797,8 @@ def _run_pipeline(input_files, plugin_arg="", lib_mode=False):
     # 解析 import / from ... import
     parse_imports(tree)
     
-    # 收集记录类型
+    # 收集记录类型（先扫实例化，决定 enum-shaped 类的归属）
+    collect_instantiated(tree)
     collect_record_types(tree)
     
     # 生成 Scheme
