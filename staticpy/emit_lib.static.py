@@ -2654,6 +2654,7 @@ def collect_classes(body) -> int:
                         dict_set(methods, dn, it)
                 j = j + 1
             dict_set(info, "name", nm)
+            dict_set(info, "node", s)
             dict_set(info, "fields", fs)
             dict_set(info, "base", base)
             dict_set(info, "init", init)
@@ -2668,6 +2669,7 @@ def collect_classes(body) -> int:
         if nt(s) == "ClassDef":
             info = dict_get(CLASSES, dict_get(s, "name"))
             cf = py_list()
+            bl = py_list()
             base = dict_get(info, "base")
             if class_known(base) == 1:
                 bl = dict_get(dict_get(CLASSES, base), "ctor_fields")
@@ -2680,7 +2682,26 @@ def collect_classes(body) -> int:
             while k < py_list_length(fs):
                 cf = py_list_append(cf, py_list_ref(fs, k))
                 k = k + 1
-            dict_set(info, "ctor_fields", cf)
+            # 同名字段只留第一份（父类在前）：扁平记录里重复声明会多出槽位
+            uniq = py_list()
+            mark = make_dict()
+            k = 0
+            while k < py_list_length(cf):
+                fn = py_list_ref(cf, k)
+                if dict_get(mark, fn) is None:
+                    dict_set(mark, fn, 1)
+                    uniq = py_list_append(uniq, fn)
+                k = k + 1
+            dict_set(info, "ctor_fields", uniq)
+            # 记录用 Chez 原生继承：(parent Base) 共享父类槽位，子类只声明自己新增的字段
+            own = py_list()
+            k = 0
+            while k < py_list_length(fs):
+                fn = py_list_ref(fs, k)
+                if py_list_has(bl, fn) == 0:
+                    own = py_list_append(own, fn)
+                k = k + 1
+            dict_set(info, "record_fields", own)
             dict_set(info, "trivial", is_trivial_init(info))
         i = i + 1
     return 0
@@ -2695,8 +2716,14 @@ def emit_class_init(nm: str, init) -> str:
         st = py_list_ref(ib, i)
         f = self_assign_field(st)
         if f != "" and dict_get(st, "value") is not None:
-            lines = py_list_append(
-                lines, "  (" + nm + "-" + f + "-set! self " + translate_expr(dict_get(st, "value")) + ")")
+            owner: str = nm
+            if py_list_has(dict_get(dict_get(CLASSES, nm), "record_fields"), f) == 0:
+                owner = class_field_owner(nm, f)
+            if owner == "":
+                lines = py_list_append(lines, "  (void)")
+            else:
+                lines = py_list_append(
+                    lines, "  (" + owner + "-" + f + "-set! self " + translate_expr(dict_get(st, "value")) + ")")
         else:
             tr = translate_block(py_list_append(py_list(), st), 1)
             if py_list_length(tr) > 0:
@@ -2743,28 +2770,28 @@ def emit_class(n, src: str) -> str:
     """class X(Base) -> define-record-type + __init__ + 构造 + 方法（同种子 translate_class）"""
     nm = dict_get(n, "name")
     info = dict_get(CLASSES, nm)
-    fields = dict_get(info, "fields")
+    fields = dict_get(info, "record_fields")
     base = dict_get(info, "base")
     out: str = ";; class " + nm
     parent: str = ""
     if class_known(base) == 1:
-        parent = "(parent " + base + ") "
         out = out + "(" + base + ")"
+        parent = " (parent " + base + ")"
     if py_list_length(fields) > 0:
         specs = py_list()
         i: int = 0
         while i < py_list_length(fields):
             specs = py_list_append(specs, "(mutable " + py_list_ref(fields, i) + ")")
             i = i + 1
-        out = out + "\n(define-record-type " + nm + "\n  " + parent + "(fields " + cls_join(specs, " ") + "))"
+        out = out + "\n(define-record-type " + nm + "\n  (fields " + cls_join(specs, " ") + ")" + parent + ")"
     else:
-        out = out + "\n(define-record-type " + nm + " " + parent + "(fields))"
+        out = out + "\n(define-record-type " + nm + " (fields)" + parent + ")"
     init = dict_get(info, "init")
     if init is not None:
         out = out + "\n" + emit_class_init(nm, init)
         if dict_get(info, "trivial") == 0:
             out = out + "\n" + emit_class_ctor(nm, info, init)
-    # 方法输出顺序同种子：实例方法 → @classmethod → @staticmethod（各按定义顺序）
+    # 方法输出顺序同种子：实例方法 → @classmethod → @staticmethod（只本类定义的）
     kinds = py_list()
     kinds = py_list_append(kinds, "method")
     kinds = py_list_append(kinds, "classmethod")
@@ -2805,9 +2832,24 @@ def emit_class_call(nm: str, info, al) -> str:
     return "(static_" + nm + " " + inner + ")"
 
 def class_field_owner(cls: str, f: str) -> str:
-    """字段在继承链上属谁（决定 setter 名字）；同种子 _field_owner"""
+    """字段的声明者（决定访问器名 `Owner-f`）；同种子 _field_owner
+
+    先看 record_fields（类自己声明的槽位）：子类只在 __init__ 里给继承字段赋值
+    不算声明，否则会生成 `Dog-name-set!` 而记录里只有 `Animal-name-set!`。
+    """
     cur = cls
     guard: int = 0
+    while cur != "" and class_known(cur) == 1 and guard < 32:
+        fs = dict_get(dict_get(CLASSES, cur), "record_fields")
+        i: int = 0
+        while i < py_list_length(fs):
+            if py_list_ref(fs, i) == f:
+                return cur
+            i = i + 1
+        cur = dict_get(dict_get(CLASSES, cur), "base")
+        guard = guard + 1
+    cur = cls
+    guard = 0
     while cur != "" and class_known(cur) == 1 and guard < 32:
         fs = dict_get(dict_get(CLASSES, cur), "fields")
         i: int = 0

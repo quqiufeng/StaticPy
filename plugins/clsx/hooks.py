@@ -67,26 +67,19 @@ def _ty_from_literal(node):
 
 
 def _reindent(text, col, indent):
+    """把一段源码整体左移 col 列，再统一压到 indent 缩进"""
     out = []
     for ln in text.split("\n"):
-        cut = 0
-        while cut < col and cut < len(ln) and ln[cut] == " ":
-            cut += 1
-        out.append(indent + ln[cut:])
-    return "\n".join(out)
+        out.append(ln[col:] if ln[:col].strip() == "" else ln.lstrip())
+    return "\n".join(indent + ln if ln.strip() else "" for ln in out)
 
 
 def _src(code, node, indent):
-    """节点源码文本（含装饰器行），整体重缩进到 indent"""
-    seg = ast.get_source_segment(code, node)
-    if seg is None:
-        raise SyntaxError("clsx: 取不到源码片段")
-    parts = []
-    for dec in getattr(node, "decorator_list", []):
-        d = ast.get_source_segment(code, dec)
-        if d is not None:
-            parts.append("@" + d)
-    parts.append(seg)
+    """取节点源码（含装饰器，原样重排到 indent）"""
+    start = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+    parts = code.split("\n")[start - 1:node.end_lineno]
+    if not parts:
+        return ""
     return _reindent("\n".join(parts), node.col_offset, indent)
 
 
@@ -221,8 +214,16 @@ def _assemble(lines, ed_line, ed_after):
     return "\n".join(out)
 
 
-# ---------------------------------------------------------------- pass ①：继承扁平化
-def _pass_inherit(code):
+# ---------------------------------------------------------------- pass ①：多继承（mixin）
+def _pass_mixin(code):
+    """`class C(A, B)` → `class C(A)` + 把 B 链的方法/类属性内联进 C 的类体
+
+    内核支持的是**单继承原生记录**（`(parent A)`：槽位与访问器由父类共享）。
+    Python 的多继承在记录模型里只能退化成"A 当真基类、其余当 mixin 内联"：
+    - 方法：按 C→A 链→B 链的就近顺序，缺谁补谁（C 自己的同名方法不动）
+    - 类属性：内联声明（`x: T = v`），默认值由 pass ② 统一注入
+    - 非主基类的 `__init__`：明确报错（记录不能有两个父槽位）
+    """
     try:
         classes = _scan(code)
         tree = ast.parse(code)
@@ -239,56 +240,44 @@ def _pass_inherit(code):
             continue
         nm = st.name
         bases = [b.id for b in st.bases if isinstance(b, ast.Name)]
-        if not bases:
-            continue
-        have = set(classes[nm]["members"])
-        init = None
-        fields = set()
-        for s in st.body:
-            if isinstance(s, ast.FunctionDef):
-                if s.name == "__init__":
-                    init = s
+        if len(bases) < 2:
+            continue                      # 单继承：内核原生处理，不碰
+        own = set(classes[nm]["members"])
+        fields = set(own)
+        # 主基类链上的字段（继承来的，inlined 方法里可以直接用）
+        for c in _chain(classes, bases[0]):
+            for s in classes[c]["node"].body:
+                if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name):
+                    fields.add(s.target.id)
+                elif isinstance(s, ast.FunctionDef) and s.name == "__init__":
                     fields |= _self_attrs(s)
-            elif isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name):
-                fields.add(s.target.id)
+        for s in st.body:
+            if isinstance(s, ast.FunctionDef) and s.name == "__init__":
+                fields |= _self_attrs(s)
+
+        have = set(own)
+        for c in _chain(classes, bases[0]):        # 主链已有的名字：mixin 不许覆盖
+            for s in classes[c]["node"].body:
+                if isinstance(s, ast.FunctionDef):
+                    have.add(s.name)
+                elif isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name):
+                    have.add(s.target.id)
 
         body_indent = _indent_of(lines[st.body[0].lineno - 1])
-
-        # 自己的 __init__ 里的 super().__init__(args) → 就地展开成赋值
-        if init is not None:
-            for e in init.body:
-                if _is_super_init(e):
-                    if getattr(e, "end_lineno", e.lineno) != e.lineno:
-                        raise SyntaxError("clsx: " + nm
-                                          + " 的 super().__init__() 跨多行，请写在一行里")
-                    args_srcs = [ast.get_source_segment(code, a) or "" for a in e.value.args]
-                    txt = _super_assign_text(code, classes, bases[0], args_srcs)
-                    if txt == "":
-                        # 基类没有 __init__（只有类级默认值）→ 空操作，别把类体挖空
-                        txt = "pass" if len(init.body) == 1 else ""
-                    if txt:
-                        ed_line[e.lineno - 1] = _indent_of(lines[e.lineno - 1]) + txt
-                    else:
-                        ed_line[e.lineno - 1] = ""
-                elif _uses_super(e):
-                    raise SyntaxError("clsx: " + nm + " 的方法里用了 super().<name>()；"
-                                      "扁平化后没有基类，请直接写祖先的实现")
-
         copied = []
-        for base in bases:
-            for c in _chain(classes, base):          # 就近优先：C 自己 > A 链 > B 链
+        for base in bases[1:]:
+            for c in _chain(classes, base):
                 for s in classes[c]["node"].body:
                     if isinstance(s, ast.FunctionDef):
+                        if s.name == "__init__":
+                            raise SyntaxError(
+                                "clsx: " + nm + " 的非主基类 " + c
+                                + " 定义了 __init__；记录只有一条父槽位链，"
+                                + "请把 " + nm + ".__init__ 显式写出来并手动初始化该部分")
                         if _uses_super(s):
                             raise SyntaxError(
-                                "clsx: 内联 " + c + "." + s.name + " 进 " + nm + " 时遇到 super()；"
-                                "扁平化后没有基类，请先在该类里把 super 展开")
-                        if s.name == "__init__":
-                            if init is None:
-                                init = s
-                                fields |= _self_attrs(s)
-                                copied.append(_src(code, s, body_indent))
-                            continue
+                                "clsx: 内联 " + c + "." + s.name + " 进 " + nm
+                                + " 时遇到 super()；请先展开 super")
                         if s.name in have:
                             continue
                         have.add(s.name)
@@ -322,23 +311,72 @@ def _pass_inherit(code):
                             line += " = " + val
                         copied.append(line)
         if copied:
-            ed_line[st.lineno - 1] = lines[st.lineno - 1].split("(", 1)[0] + ":"
-            ed_after[st.lineno - 1] = copied
+            # 类头只留主基类；内联成员贴到类体末尾
+            head = lines[st.lineno - 1].split("(", 1)[0] + "(" + bases[0] + "):"
+            ed_line[st.lineno - 1] = head
+            ed_after[st.end_lineno - 1] = copied
 
     if not ed_line and not ed_after:
         return code
-    out = _assemble(lines, ed_line, ed_after)
-    # 收尾自检：扁平化之后不该再有多继承 / 残留 super()
+    return _assemble(lines, ed_line, ed_after)
+
+
+# ---------------------------------------------------------------- pass ②：super 展开
+def _pass_super(code):
+    """super().__init__(args) → 就地展开成基类 __init__ 的赋值（纯源码改写，幂等）
+
+    内核现在用**原生记录继承**（`(parent Base)`，子类只声明自己新增的字段），
+    父类方法与访问器在子类实例上直接可用，所以这里不再做继承扁平化；
+    只剩一件子集外的事：显式调父类 `__init__`。
+    """
+    try:
+        classes = _scan(code)
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code                       # 让内核按原样报错
+    if not classes:
+        return code
+    lines = code.split("\n")
+    ed_line = {}
+
+    for st in tree.body:
+        if not isinstance(st, ast.ClassDef):
+            continue
+        nm = st.name
+        bases = [b.id for b in st.bases if isinstance(b, ast.Name)]
+        if not bases:
+            continue
+        for s in st.body:
+            if not isinstance(s, ast.FunctionDef) or not _uses_super(s):
+                continue
+            if s.name != "__init__":
+                raise SyntaxError("clsx: " + nm + "." + s.name
+                                  + " 里用了 super().<name>()；核心只展开了 super().__init__(...)，"
+                                  + "其余请直接调用祖先的实现（如 Base.method(self, ...)）")
+            for e in s.body:
+                if not _is_super_init(e):
+                    continue
+                if getattr(e, "end_lineno", e.lineno) != e.lineno:
+                    raise SyntaxError("clsx: " + nm
+                                      + " 的 super().__init__() 跨多行，请写在一行里")
+                args_srcs = [ast.get_source_segment(code, a) or "" for a in e.value.args]
+                txt = _super_assign_text(code, classes, bases[0], args_srcs)
+                if txt == "":
+                    # 基类没有 __init__（只有类级默认值）→ 空操作，别把类体挖空
+                    txt = "pass" if len(s.body) == 1 else ""
+                ed_line[e.lineno - 1] = (_indent_of(lines[e.lineno - 1]) + txt) if txt else ""
+
+    if not ed_line:
+        return code
+    out = _assemble(lines, ed_line, {})
+    # 收尾自检：展开之后不该再残留 super()
     for st in ast.parse(out).body:
-        if isinstance(st, ast.ClassDef):
-            if len([b for b in st.bases if isinstance(b, ast.Name)]) > 1:
-                raise SyntaxError("clsx: " + st.name + " 扁平化后仍有多继承（内部错误）")
-            if _uses_super(st):
-                raise SyntaxError("clsx: " + st.name + " 扁平化后仍残留 super()（内部错误）")
+        if isinstance(st, ast.ClassDef) and _uses_super(st):
+            raise SyntaxError("clsx: " + st.name + " 展开后仍残留 super()（内部错误）")
     return out
 
 
-# ---------------------------------------------------------------- pass ②：类属性默认值
+# ---------------------------------------------------------------- pass ③：类属性默认值
 def _pass_defaults(code):
     try:
         tree = ast.parse(code)
@@ -414,9 +452,10 @@ def _pass_defaults(code):
 
 # ---------------------------------------------------------------- 主流程
 def class_features(code):
-    """类属性默认值 + 多继承 → 子集写法（纯源码改写，幂等）"""
-    code = _pass_inherit(code)
+    """多继承内联 + 类属性默认值 + super().__init__ 展开 → 子集写法（幂等）"""
+    code = _pass_mixin(code)
     code = _pass_defaults(code)
+    code = _pass_super(code)
     return code
 
 

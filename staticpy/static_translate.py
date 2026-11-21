@@ -1991,22 +1991,56 @@ def analyze_class(node):
     return info
 
 
+def _dedup(names):
+    out = []
+    for n in names:
+        if n not in out:
+            out.append(n)
+    return out
+
+
 def all_fields(cls):
-    """含继承链的完整字段表（父类字段在前，记录构造顺序即此顺序）"""
+    """含继承链的完整字段表（父类字段在前，记录构造顺序即此顺序；同名字段只留一份）"""
     info = CLASSES.get(cls)
     if not info:
         return []
     base = info.get("base")
-    return (all_fields(base) if base in CLASSES else []) + list(info["fields"])
+    inherited = all_fields(base) if base in CLASSES else []
+    return _dedup(inherited + list(info["fields"]))
 
 
 def finalize_class(info):
-    """补齐继承后的完整字段表与构造策略"""
+    """补齐继承后的完整字段表与构造策略
+
+    记录保持 Chez 原生继承：`(parent Base)` 共享父类槽位，`Base-x` 访问器在子类实例上
+    也可用，于是「继承来的方法 + 父类 __init__ 复用」都无需拷贝或改写。
+    """
     cls = info["name"]
     inherited = all_fields(info.get("base")) if info.get("base") in CLASSES else []
-    info["ctor_fields"] = inherited + list(info["fields"])
+    info["ctor_fields"] = _dedup(inherited + list(info["fields"]))
+    # 记录用 Chez 原生继承：(parent Base) 共享父类槽位，子类只声明自己新增的字段。
+    # 父类访问器（Base-x）天然接受子类实例，所以继承来的方法不必拷贝。
+    info["record_fields"] = [f for f in info["fields"] if f not in inherited]
+    muts = set(info["mutable"])
+    for c in mro_chain(info["name"]):
+        muts |= CLASSES[c]["mutable"]
+    info["record_mutable"] = muts
     info["ctor"] = "make" if (info["init"] is None or _is_trivial_init(info)) else "static"
     return info
+
+
+def mro_chain(cls):
+    """基类链（远 → 近，不含自己）；用于把继承成员内联进子类"""
+    out = []
+    info = CLASSES.get(cls)
+    cur = info.get("base") if info else None
+    seen = set()
+    while cur and cur not in seen and cur in CLASSES:
+        seen.add(cur)
+        out.append(cur)
+        cur = CLASSES[cur].get("base")
+    out.reverse()
+    return out
 
 
 def register_class(node):
@@ -2017,6 +2051,23 @@ def register_class(node):
     RECORD_TYPES[node.name] = list(info["ctor_fields"])
     RECORD_FIELDS[node.name] = dict(info["field_types"])
     return info
+
+
+def record_field_type(rec, attr):
+    """沿单继承链找字段类型
+
+    记录用 Chez 原生继承 `(parent Base)`，子类只声明自己新增的字段；
+    所以 `Dog` 的实例访问 `name`（Animal 声明）必须查到 Animal 的类型。
+    """
+    cur, guard = rec, 0
+    while cur and guard < 32:
+        ft = RECORD_FIELDS.get(cur, {}).get(attr)
+        if ft:
+            return ft
+        info = CLASSES.get(cur)
+        cur = info.get("base") if info else ""
+        guard += 1
+    return None
 
 
 def _lookup_member(cls, name, kind="methods"):
@@ -2089,16 +2140,17 @@ def translate_class_methods(node, source_file=""):
     info = register_class(node)
     name = node.name
     fields = info["fields"]
+    rfields = info["record_fields"]       # 只列父类没有的字段；父类槽位由 (parent …) 共享
     base = info["base"] if info["base"] in CLASSES else None
     lines = [f";; class {name}" + (f"({info['base']})" if info["base"] else "")]
 
-    parent = f"(parent {base}) " if base else ""
-    if fields:
-        specs = " ".join(f"({'mutable' if f in info['mutable'] else 'immutable'} {f})" for f in fields)
+    parent = f" (parent {base})" if base else ""
+    if rfields:
+        specs = " ".join(f"({'mutable' if f in info['record_mutable'] else 'immutable'} {f})" for f in rfields)
         lines.append(f"(define-record-type {name}")
-        lines.append(f"  {parent}(fields {specs}))")
+        lines.append(f"  (fields {specs}){parent})")
     else:
-        lines.append(f'(define-record-type {name} {parent}(fields))')
+        lines.append(f"(define-record-type {name} (fields){parent})")
 
     # __init__：就地填字段，返回 self（供子类 super().__init__() 复用）
     init = info["init"]
@@ -2109,10 +2161,11 @@ def translate_class_methods(node, source_file=""):
         for st in init.body:
             f = _self_assign_target(st)
             if f is not None and (st.value is not None):
-                if f in fields:
-                    body_lines.append(f"  ({name}-{f}-set! self {translate_expr(st.value)})")
+                owner = name if f in rfields else (_field_owner(name, f) or "")
+                if f in info["ctor_fields"] and owner:
+                    body_lines.append(f"  ({owner}-{f}-set! self {translate_expr(st.value)})")
                 else:
-                    TRANSL_ERRORS.append(
+                    TRANS_ERRORS.append(
                         f"{source_file}:{getattr(st, 'lineno', 0)} class {name}.__init__: "
                         f"字段 {f} 未声明（在 __init__ 中先赋值即可自动登记）")
             else:
@@ -2133,7 +2186,7 @@ def translate_class_methods(node, source_file=""):
         lines.append(f"  (let ((__m {make_call}))")
         lines.append(f"    {call}))")
 
-    # 普通方法
+    # 普通方法（继承来的不拷贝：父类访问器/方法在子类实例上原生可用）
     for mname, mnode in info["methods"].items():
         lines.append(translate_method(mnode, name, "method", source_file))
     for mname, mnode in info["classmethods"].items():
@@ -2239,7 +2292,18 @@ def _member_hit(cls, attr):
 
 
 def _field_owner(cls, attr):
+    """字段的**声明者**：记录里真正有该槽位的类（决定访问器名 `Owner-f`）
+
+    先看 record_fields（类自己声明的槽位）；子类只在 __init__ 里给继承字段赋值，
+    那不是声明 —— 否则会生成 `Dog-name-set!` 而记录里只有 `Animal-name-set!`。
+    """
     cur, seen = cls, set()
+    while cur and cur not in seen and cur in CLASSES:
+        seen.add(cur)
+        if attr in CLASSES[cur].get("record_fields", []):
+            return cur
+        cur = CLASSES[cur].get("base")
+    cur, seen = cls, set()          # 兜底：没进任何记录槽位（老路径）
     while cur and cur not in seen and cur in CLASSES:
         seen.add(cur)
         if attr in CLASSES[cur]["fields"]:
@@ -2275,7 +2339,7 @@ def try_class_call(node, args):
             return f"(static_{owner}_{attr} {' '.join(fargs)})".replace(" )", ")")
         fld = _field_owner(recv.id, attr)
         if fld:
-            TRANSL_ERRORS.append(f"第 {getattr(node, 'lineno', 0)} 行: {recv.id}.{attr} 是字段不是方法")
+            TRANS_ERRORS.append(f"第 {getattr(node, 'lineno', 0)} 行: {recv.id}.{attr} 是字段不是方法")
         return None
 
     # 实例调用：先按接收者推断类
@@ -2291,7 +2355,7 @@ def try_class_call(node, args):
             return f"(static_{owner}_{attr} {' '.join(call_args)})".replace(" )", ")")
         fld = _field_owner(cls, attr)
         if fld and not _lookup_member(cls, attr, "methods"):
-            TRANSL_ERRORS.append(
+            TRANS_ERRORS.append(
                 f"第 {getattr(node, 'lineno', 0)} 行: '{attr}' 是 {cls} 的字段，"
                 f"不是方法（若是内建方法如 str.split，请标注接收者的 Python 类型）")
         return None
@@ -2553,7 +2617,7 @@ def typecheck_function(node, function_arities, module_env=None):
             if isinstance(expr.value, ast.Name):
                 vtype = lookup(expr.value.id)
                 if vtype and vtype.base in RECORD_FIELDS:
-                    ft = RECORD_FIELDS[vtype.base].get(expr.attr)
+                    ft = record_field_type(vtype.base, expr.attr)
                     if ft:
                         return ft
                     # 零字段基类（如 class IRExpr: pass）是鸭子类型的标记类，
@@ -2649,8 +2713,8 @@ def typecheck_function(node, function_arities, module_env=None):
                         # 缺参在调用点补 nil，只在实参过多时报错
                         if nparams is not None and nargs > nparams:
                             typecheck_error(expr, f"'{fname}' expects {nparams} args, got {nargs}")
-                    elif nargs != len(_info["fields"]):
-                        typecheck_error(expr, f"'{fname}' expects {len(_info['fields'])} fields, got {nargs}")
+                    elif nargs != len(_info["ctor_fields"]):
+                        typecheck_error(expr, f"'{fname}' expects {len(_info['ctor_fields'])} fields, got {nargs}")
                     return Type(fname)
                 fields = RECORD_FIELDS[fname]
                 expected_types = list(fields.values())

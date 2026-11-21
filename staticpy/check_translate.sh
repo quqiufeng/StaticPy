@@ -11,6 +11,9 @@ CACHE=${TMPDIR:-/tmp}/sp_emitcheck
 mkdir -p "$CACHE"
 cat staticpy/static_translate.static.py staticpy/parse_lib.static.py \
     staticpy/emit_lib.static.py staticpy/emit_dump.static.py > "$CACHE/emitdump.static.py"
+# 对照口径：自举环 2 不带插件（plugins/ 只在种子链路上生效），所以种子侧也跑 core 链，
+# 比较的是"翻译器本身"的 IR；插件改写（如 clsx）属于前端约定，不参与此项验收。
+SEED_PLUGINS="${SEED_PLUGINS:-core}"
 norm() {
   sed -e 's/;;.*$//' -e 's/[[:space:]]\+/ /g' -e 's/^ //' -e 's/ $//' "$1" | grep -av '^[[:space:]]*$'
 }
@@ -18,10 +21,10 @@ fail=0; total=0
 for f in "$@"; do
   total=$((total+1))
   mode=""; marg=""
-  if ! $PY staticpy/static_translate.py "$f" > "$CACHE/exp.ss" 2>"$CACHE/experr.txt"; then
+  if ! $PY staticpy/static_translate.py --plugins "$SEED_PLUGINS" "$f" > "$CACHE/exp.ss" 2>"$CACHE/experr.txt"; then
     if grep -q "missing main" "$CACHE/experr.txt"; then
       mode="lib"; marg="lib"
-      $PY staticpy/static_translate.py --lib "$f" > "$CACHE/exp.ss" 2>"$CACHE/experr.txt" \
+      $PY staticpy/static_translate.py --plugins "$SEED_PLUGINS" --lib "$f" > "$CACHE/exp.ss" 2>"$CACHE/experr.txt" \
         || { echo "  ERR  $f (python --lib)"; head -3 "$CACHE/experr.txt"; fail=1; continue; }
     else
       echo "  ERR  $f (python)"; head -3 "$CACHE/experr.txt"; fail=1; continue

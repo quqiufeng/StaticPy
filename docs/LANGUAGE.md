@@ -57,7 +57,64 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 捕获、`|`、序列 `[a, *rest]`、映射 `{"k": v}`、类模式 `Pt(x=0)`/`Pt(1, y)`）、
 元组解构 `x, y = 1, 2`、切片 `a[1:3]`、`dataclass`（编译成 record）、`enum`（编译成常量）。
 
-**不支持**（也不要绕）：`class`/继承/多态、`try`/`except`/`raise`、生成器/`yield`、
+### class（记录类型 + 静态分派）
+
+`class` 编译成 `define-record-type`：字段是 record 槽，方法是**带 `self` 的普通过程**
+（`static_<Cls>_<m>`）。分派在**编译期**完成——`p.twice()` 直接发 `static_P_twice`，
+不做动态查找，所以没有多态（见下"能/不能"）。
+
+```python
+class Shape:                      # 单继承：class Square(Shape)
+    kind: str                     # 类体声明 = record 字段（子类可加字段）
+    n: int
+
+    def __init__(self, n: int):   # 构造器 → static_Shape（无 self）
+        self.n = n
+        self.kind = "sq"
+
+    def area(self) -> int:        # 实例方法：self 收起，调用静态绑定
+        return self.n * self.n
+
+    def twice(self) -> int:
+        return self.area() * 2    # 方法间互调：self.area() → (static_Shape_area self)
+
+    @classmethod                  # 类方法：cls 收起，Cls.m(...) 直调
+    def unnamed(cls) -> str:
+        return "shape"
+
+    @staticmethod                 # 静态方法：无 self/cls
+    def tag() -> str:
+        return "T"
+```
+
+| 能 | 说明 |
+|---|---|
+| 单继承 + `super().__init__(...)` / `super().m()` | 子类 record 含基类槽，基类方法在子类实例上可用 |
+| 字段读写 `self.x = v` / `p.x` | 按**静态类型**解析字段归属（`(Owner-x p)`） |
+| `@classmethod` / `@staticmethod` | 装饰器在编译期吃掉，不产生运行时对象 |
+| 方法当值 | `p.twice` / `P.twice` → 裸过程值 `static_P_twice`（可直接传给 `fn` 形参） |
+
+子类的 record 写 `(parent A)`：**父类槽位共享**，`static_A_m` 里的 `(A-name self)`
+在 `Dog` 实例上照样成立（字段归属由「谁声明了这个槽位」决定，不是调用者）。
+继承来的方法不必复制，`Dog` 只声明自己新增的槽位。
+
+| 不能（`plugins/clsx` 补齐部分） | 插件降级成 |
+|---|---|
+| `class C(A, B):` 多基 | `class C(A)` + 把 `B` 链的方法/类属性内联进 C 类体（就近覆盖） |
+| `class C: k: int = 7` 类属性默认值 | 字段声明 + `__init__` 里注入 `self.k = 7` |
+| `super().__init__(args)` 对「只有类属性默认值、没有 `__init__`」的基类 | 基类 `__init__` 的赋值就地展开 |
+
+```bash
+# 插件链路上才有多继承/默认值；自举环 2（staticc.sp）不带插件
+STATICPY_PLUGINS=core,clsx bash staticpy/static_build_comfycli.sh app.static.py app
+bash plugins/clsx/check.sh          # 5 用例（defaults/inherit/multi/over/methodval）
+```
+
+**注意**：没有动态分派、没有 `isinstance`、没有运算符重载（`__eq__`/`__add__` 不生效）；
+`f = p.twice` 这种「方法值赋给局部变量」两侧都发 `(set! f …)`、读侧却是 `static_f`，
+**当前不可用**——直接传参（`apply1(p.twice, p)`）或类名调用（`P.twice(p)`）都可以。
+
+**不支持**（也不要绕）：`try`/`except`/`raise`、生成器/`yield`、
 自由变量闭包、`eval`/`exec`、动态 `getattr`/`setattr`。
 
 > 能力缺口按三条路径补：挂 C 库 / 写 C++ helper / 改自举翻译器或加语法插件（见 [PLUGINS.md](./PLUGINS.md)、[SELFHOST.md](./SELFHOST.md)）。

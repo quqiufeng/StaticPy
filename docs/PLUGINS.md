@@ -143,13 +143,19 @@ STATICPY_PLUGINS_PATH=$PWD/examples staticpy check \
 
 **真实案例：`plugins/clsx/`（class 特性补齐）**
 
-内核的 class 子集只有「单继承 + 记录字段 + 方法分派」。`clsx` 用 `k.rewrite` 纯源码降级三件事：
+内核的 class 子集是**原生单继承记录**：子类 `(parent A)` 共享祖先槽位，`static_A_m`
+在子类实例上照常可用（见 [LANGUAGE.md](./LANGUAGE.md)「class」）。`clsx` 用 `k.rewrite`
+纯源码补三件事，**一个 pass 一件事**：
 
 | 写法 | 降级成 | 为什么 |
 |---|---|---|
-| `class C(A, B):` | 单类 + 祖先字段/方法内联（就近覆盖） | 记录类型的子类字段会**遮蔽**基类同名字段，`static_Base_m` 用的 `(Base-x self)` 在子类实例上会读到 `#f` → 必须把方法搬进 C |
-| `super().__init__(args)` | 基类 `__init__` 的赋值就地展开（形参→实参，递归） | 扁平化后没有基类 |
+| `class C(A, B):` | `class C(A)` + 把 `B` 链的方法/类属性内联进 C 类体（就近覆盖：C 自己 > A 链 > B 链） | 记录只有一条父槽位链，第二个基类没有槽位可挂 → 只能当 mixin 搬方法 |
+| `super().__init__(args)` | 基类 `__init__` 的赋值就地展开（形参→实参，递归） | 多基内联后可能已没有基类；也让「类属性默认值」对子类生效 |
 | `kind: int = 7` / `tag = "hi"` | `kind: int` + `__init__` 里注入 `self.kind = 7` | 内核只认「类体声明字段」，不认默认值 |
+
+pass 顺序 `mixin → defaults → super`：先内联（多基收敛成单基），再合成默认值的
+`__init__`，最后展开 `super()`——这样 `super().__init__()` 一定能读到刚合成的基类 `__init__`。
+非主基类定义了 `__init__` 会响亮报错（记录不能有两条父槽位链）。
 
 三条工程约束（写进代码注释，也是所有 rewrite 类插件的通用经验）：
 
@@ -160,7 +166,7 @@ STATICPY_PLUGINS_PATH=$PWD/examples staticpy check \
    `SyntaxError`，不静默生成错代码。
 
 ```bash
-bash plugins/clsx/check.sh     # 4 个用例 AOT 双跑（core vs core,clsx），用例落 ~/iso_gen/clsx-check/
+bash plugins/clsx/check.sh     # 5 个用例 AOT 双跑（core vs core,clsx）：defaults/inherit/multi/over/methodval
 ```
 
 ### ⑤ FFI 翻译分工（谁翻译什么）
