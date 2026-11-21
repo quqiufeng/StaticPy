@@ -269,9 +269,15 @@ bash selfcheck.sh                                            # 端到端回归
   不支持的组合（如 `,x`、`+` 配 str）**运行期 `error`**，不静默忽略。
 - **没有实现的东西一律响亮失败，不许静默降级**：
   - 构建期（`TRANS_ERRORS` → stderr + 退出码 2）：`f"{x!a}"`、格式说明里含**嵌套 `{}`**
-    （静态展开不了）、未知字符串方法、`super().attr(..)` 等；
+    （静态展开不了）、未知字符串方法、`super().attr(..)`、**不支持的顶层语句**等；
   - 运行期（prelude `error`）：未知 `%`转换符（`%z`）、`%(name)s` 缺键或右侧非字典、
     `split(maxsplit)`、`{0[1]}` 字段等。
+- **顶层只允许** `import` / `def` / `class` / 赋值（含 `AnnAssign`）/ 表达式语句 /
+  `if __name__ == "__main__":` 守卫。顶层 `for` / `while` / `if` / `try` / `with` 没有静态语义，
+  此前被**静默丢弃**（编译过、行为悄悄少一半）——现在构建期响亮失败，提示写进 `def main()`。
+  守卫是唯一豁免：StaticPy 的入口是 `main()` + 自动追加的 `(static_main)`，所以**只含 `main()` 调用**的
+  守卫与自动入口等价，丢弃无副作用；守卫体里有别的东西（如 `sys.exit(run(..))`）也响亮失败。
+  环 2 同口径，只是把同样的形状发成运行期 `(error 'top-level …)`。
 - `TRANS_ERRORS` **只在收集、必须报**：种子在 `main()` 末尾统一写 stderr 并 `sys.exit(2)`
   （`STATICPY_TRANS_ERRORS_WARN=1` 仅告警不退，供存量代码盘点用）。
   环 2 没有构建期失败通道，同样的形状发**运行期** `(error 'f-string …)`——两环都响。

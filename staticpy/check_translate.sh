@@ -21,6 +21,15 @@ fail=0; total=0
 for f in "$@"; do
   total=$((total+1))
   mode=""; marg=""
+  # 用例自带 `# expect: build-error`：测的是「不支持的东西必须响」，不比对 IR
+  if grep -q '^# expect: build-error' "$f"; then
+    if $PY staticpy/static_translate.py --plugins "$SEED_PLUGINS" "$f" >/dev/null 2>"$CACHE/experr.txt"; then
+      echo "  LOUD $f (期望构建期失败，但构建成功了)"; fail=1
+    else
+      echo "  ok(响亮失败) $f"
+    fi
+    continue
+  fi
   if ! $PY staticpy/static_translate.py --plugins "$SEED_PLUGINS" "$f" > "$CACHE/exp.ss" 2>"$CACHE/experr.txt"; then
     if grep -q "missing main" "$CACHE/experr.txt"; then
       mode="lib"; marg="lib"

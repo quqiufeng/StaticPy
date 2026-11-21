@@ -3872,6 +3872,75 @@ def try_class_call(n) -> str:
         return ir_call(fn_name, fill_defaults_s(mnode, tl, 1))
     return ir_call(fn_name, py_list_cons(translate_expr(recv), fill_defaults_s(mnode, tl, 1)))
 
+def is_dunder_name(n) -> bool:
+    """Name 节点且 id 为 __name__"""
+    if nt(n) != "Name":
+        return False
+    return dict_get(n, "id") == "__name__"
+
+
+def is_main_str(n) -> bool:
+    """Constant 节点且是字符串字面量 __main__"""
+    if nt(n) != "Constant":
+        return False
+    if dict_get(n, "_k") != "str":
+        return False
+    return dict_get(n, "value") == "__main__"
+
+
+def is_main_guard(s) -> bool:
+    """顶层 `if __name__ == "__main__":` 守卫"""
+    if nt(s) != "If":
+        return False
+    test = dict_get(s, "test")
+    if nt(test) != "Compare":
+        return False
+    ops = dict_get(test, "ops")
+    cmps = dict_get(test, "comparators")
+    if py_list_length(ops) != 1:
+        return False
+    if py_list_length(cmps) != 1:
+        return False
+    if nt(py_list_ref(ops, 0)) != "Eq":
+        return False
+    left = dict_get(test, "left")
+    right = py_list_ref(cmps, 0)
+    if is_dunder_name(left) and is_main_str(right):
+        return True
+    return is_main_str(left) and is_dunder_name(right)
+
+
+def is_canonical_main_guard(s) -> bool:
+    """守卫体只允许 `main()`：与自动追加的 (static_main) 等价，丢弃无副作用"""
+    if py_list_length(dict_get(s, "orelse")) != 0:
+        return False
+    body = dict_get(s, "body")
+    i: int = 0
+    while i < py_list_length(body):
+        st = py_list_ref(body, i)
+        if nt(st) != "Expr":
+            return False
+        v = dict_get(st, "value")
+        if nt(v) != "Call":
+            return False
+        f = dict_get(v, "func")
+        if nt(f) != "Name":
+            return False
+        if dict_get(f, "id") != "main":
+            return False
+        if py_list_length(dict_get(v, "args")) != 0:
+            return False
+        if py_list_length(dict_get(v, "keywords")) != 0:
+            return False
+        i = i + 1
+    return True
+
+
+def top_level_reject(s, why) -> str:
+    """顶层不支持语句的响亮失败（运行期即抛，不被当注释吞掉）"""
+    return "(error 'top-level \"" + why + "\")" + ann_of(s)
+
+
 def emit_module(tree, src: str, lib_mode: int) -> str:
     src_set(src)
     out: str = ";; Source: " + src + "\n\n;; StaticPy functions"
@@ -3896,6 +3965,18 @@ def emit_module(tree, src: str, lib_mode: int) -> str:
                 out = out + "\n" + d
         elif t == "Expr":
             out = out + "\n" + translate_expr(dict_get(s, "value"))
+        elif t == "Import" or t == "ImportFrom":
+            # import 已由 collect_imports 收走，这里不再产出
+            pass
+        elif t == "If" and is_main_guard(s):
+            # `if __name__ == "__main__":` 守卫：入口是 main() + 自动 (static_main)，
+            # 「只含 main() 调用」等价于自动入口；其余写法不再静默丢弃
+            if is_canonical_main_guard(s) == 0:
+                out = out + "\n" + top_level_reject(
+                    s, "user __name__ guard other than main()")
+        else:
+            out = out + "\n" + top_level_reject(
+                s, "unsupported top-level " + t)
         i = i + 1
     if lib_mode == 1:
         return out + "\n\n;; Library mode: no (static_main) entry point"

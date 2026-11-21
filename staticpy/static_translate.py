@@ -4989,6 +4989,45 @@ def generate_extern_ffi():
     return "\n".join(lines)
 
 
+def _is_main_guard(node):
+    """顶层 `if __name__ == "__main__":` 守卫（StaticPy 入口是 main() + 自动 (static_main)）"""
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    if not (isinstance(test, ast.Compare) and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq) and len(test.comparators) == 1):
+        return False
+    left, right = test.left, test.comparators[0]
+
+    def _name(n):
+        return isinstance(n, ast.Name) and n.id == "__name__"
+
+    def _mainstr(n):
+        return isinstance(n, ast.Constant) and n.value == "__main__"
+
+    return (_name(left) and _mainstr(right)) or (_mainstr(left) and _name(right))
+
+
+def _is_canonical_main_guard(node):
+    """守卫体只允许 `main()`：与自动追加的 (static_main) 等价，丢弃无副作用；
+    其它内容（如 sys.exit(run(...))）会被静默丢弃，属于必须响亮失败的形状。"""
+    if node.orelse:
+        return False
+    for st in node.body:
+        if not isinstance(st, ast.Expr):
+            return False
+        v = st.value
+        if not (isinstance(v, ast.Call) and isinstance(v.func, ast.Name)
+                and v.func.id == "main" and not v.args and not v.keywords):
+            return False
+    return True
+
+
+TOP_LEVEL_HINT = ("顶层只支持 import / def / class / 赋值 / 表达式语句 / "
+                  "if __name__ 守卫；其它语句（for/while/if/try/with…）没有静态语义，"
+                  "请放进 def main()")
+
+
 def main():
     global TYPE_ENV, EXTERN_FUNCTIONS, IMPORTED_NAMES, RECORD_TYPES, RECORD_FIELDS, FUNCTION_SIGS, TYPE_WARNINGS, TYPECHECK_MODE
 
@@ -5134,6 +5173,18 @@ def _run_pipeline(input_files, plugin_arg="", lib_mode=False):
         elif isinstance(node, ast.Expr):
             # 顶层表达式语句（如 register_node(...) 调用）
             output_parts.append(translate_expr(node.value))
+        elif _is_main_guard(node):
+            # `if __name__ == "__main__":` 守卫：StaticPy 的入口是 main() + 自动 (static_main)，
+            # 所以「只含 main() 调用」的守卫与自动入口等价，丢弃无副作用；其余写法不再静默丢弃。
+            if not _is_canonical_main_guard(node):
+                TRANS_ERRORS.append(
+                    f"line {node.lineno}: 顶层 if __name__ 守卫里只能调用 main()；"
+                    "其余代码请放进 def main()")
+        else:
+            # 其余顶层语句（for/while/if/try/with…）此前被静默丢弃 —— 响亮失败
+            TRANS_ERRORS.append(
+                f"line {getattr(node, 'lineno', 0)}: 不支持的顶层 {type(node).__name__} 语句；"
+                + TOP_LEVEL_HINT)
     
     # 顶层表达式（调用 main）；库模式不生成，供 concat/静态库链接使用
     if lib_mode:
