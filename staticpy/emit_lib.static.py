@@ -768,6 +768,11 @@ def translate_attribute(n) -> str:
             own = class_field_owner(vt, at)
             if own != "":
                 return "(" + own + "-" + at + " " + mangle_name(dict_get(rv, "id")) + ")"
+        # self.x -> (Owner-x self)，Owner 为字段所属类（含继承链）；同种子 try_class_attr
+        if dict_get(rv, "id") == "self" and class_known(cur_class_get()) == 1:
+            own = class_field_owner(cur_class_get(), at)
+            if own != "":
+                return "(" + own + "-" + at + " self)"
     value = translate_expr(rv)
     if at == "copy":
         return "(dict-copy " + value + ")"
@@ -1036,6 +1041,10 @@ def translate_call(n) -> str:
         at = dict_get(f, "attr")
         rv = dict_get(f, "value")
         al = dict_get(n, "args")
+        # class 成员调用优先（同种子：try_class_call 在容器方法之前）
+        cc: str = try_class_call(n)
+        if cc != "":
+            return cc
         # 模块函数：random.seed(7) -> (random_seed 7)；os.path.join -> (join ..)
         mfn: str = module_call_name(rv, at)
         if mfn != "":
@@ -1459,6 +1468,22 @@ def params_of(n) -> str:
         i = i + 1
     return out
 
+def params_of_skip(n, skip: int) -> str:
+    """形参串，可跳过前导 skip 个（首参确实是 self/cls 时才跳，同种子）"""
+    ps = dict_get(dict_get(n, "args"), "args")
+    if skip > 0 and py_list_length(ps) > 0:
+        f0 = dict_get(py_list_ref(ps, 0), "arg")
+        if f0 != "self" and f0 != "cls":
+            skip = 0
+    out: str = ""
+    i: int = skip
+    while i < py_list_length(ps):
+        if i > skip:
+            out = out + " "
+        out = out + mangle_name(dict_get(py_list_ref(ps, i), "arg"))
+        i = i + 1
+    return out
+
 def locals_of(n):
     """函数体内被赋值的局部变量（去形参，按名字升序）"""
     names = collect_assigned_names(dict_get(n, "body"))
@@ -1527,6 +1552,10 @@ def translate_function(n, src: str) -> str:
 
 def function_def(n, src: str, full: str) -> str:
     """函数体 -> (define (<full> ..) ..)；类方法用同一套（name 换前缀）"""
+    return function_def_skip(n, src, full, 0)
+
+def function_def_skip(n, src: str, full: str, skip: int) -> str:
+    """skip = 定义里要丢掉的前导形参个数（@classmethod/@staticmethod 的 self/cls）"""
     tenv_push()
     param_push(param_names(n))
     src_set(src)
@@ -1553,7 +1582,7 @@ def function_def(n, src: str, full: str) -> str:
         hdr = fa + "\n"
     tenv_pop()
     param_pop()
-    return hdr + f"(define ({full} {params_of(n)})\n{txt})"
+    return hdr + f"(define ({full} {params_of_skip(n, skip)})\n{txt})"
 
 def top_level_define(s, t: str) -> str:
     """模块级赋值 -> (define name value)（与旧版 translate_module 一致）"""
@@ -2448,8 +2477,11 @@ def collect_imports(body) -> int:
 #   构造     -> 平凡 __init__ 直接 (make-<Cls> …)；否则 (static_<Cls> …) 内套 __init__
 #   方法     -> static_<Cls>_<m>(self, …)，零运行时开销
 # 记录字段读取 / isinstance 已由 translate_attribute（IR_FIELDS）与 translate_call 的
-# ir-tag? 覆盖，这里只补「类型定义 + 构造 + self.x 写入」。
-# 缺口（自举侧暂不需要，遇到再补）：实例方法调用分派 obj.m()、@classmethod、super()。
+# ir-tag? 覆盖；成员分派见下方 try_class_call / member_hit / resolve_expr_class：
+#   self.x / obj.x  -> (Owner-x obj)   （字段所属类，含继承链）
+#   obj.m()/Cls.m() -> (static_Owner_m …)（实例方法带 self；@classmethod/@staticmethod 去 self/cls）
+#   super().__init__(…) -> (static_<Base>___init__ self …)（就地填字段）
+# 仍然不做（遇到再补）：方法值（不带调用的 obj.m）、多继承、类属性访问。
 CLASSES = make_dict()
 CUR_CLASS = make_dict()
 
@@ -2570,6 +2602,9 @@ def collect_classes(body) -> int:
             seen = make_dict()
             init = None
             base: str = ""
+            methods = make_dict()
+            cms = make_dict()
+            sms = make_dict()
             bs = dict_get(s, "bases")
             if py_list_length(bs) > 0 and nt(py_list_ref(bs, 0)) == "Name":
                 base = dict_get(py_list_ref(bs, 0), "id")
@@ -2586,11 +2621,24 @@ def collect_classes(body) -> int:
                         k = k + 1
                 elif nt(it) == "AnnAssign" and nt(dict_get(it, "target")) == "Name":
                     fs = field_add(fs, seen, dict_get(dict_get(it, "target"), "id"))
+                elif nt(it) == "FunctionDef":
+                    # 方法分类（同种子 analyze_class）：@classmethod / @staticmethod / 实例方法
+                    dn: str = dict_get(it, "name")
+                    dk = deco_kind(it)
+                    if dk == "classmethod":
+                        dict_set(cms, dn, it)
+                    elif dk == "staticmethod":
+                        dict_set(sms, dn, it)
+                    else:
+                        dict_set(methods, dn, it)
                 j = j + 1
             dict_set(info, "name", nm)
             dict_set(info, "fields", fs)
             dict_set(info, "base", base)
             dict_set(info, "init", init)
+            dict_set(info, "methods", methods)
+            dict_set(info, "classmethods", cms)
+            dict_set(info, "staticmethods", sms)
             dict_set(CLASSES, nm, info)
         i = i + 1
     i = 0
@@ -2663,7 +2711,10 @@ def emit_class_ctor(nm: str, info, init) -> str:
 def emit_class_method(nm: str, m, src: str) -> str:
     """类中方法 -> static_<Cls>_<name>(self, …)"""
     cur_class_set(nm)
-    txt = function_def(m, src, "static_" + nm + "_" + dict_get(m, "name"))
+    skip: int = 0
+    if deco_kind(m) != "method":
+        skip = 1
+    txt = function_def_skip(m, src, "static_" + nm + "_" + dict_get(m, "name"), skip)
     cur_class_set("")
     return txt
 
@@ -2692,13 +2743,23 @@ def emit_class(n, src: str) -> str:
         out = out + "\n" + emit_class_init(nm, init)
         if dict_get(info, "trivial") == 0:
             out = out + "\n" + emit_class_ctor(nm, info, init)
+    # 方法输出顺序同种子：实例方法 → @classmethod → @staticmethod（各按定义顺序）
+    kinds = py_list()
+    kinds = py_list_append(kinds, "method")
+    kinds = py_list_append(kinds, "classmethod")
+    kinds = py_list_append(kinds, "staticmethod")
     sb = dict_get(n, "body")
-    i = 0
-    while i < py_list_length(sb):
-        it = py_list_ref(sb, i)
-        if nt(it) == "FunctionDef" and dict_get(it, "name") != "__init__":
-            out = out + "\n" + emit_class_method(nm, it, src)
-        i = i + 1
+    ki: int = 0
+    while ki < py_list_length(kinds):
+        want = py_list_ref(kinds, ki)
+        i = 0
+        while i < py_list_length(sb):
+            it = py_list_ref(sb, i)
+            if nt(it) == "FunctionDef" and dict_get(it, "name") != "__init__":
+                if deco_kind(it) == want:
+                    out = out + "\n" + emit_class_method(nm, it, src)
+            i = i + 1
+        ki = ki + 1
     return out
 
 def emit_class_call(nm: str, info, al) -> str:
@@ -2736,6 +2797,206 @@ def class_field_owner(cls: str, f: str) -> str:
         cur = dict_get(dict_get(CLASSES, cur), "base")
         guard = guard + 1
     return ""
+
+def deco_names(fn):
+    """装饰器名列表（同种子 _decorator_names）"""
+    out = py_list()
+    dl = dict_get(fn, "decorator_list")
+    if dl is None:
+        return out
+    i: int = 0
+    while i < py_list_length(dl):
+        d = py_list_ref(dl, i)
+        if nt(d) == "Name":
+            out = py_list_append(out, dict_get(d, "id"))
+        elif nt(d) == "Attribute":
+            out = py_list_append(out, dict_get(d, "attr"))
+        i = i + 1
+    return out
+
+def deco_kind(fn) -> str:
+    """方法种类：classmethod / staticmethod / method（同种子 analyze_class 分类）"""
+    decos = deco_names(fn)
+    if py_list_has(decos, "classmethod") == 1:
+        return "classmethod"
+    if py_list_has(decos, "staticmethod") == 1:
+        return "staticmethod"
+    return "method"
+
+def py_list_has(l, v: str) -> int:
+    i: int = 0
+    while i < py_list_length(l):
+        if py_list_ref(l, i) == v:
+            return 1
+        i = i + 1
+    return 0
+
+def py_list_cons(v: str, l):
+    out = py_list()
+    out = py_list_append(out, v)
+    i: int = 0
+    while i < py_list_length(l):
+        out = py_list_append(out, py_list_ref(l, i))
+        i = i + 1
+    return out
+
+def ir_call(fn: str, args) -> str:
+    """(fn a b) 形式；空实参不出多余空格（同种子的 .replace(" )", ")")）"""
+    if py_list_length(args) == 0:
+        return "(" + fn + ")"
+    return str_replace("(" + fn + " " + cls_join(args, " ") + ")", " )", ")")
+
+def member_pack(kind: str, owner: str, node):
+    d = make_dict()
+    dict_set(d, "kind", kind)
+    dict_set(d, "owner", owner)
+    dict_set(d, "node", node)
+    return d
+
+def member_hit(cls: str, attr: str):
+    """沿继承链找方法 → {kind, owner, node}；找不到 None（同种子 _member_hit）"""
+    cur = cls
+    guard: int = 0
+    while cur != "" and class_known(cur) == 1 and guard < 32:
+        info = dict_get(CLASSES, cur)
+        v = dict_get(dict_get(info, "methods"), attr)
+        if v is not None:
+            return member_pack("method", cur, v)
+        v = dict_get(dict_get(info, "classmethods"), attr)
+        if v is not None:
+            return member_pack("classmethod", cur, v)
+        v = dict_get(dict_get(info, "staticmethods"), attr)
+        if v is not None:
+            return member_pack("staticmethod", cur, v)
+        cur = dict_get(info, "base")
+        guard = guard + 1
+    return None
+
+def resolve_expr_class(expr) -> str:
+    """推断表达式所属类名；推断不出返回 ""（同种子 resolve_expr_class）"""
+    if expr is None:
+        return ""
+    t = nt(expr)
+    if t == "Name":
+        nm = dict_get(expr, "id")
+        if nm == "self":
+            return cur_class_get()
+        v = tenv_get(nm)
+        if v == "":
+            v = tenv_get(mangle_name(nm))
+        if v != "" and class_known(v) == 1:
+            return v
+        return ""
+    if t == "Call":
+        fn = dict_get(expr, "func")
+        if nt(fn) == "Name":
+            fid = dict_get(fn, "id")
+            if class_known(fid) == 1:
+                return fid
+            return ""
+        if nt(fn) == "Attribute":
+            owner = resolve_expr_class(dict_get(fn, "value"))
+            if owner != "":
+                hit = member_hit(owner, dict_get(fn, "attr"))
+                if hit is not None:
+                    mn = dict_get(hit, "node")
+                    rt = dict_get(mn, "returns")
+                    if rt is not None:
+                        ret = ann_str(rt)
+                        if class_known(ret) == 1:
+                            return ret
+            return ""
+        return ""
+    return ""
+
+def fill_defaults_s(mnode, args, skip: int):
+    """调用点补默认实参（args 已是 IR 串）；同种子 _fill_defaults"""
+    if mnode is None:
+        return args
+    anode = dict_get(mnode, "args")
+    if anode is None:
+        return args
+    if ir_present(dict_get(anode, "vararg")) == 1 or ir_present(dict_get(anode, "kwarg")) == 1:
+        return args
+    np_ = py_list_length(param_names(mnode)) - skip
+    na = py_list_length(args)
+    if na >= np_:
+        return args
+    defs = dict_get(anode, "defaults")
+    nd = 0
+    if defs is not None:
+        nd = py_list_length(defs)
+    first = np_ - nd
+    out = args
+    i: int = na
+    while i < np_:
+        if i >= first:
+            out = py_list_append(out, translate_expr(py_list_ref(defs, i - first)))
+        else:
+            out = py_list_append(out, "#f")
+        i = i + 1
+    return out
+
+def try_class_call(n) -> str:
+    """obj.m(..) / Cls.m(..) / self.m(..) / super().__init__(..) → 直接函数调用"""
+    f = dict_get(n, "func")
+    if nt(f) != "Attribute":
+        return ""
+    attr: str = dict_get(f, "attr")
+    recv = dict_get(f, "value")
+    tl = py_list()
+    al = dict_get(n, "args")
+    i: int = 0
+    while i < py_list_length(al):
+        tl = py_list_append(tl, translate_expr(py_list_ref(al, i)))
+        i = i + 1
+    kws = dict_get(n, "keywords")
+    if kws is not None:
+        ki: int = 0
+        while ki < py_list_length(kws):
+            k = py_list_ref(kws, ki)
+            if dict_get(k, "arg") is not None:
+                tl = py_list_append(tl, translate_expr(dict_get(k, "value")))
+            ki = ki + 1
+    # super().__init__(...) → 基类 __init__ 就地初始化
+    if nt(recv) == "Call":
+        rf = dict_get(recv, "func")
+        if nt(rf) == "Name" and dict_get(rf, "id") == "super":
+            cur = cur_class_get()
+            if class_known(cur) == 1:
+                base = dict_get(dict_get(CLASSES, cur), "base")
+                if class_known(base) == 1:
+                    fa = fill_defaults_s(dict_get(dict_get(CLASSES, base), "init"), tl, 1)
+                    return ir_call("static_" + base + "___init__", py_list_cons("self", fa))
+            return ""
+    # 类名调用：Cls.m(..)
+    if nt(recv) == "Name":
+        rn = dict_get(recv, "id")
+        if class_known(rn) == 1:
+            hit = member_hit(rn, attr)
+            if hit is not None:
+                kind = dict_get(hit, "kind")
+                skip: int = 1
+                if kind == "staticmethod":
+                    skip = 0
+                fa = fill_defaults_s(dict_get(hit, "node"), tl, skip)
+                return ir_call("static_" + dict_get(hit, "owner") + "_" + attr, fa)
+            return ""
+    # 实例调用：obj.m(...) / self.m(...)
+    cls = resolve_expr_class(recv)
+    if cls == "":
+        return ""
+    hit = member_hit(cls, attr)
+    if hit is None:
+        return ""
+    kind = dict_get(hit, "kind")
+    mnode = dict_get(hit, "node")
+    fn_name: str = "static_" + dict_get(hit, "owner") + "_" + attr
+    if kind == "staticmethod":
+        return ir_call(fn_name, fill_defaults_s(mnode, tl, 0))
+    if kind == "classmethod":
+        return ir_call(fn_name, fill_defaults_s(mnode, tl, 1))
+    return ir_call(fn_name, py_list_cons(translate_expr(recv), fill_defaults_s(mnode, tl, 1)))
 
 def emit_module(tree, src: str, lib_mode: int) -> str:
     src_set(src)
