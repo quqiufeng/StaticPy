@@ -672,6 +672,31 @@ def elems_text(elts) -> str:
         i = i + 1
     return jn(ps)
 
+def fmt_spec_text(spec) -> str:
+    """f-string 的 format_spec(JoinedStr) -> 字面文本（同种子 format_spec_text）
+
+    返回 "" 表示没写格式说明（含 `{x:}` 这种空 spec）；
+    返回 "\x00B" 表示含嵌套 {}，静态展开不了。
+    """
+    if ir_present(spec) == 0:
+        return ""
+    vs = dict_get(spec, "values")
+    if ir_present(vs) == 0:
+        return ""
+    out: str = ""
+    i: int = 0
+    while i < py_list_length(vs):
+        v = py_list_ref(vs, i)
+        if nt(v) == "Constant":
+            if dict_get(v, "_k") == "str":
+                out = out + dict_get(v, "value")
+            else:
+                return "\x00B"
+        else:
+            return "\x00B"
+        i = i + 1
+    return out
+
 def translate_joined(n) -> str:
     """f-string -> (string-append ...)，插值用 (py-str e)（同旧版：CPython f-string 走 str()）"""
     vs = dict_get(n, "values")
@@ -683,13 +708,24 @@ def translate_joined(n) -> str:
             inner: str = translate_expr(dict_get(e, "value"))
             spec = dict_get(e, "format_spec")
             conv = dict_get(e, "conversion")
-            if ir_present(spec) != 0:
-                # {x:>5} / {x:.2f}：格式说明尚未实现 —— 响亮失败（与种子同口径）
-                ps = py_list_append(ps, "(error 'f-string \"f-string 的格式说明（:…）尚未支持\")")
-            elif conv == 114:
-                ps = py_list_append(ps, "(py-repr " + inner + ")")
+            st: str = fmt_spec_text(spec)
+            if conv == 97:
+                ps = py_list_append(ps, "(error 'f-string \"f-string 的 !a 转换尚未支持\")")
+            elif conv != -1 and conv != 114 and conv != 115:
+                ps = py_list_append(ps, "(error 'f-string \"f-string 的转换符尚未支持\")")
+            elif st == "\x00B":
+                ps = py_list_append(ps, "(error 'f-string \"f-string 的格式说明含嵌套 {}，尚未支持\")")
+            elif st == "":
+                if conv == 114:
+                    ps = py_list_append(ps, "(py-repr " + inner + ")")
+                else:
+                    ps = py_list_append(ps, "(py-str " + inner + ")")
             else:
-                ps = py_list_append(ps, "(py-str " + inner + ")")
+                # 有格式说明：format(值, spec)，转换符先作用在值上（同种子）
+                if conv == 114:
+                    ps = py_list_append(ps, "(py-format (py-repr " + inner + ") " + str_lit(st) + ")")
+                else:
+                    ps = py_list_append(ps, "(py-format " + inner + " " + str_lit(st) + ")")
         elif nt(e) == "Constant":
             ps = py_list_append(ps, translate_expr(e))
         else:
@@ -1359,6 +1395,20 @@ def translate_call(n) -> str:
             if at == "splitlines":
                 return f"(str-split-lines {translate_expr(rv)})"
             if at == "format":
+                kwsrc: str = ""
+                kws = dict_get(n, "keywords")
+                if ir_present(kws) != 0:
+                    ki: int = 0
+                    while ki < py_list_length(kws):
+                        k = py_list_ref(kws, ki)
+                        nm = dict_get(k, "arg")
+                        if ir_present(nm) != 0:
+                            if kwsrc != "":
+                                kwsrc = kwsrc + " "
+                            kwsrc = kwsrc + "(cons " + str_lit(nm) + " " + translate_expr(dict_get(k, "value")) + ")"
+                        ki = ki + 1
+                if kwsrc != "":
+                    return "(py-str-format-kw " + translate_expr(rv) + " (list " + a + ") (list " + kwsrc + "))"
                 if a != "":
                     return f"(py-str-format {translate_expr(rv)} {a})"
                 return f"(py-str-format {translate_expr(rv)})"

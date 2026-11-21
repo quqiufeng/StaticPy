@@ -1022,7 +1022,6 @@
             (mag (if (> digits 0) (string-append ip "." fp) ip)))
        (if (and neg (> q 0)) (string-append "-" mag) mag)))))
 
-
 (define (list_length v)
   (cond ((string? v) (string-length v))
         ((vector? v) (vector-length v))
@@ -1606,37 +1605,6 @@ np 插件可覆盖成 PyArray 版"
                              (if str? (apply string-append r) (list->vector r)))
                 (loop (+ i st) (cons (ref i) acc) lim)))))))
 
-(define (py-str-format fmt . args)
-  "str.format：支持 {} / {n} / {{ }}；带 :spec 或 {name} 一律响亮报错"
-  (let ((n (string-length fmt)))
-    (let loop ((i 0) (next 0) (acc '()))
-      (cond
-        ((fx>= i n) (apply string-append (reverse acc)))
-        ((and (char=? (string-ref fmt i) #\{) (fx< (fx+ i 1) n)
-              (char=? (string-ref fmt (fx+ i 1)) #\{))
-         (loop (+ i 2) next (cons "{" acc)))
-        ((and (char=? (string-ref fmt i) #\}) (fx< (fx+ i 1) n)
-              (char=? (string-ref fmt (fx+ i 1)) #\}))
-         (loop (+ i 2) next (cons "}" acc)))
-        ((char=? (string-ref fmt i) #\{)
-         (let ((j (str-find fmt "}" i)))
-           (if (not j) (error 'str-format "format 字符串缺少 }")
-               (let ((spec (substring fmt (fx+ i 1) j)))
-                 (cond
-                   ((string=? spec "")
-                    (if (>= next (length args)) (error 'str-format "format 实参不足"))
-                    (loop (+ j 1) (+ next 1) (cons (py-str (list-ref args next)) acc)))
-                   ((char-numeric? (string-ref spec 0))
-                    (let ((k (string->number spec)))
-                      (if (or (not k) (>= k (length args)))
-                          (error 'str-format (string-append "无效的 format 位置参数: " spec))
-                          (loop (+ j 1) next (cons (py-str (list-ref args k)) acc)))))
-                   (else
-                    (error 'str-format
-                           (string-append "暂不支持格式字段: {" spec "}"))))))))
-        ((char=? (string-ref fmt i) #\})
-         (error 'str-format "format 字符串里有单个 }"))
-        (else (loop (fx+ i 1) next (cons (string (string-ref fmt i)) acc)))))))
 
 (define (py-str-repeat s n)
   "str * int / int * str：Python 的重复拼接（n<=0 → 空串）"
@@ -1771,6 +1739,386 @@ np 插件可覆盖成 PyArray 版"
         ((vector? e) (vector-ref e i))
         ((pair? e) (if (= i 0) (car e) (cdr e)))
         (else e)))
+;; ====== format() / f-string 格式说明（CPython format spec） ======
+;; spec ::= [[fill]align][sign][z][#][0][width][,|_][.precision][type]
+;;   align: < > ^ =   sign: + - 空格   type: s d b o x X c n f F e E g G %
+;; 与 CPython 逐字符对齐（fill/align/sign/#/0/宽度/分组/精度/类型全支持）；
+;; 没实现的组合（'z'、浮点 'n'）一律 error —— 响亮失败，不静默降级成无格式。
+
+(define (py-fmt-align? c)
+  (or (char=? c #\<) (char=? c #\>) (char=? c #\=) (char=? c #\^)))
+
+(define (py-fmt-digits-run spec i)
+  "spec[i..] 里连续数字字符的结束位置"
+  (let ((n (string-length spec)))
+    (let loop ((k i))
+      (if (and (< k n) (char-numeric? (string-ref spec k))) (loop (+ k 1)) k))))
+
+(define (py-fmt-spec-parse spec)
+  "格式说明串 -> (fill align sign alt zero width group prec type)"
+  (let* ((n (string-length spec))
+         (j0 (cond ((and (>= n 2) (py-fmt-align? (string-ref spec 1))) 2)
+                   ((and (>= n 1) (py-fmt-align? (string-ref spec 0))) 1)
+                   (else 0)))
+         (fill (if (= j0 2) (string-ref spec 0) #\space))
+         (align (cond ((= j0 2) (string-ref spec 1))
+                      ((= j0 1) (string-ref spec 0))
+                      (else #f)))
+         (sign (if (and (< j0 n) (memv (string-ref spec j0) (list #\+ #\- #\space)))
+                   (string-ref spec j0)
+                   #f))
+         (i1 (if sign (+ j0 1) j0))
+         (i2 (if (and (< i1 n) (char=? (string-ref spec i1) #\z))
+                 (error 'format "格式说明不支持 'z'（负零强制）")
+                 i1))
+         (alt (and (< i2 n) (char=? (string-ref spec i2) #\#)))
+         (i3 (if alt (+ i2 1) i2))
+         (zero (and (< i3 n) (char=? (string-ref spec i3) #\0)))
+         (i4 (if zero (+ i3 1) i3))
+         (wj (py-fmt-digits-run spec i4))
+         (width (if (= wj i4) #f (string->number (substring spec i4 wj))))
+         (group (if (and (< wj n) (memv (string-ref spec wj) (list #\, #\_)))
+                    (string-ref spec wj)
+                    #f))
+         (i5 (if group (+ wj 1) wj))
+         (pj (if (and (< i5 n) (char=? (string-ref spec i5) #\.))
+                 (py-fmt-digits-run spec (+ i5 1))
+                 #f))
+         (prec (and pj (if (= pj (+ i5 1)) 0 (string->number (substring spec (+ i5 1) pj)))))
+         (i6 (if pj pj i5))
+         (ty (and (< i6 n) (string-ref spec i6)))
+         (i7 (if ty (+ i6 1) i6)))
+    (if (< i7 n)
+        (error 'format (string-append "无法解析的格式说明：" spec))
+        (list fill align sign alt zero width group prec ty))))
+
+(define (py-fmt-group ds step sep)
+  "ds 从右往左每 step 位插一个分隔符"
+  (let ((n (string-length ds)))
+    (if (<= n step)
+        ds
+        (let* ((r (remainder n step))
+               (first (if (= r 0) step r)))
+          (let loop ((i first) (acc (substring ds 0 first)))
+            (if (>= i n)
+                acc
+                (loop (+ i step)
+                      (string-append acc (string sep) (substring ds i (+ i step))))))))))
+
+(define (py-fmt-round-half-even sc)
+  "非负精确有理数 -> 最近整数（半偶舍入，与 float_fixed 同口径）"
+  (let* ((num (numerator sc))
+         (den (denominator sc))
+         (q (quotient num den))
+         (r (- num (* q den)))
+         (r2 (* 2 r)))
+    (if (or (> r2 den) (and (= r2 den) (odd? q))) (+ q 1) q)))
+
+(define (py-fmt-sig-digits mag p)
+  "mag>=0 的浮点 -> (p 位有效数字串 首位十进制指数)；按精确二进制值半偶舍入"
+  (if (= mag 0.0)
+      (list (make-string p #\0) 0)
+      (let* ((q (exact (inexact mag)))
+             (e (let loop ((m q) (e 0))
+                  (cond ((>= m 10) (loop (/ m 10) (+ e 1)))
+                        ((< m 1) (loop (* m 10) (- e 1)))
+                        (else e))))
+             (m (py-fmt-round-half-even (* (/ q (expt 10 e)) (expt 10 (- p 1))))))
+        (if (>= m (expt 10 p))
+            ;; 9.99…/99.9… 进位成 10^p：变成 "1"+0…，指数加一
+            (list (string-append "1" (make-string (- p 1) #\0)) (+ e 1))
+            (let* ((ds0 (number->string m))
+                   (ds (string-append (make-string (- p (string-length ds0)) #\0) ds0)))
+              (list ds e))))))
+
+(define (py-fmt-fixed-from ds e)
+  "有效数字串 + 指数 -> 定点串（不补尾零）"
+  (let ((n (string-length ds)))
+    (cond ((>= e 0)
+           (if (> n (+ e 1))
+               (string-append (substring ds 0 (+ e 1)) "." (substring ds (+ e 1) n))
+               (string-append ds (make-string (- (+ e 1) n) #\0))))
+          (else (string-append "0." (make-string (- (- e) 1) #\0) ds)))))
+
+(define (py-fmt-exp-from ds e upper)
+  "有效数字串 + 指数 -> d.dddde±XX（指数至少两位）"
+  (let* ((n (string-length ds))
+         (mant (if (> n 1)
+                   (string-append (substring ds 0 1) "." (substring ds 1 n))
+                   (substring ds 0 1)))
+         (exs0 (number->string (abs e)))
+         (exs (if (< (string-length exs0) 2) (string-append "0" exs0) exs0)))
+    (string-append mant (if upper "E" "e") (if (< e 0) "-" "+") exs)))
+
+(define (py-fmt-strip-zeros s)
+  "去掉小数部分的尾零与悬空的 '.'（'e' 指数段原样保留）"
+  (let* ((parts (py-split-on-char s #\e))
+         (mant (car parts))
+         (exs (cadr parts))
+         (mp (py-split-on-char mant #\.))
+         (ip (car mp))
+         (fp (cadr mp))
+         (k (let loop ((i (string-length fp)))
+              (if (and (> i 0) (char=? (string-ref fp (- i 1)) #\0)) (loop (- i 1)) i)))
+         (m2 (cond ((string=? fp "") mant)
+                   ((= k 0) ip)
+                   (else (string-append ip "." (substring fp 0 k))))))
+    (if (string=? exs "") m2 (string-append m2 "e" exs))))
+
+(define (py-fmt-pad sign prefix body fill align width)
+  "按 align/fill/width 补齐；'=' 把填充插在符号与前缀之后、数字之前"
+  (let* ((all (string-append sign prefix body))
+         (padn (if width (max 0 (- width (string-length all))) 0)))
+    (cond ((= padn 0) all)
+          ((char=? align #\<) (string-append all (make-string padn fill)))
+          ((char=? align #\^)
+           (let ((l (quotient padn 2)))
+             (string-append (make-string l fill) all (make-string (- padn l) fill))))
+          ((char=? align #\=)
+           (string-append sign prefix (make-string padn fill) body))
+          (else (string-append (make-string padn fill) all)))))
+
+(define (py-fmt-int-digits n ty)
+  "非负整数 -> 数字串（按类型选进制/大小写）"
+  (case ty
+    ((#\b) (number->string n 2))
+    ((#\o) (number->string n 8))
+    ((#\x) (string-downcase (number->string n 16)))
+    ((#\X) (string-upcase (number->string n 16)))
+    (else (number->string n))))
+
+(define (py-fmt-group-fixed s group)
+  "定点串：只给整数部分加分组符（小数/百分号原样）"
+  (let* ((dot (str-find s "."))
+         (ip (if dot (substring s 0 dot) s))
+         (rest (if dot (substring s dot (string-length s)) "")))
+    (string-append (py-fmt-group ip 3 group) rest)))
+
+(define (py-fmt-maybe-group body group)
+  "定点加分组；指数形式不加（CPython 的 ',e' 也不分组）"
+  (if (and group (not (str-find body "e")) (not (str-find body "E")))
+      (py-fmt-group-fixed body group)
+      body))
+
+(define (py-fmt-sign-str neg sign)
+  (cond (neg "-") ((eqv? sign #\+) "+") ((eqv? sign #\space) " ") (else "")))
+
+(define (py-fmt-do-str s ty fl al width prec sign alt group spec)
+  (cond ((eqv? al #\=)
+         (error 'format (string-append "字符串格式说明不允许 '=' 对齐（spec=" spec "）")))
+        ((and ty (not (char=? ty #\s)))
+         (error 'format (string-append "字符串不能用格式类型 '" (string ty) "'（spec=" spec "）")))
+        (sign (error 'format "字符串格式说明不允许符号"))
+        (alt (error 'format "字符串格式说明不允许 '#'"))
+        (group (error 'format "字符串格式说明不允许分组符"))
+        (else
+         (let ((body (if (and prec (< prec (string-length s))) (substring s 0 prec) s)))
+           (py-fmt-pad "" "" body fl al width)))))
+
+(define (py-fmt-do-int v ty fl al width group prec sign alt spec)
+  "整数路径：ty 已保证是 d/b/o/x/X/c"
+  (if (and prec (not (char=? ty #\c)))
+      (error 'format (string-append "整数格式说明不允许精度（spec=" spec "）")))
+  (let* ((neg (< v 0))
+         (av (abs v))
+         (sgn (py-fmt-sign-str neg sign)))
+    (if (char=? ty #\c)
+        (if (and (>= av 0) (< av #x110000))
+            (py-fmt-pad sgn "" (string (integer->char av)) fl
+                        (if (eqv? al #\=) #\> al) width)
+            (error 'format "整数超出 'c' 的可表示范围"))
+        (let* ((ds (py-fmt-int-digits av ty))
+               (pfx (cond ((not alt) "")
+                          ((char=? ty #\b) "0b")
+                          ((char=? ty #\o) "0o")
+                          ((char=? ty #\x) "0x")
+                          ((char=? ty #\X) "0X")
+                          (else "")))
+               (ds2 (cond ((not group) ds)
+                          ((memv ty (list #\b #\o #\x #\X))
+                           (if (char=? group #\,)
+                               (error 'format "进制格式不允许 ',' 分组（用 '_'）")
+                               (py-fmt-group ds 4 #\_)))
+                          (else (py-fmt-group ds 3 group)))))
+          (py-fmt-pad sgn pfx ds2 fl al width)))))
+
+(define (py-fmt-do-float v ty fl al width group prec sign alt spec)
+  "浮点路径：v 是浮点数（int/bool 已提升）；ty 是 #f/e/E/f/F/g/G/%/n"
+  (let* ((repr (py-float-repr v))
+         (neg (char=? (string-ref repr 0) #\-))
+         (mag (abs v))
+         (sgn (py-fmt-sign-str neg sign))
+         (p (if prec prec 6))
+         (upper (and ty (memv ty (list #\E #\F #\G)))))
+    (cond
+      ((or (nan? mag) (infinite? mag))
+       (py-fmt-pad sgn ""
+                   (if upper (string-upcase (py-float-repr mag)) (py-float-repr mag))
+                   fl al width))
+      ((not ty)
+       (py-fmt-pad sgn "" (py-fmt-maybe-group (py-float-repr mag) group) fl al width))
+      ((memv ty (list #\f #\F))
+       (let* ((body0 (float_fixed mag p))
+              (body (if (and alt (= p 0)) (string-append body0 ".") body0)))
+         (py-fmt-pad sgn "" (py-fmt-maybe-group body group) fl al width)))
+      ((memv ty (list #\e #\E))
+       (let* ((sg (py-fmt-sig-digits mag (+ p 1)))
+              (body (py-fmt-exp-from (car sg) (cadr sg) (and upper #t))))
+         (py-fmt-pad sgn "" body fl al width)))
+      ((memv ty (list #\g #\G))
+       (let* ((p2 (if (< p 1) 1 p))
+              (sg (py-fmt-sig-digits mag p2))
+              (ds (car sg))
+              (e (cadr sg))
+              (body0 (if (or (< e -4) (>= e p2))
+                         (py-fmt-exp-from ds e (and upper #t))
+                         (py-fmt-fixed-from ds e)))
+              (body (if alt body0 (py-fmt-strip-zeros body0))))
+         (py-fmt-pad sgn "" (py-fmt-maybe-group body group) fl al width)))
+      ((char=? ty #\%)
+       (let ((body (string-append (float_fixed (* mag 100.0) p) "%")))
+         (py-fmt-pad sgn "" (py-fmt-maybe-group body group) fl al width)))
+      (else
+       (error 'format (string-append "浮点的 'n' 格式尚未实现（spec=" spec "）"))))))
+
+(define (py-format v spec)
+  "format(v, spec)：f-string 的 {v:spec} 与 str.format 的 {:spec} 共用（CPython 语义）"
+  (if (string=? spec "")
+      (py-str v)
+      (let* ((sp (py-fmt-spec-parse spec))
+             (fill (list-ref sp 0))
+             (align (list-ref sp 1))
+             (sign (list-ref sp 2))
+             (alt (list-ref sp 3))
+             (zero (list-ref sp 4))
+             (width (list-ref sp 5))
+             (group (list-ref sp 6))
+             (prec (list-ref sp 7))
+             (ty (list-ref sp 8))
+             (fl (if zero #\0 fill))
+             (al (cond (align align) (zero #\=) (else #\>)))
+             (als (if align align #\<))
+             (iv (cond ((string? v) v)
+                       ((boolean? v) (if v 1 0))
+                       ((inexact? v) v)
+                       ((number? v) (exact v))
+                       (else v))))
+        (cond
+          ((string? iv) (py-fmt-do-str iv ty fl als width prec sign alt group spec))
+          ((and (number? iv) (inexact? iv))
+           (py-fmt-do-float iv ty fl al width group prec sign alt spec))
+          ((number? iv)
+           (cond ((not ty) (py-fmt-do-int iv #\d fl al width group prec sign alt spec))
+                 ((memv ty (list #\d #\b #\o #\x #\X #\c #\n))
+                  (py-fmt-do-int iv (if (char=? ty #\n) #\d ty) fl al width group prec sign alt spec))
+                 ((memv ty (list #\e #\E #\f #\F #\g #\G #\%))
+                  (py-fmt-do-float (exact->inexact iv) ty fl al width group prec sign alt spec))
+                 (else
+                  (error 'format
+                         (string-append "数值不能用格式类型 '" (string ty) "'（spec=" spec "）")))))
+          (else
+           (if ty
+               (error 'format (string-append "该类型不支持格式说明（spec=" spec "）"))
+               (py-fmt-pad "" "" (py-str iv) fl als width)))))))
+
+;; ====== str.format（{} / {n} / {name} / {!r} / {:spec}） ======
+
+(define (py-fmt-field-end fmt i)
+  "fmt[i] 是 '{' -> 配对 '}' 的位置（格式说明里可以嵌 {}）"
+  (let ((n (string-length fmt)))
+    (let loop ((k (+ i 1)) (depth 1))
+      (cond ((>= k n) #f)
+            ((char=? (string-ref fmt k) #\{) (loop (+ k 1) (+ depth 1)))
+            ((char=? (string-ref fmt k) #\})
+             (if (= depth 1) k (loop (+ k 1) (- depth 1))))
+            (else (loop (+ k 1) depth))))))
+
+(define (py-fmt-kw-has? kw name)
+  (cond ((null? kw) #f)
+        ((string=? (caar kw) name) #t)
+        (else (py-fmt-kw-has? (cdr kw) name))))
+
+(define (py-fmt-kw-ref kw name)
+  (cond ((string=? (caar kw) name) (cdar kw))
+        (else (py-fmt-kw-ref (cdr kw) name))))
+
+(define (py-fmt-field-value name conv args kw auto)
+  "字段名 -> (值 新的自动编号)；name 空 = 自动，数字 = 位置，其它 = 关键字"
+  (let* ((v (cond ((string=? name "")
+                   (if (>= auto (length args)) (error 'str-format "format 实参不足")
+                       (list-ref args auto)))
+                  ((number? (string->number name))
+                   (let ((k (string->number name)))
+                     (if (or (>= k (length args)) (< k 0))
+                         (error 'str-format
+                                (string-append "format 位置参数越界: " name))
+                         (list-ref args k))))
+                  ((char=? (string-ref name 0) #\.)
+                   (error 'str-format "不支持 {.attr} / {[idx]} 字段"))
+                  (else (if (py-fmt-kw-has? kw name)
+                            (py-fmt-kw-ref kw name)
+                            (error 'str-format
+                                   (string-append "format 缺少关键字实参: " name))))))
+         (v2 (cond ((string=? conv "") v)
+                   ((string=? conv "r") (py-repr v))
+                   ((string=? conv "s") (py-str v))
+                   (else (error 'str-format
+                                (string-append "不支持的转换符: !" conv))))))
+    (list v2 (if (string=? name "") (+ auto 1) auto))))
+
+(define (py-str-format-impl fmt args kw)
+  "str.format 实现：{} {n} {name} {!r} {:spec} {{ }}；spec 交给 py-format"
+  (let ((n (string-length fmt)))
+    (let loop ((i 0) (auto 0) (mode 0) (acc '()))
+      (cond
+        ((fx>= i n) (apply string-append (reverse acc)))
+        ((and (char=? (string-ref fmt i) #\{) (fx< (fx+ i 1) n)
+              (char=? (string-ref fmt (fx+ i 1)) #\{))
+         (loop (+ i 2) auto mode (cons "{" acc)))
+        ((and (char=? (string-ref fmt i) #\}) (fx< (fx+ i 1) n)
+              (char=? (string-ref fmt (fx+ i 1)) #\}))
+         (loop (+ i 2) auto mode (cons "}" acc)))
+        ((char=? (string-ref fmt i) #\{)
+         (let ((j (py-fmt-field-end fmt i)))
+           (if (not j)
+               (error 'str-format "format 字符串缺少 }")
+               (let* ((raw (substring fmt (fx+ i 1) j))
+                      (cs (py-split-on-char raw #\:))
+                      (head (car cs))
+                      (spec-part (cadr cs))
+                      (hs (py-split-on-char head #\!))
+                      (name (car hs))
+                      (conv (cadr hs))
+                      ;; {} 与 {0} 不能混用（CPython 报 ValueError）；关键字字段不占编号
+                      (mode2 (cond ((string=? name "")
+                                    (if (fx= mode 2)
+                                        (error 'str-format
+                                               "format 自动编号与手动编号不能混用")
+                                        1))
+                                   ((number? (string->number name))
+                                    (if (fx= mode 1)
+                                        (error 'str-format
+                                               "format 自动编号与手动编号不能混用")
+                                        2))
+                                   (else mode)))
+                      (r (py-fmt-field-value name conv args kw auto))
+                      (val (car r))
+                      (auto2 (cadr r))
+                      (spec (if (string=? spec-part "")
+                                ""
+                                (py-str-format-impl spec-part args kw))))
+                 (loop (+ j 1) auto2 mode2 (cons (py-format val spec) acc))))))
+        ((char=? (string-ref fmt i) #\})
+         (error 'str-format "format 字符串里有单个 }"))
+        (else (loop (fx+ i 1) auto mode (cons (string (string-ref fmt i)) acc)))))))
+
+(define (py-str-format fmt . args)
+  "str.format：位置参数版（{} / {n} / {:spec}）"
+  (py-str-format-impl fmt args '()))
+
+(define (py-str-format-kw fmt args kw)
+  "str.format：带关键字版；kw 是 (名字 . 值) 的列表"
+  (py-str-format-impl fmt args kw))
 
 ;; ====== 文件 I/O ======
 

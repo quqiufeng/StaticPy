@@ -133,6 +133,12 @@ def main():
             continue
         with tempfile.TemporaryDirectory() as tmp:
             py_out, py_rc, py_err = run_cpython(src, tmp)
+        if py_rc != 0:
+            # 参考端自己就崩了：用例写错，而不是我们不对 —— 别让「两边都空」混过
+            fails += 1
+            tail = py_err.strip().splitlines()[-1] if py_err.strip() else ""
+            print(f"BAD   {c}  CPython 侧非零退出 rc={py_rc}: {tail}")
+            continue
         sp_out, sp_rc, sp_err = run_staticpy(src, name, OUTDIR)
 
         if sp_out is None:

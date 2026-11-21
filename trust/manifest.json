@@ -25,18 +25,18 @@
       "path": "staticpy/static_translate.py",
       "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
       "state": "present",
-      "sha256": "4a82c3a4186ef7d0cb5669c5c9a78e044cc46288b8019eaf9e3877e473ee6567",
-      "bytes": 228480,
-      "lines": 5120
+      "sha256": "1972fb624a7f318091afc3b8c0ea917c9c26404a1647e9f1442d2474476eddd3",
+      "bytes": 230551,
+      "lines": 5167
     },
     {
       "role": "seed",
       "path": "tools/seed/prelude.scm",
       "why": "**运行时真源**（split_plugins.py 从它切出 plugins/ 再拼回 prelude）；改语义改这里",
       "state": "present",
-      "sha256": "3581c292886db456471807fc9a2ce2495b087ea4df5054d9ab7d2addbb02c05a",
-      "bytes": 100824,
-      "lines": 2496
+      "sha256": "150790827ccb8a56fc4002d84dad3ccba8495dde1799569975879ab14ab40b92",
+      "bytes": 117218,
+      "lines": 2844
     },
     {
       "role": "seed",
@@ -52,18 +52,18 @@
       "path": "plugins/core/runtime.scm",
       "why": "切分后的 core 运行时（构建实际读它）：位运算等兜底在此",
       "state": "present",
-      "sha256": "06a15745bb45c8006874e6ab52bc210bb09a658cae711a9b520fed9b9d7aebeb",
-      "bytes": 72745,
-      "lines": 1768
+      "sha256": "d19a0daf63bc564c7c82db85d7ff958c1d12dcdfab12a5401572cea20227cc75",
+      "bytes": 89139,
+      "lines": 2116
     },
     {
       "role": "gen",
       "path": "staticpy/static_prelude.scm",
       "why": "**生成物**（勿手改）：prelude ⇄ plugins 必须同步，check 不过就别提交",
       "state": "present",
-      "sha256": "f8b32c964a2efb73db594328e6e8238dec86cca60fd6da77d7d95a0d4d6a5acf",
-      "bytes": 100774,
-      "lines": 2492
+      "sha256": "a2d0a61116a7de0cb0e7c92c3d59f4073eebc7b5fb0379792b5a7c3dd2d683cc",
+      "bytes": 117168,
+      "lines": 2840
     },
     {
       "role": "seed",
@@ -97,9 +97,9 @@
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "6ca290f63140727d9e612efe100aef1c9ef29c5de49d568356e4733d37a6666b",
-      "bytes": 147299,
-      "lines": 3852
+      "sha256": "312b8ce01e61c23950352f8f92acf01700f857b1d51bd440c1c00e1e6b6219a5",
+      "bytes": 149413,
+      "lines": 3902
     },
     {
       "role": "impl",
@@ -160,9 +160,9 @@
       "path": "staticpy/semantics_diff.py",
       "why": "判据：语义差分（CPython 跑 vs ELF 跑）",
       "state": "present",
-      "sha256": "8ebf07d5660af062f3aea9f5e9252167bcad8fdf9941e2cdd066c5ebf08018c7",
-      "bytes": 6896,
-      "lines": 163
+      "sha256": "c953f8194c69bdaf6f7447632769057e0cbbd6174e7b8f97f029b0701060fb69",
+      "bytes": 7232,
+      "lines": 169
     },
     {
       "role": "harness",

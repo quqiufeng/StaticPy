@@ -76,7 +76,7 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 
 整数与浮点混算时翻译器插 `exact->inexact`（`(fl* 1.5 4)` 会报 `4 is not a flonum`）。
 每条规则都有对应用例：`tests/semantics/{int_arith,float_arith,aug_assign,cmp_chain,`
-`ternary_flow,truthy_flow,bitops,round_builtin,str_format,py_builtins,slice_step}.static.py`，跑 `python3 staticpy/semantics_diff.py`。
+`ternary_flow,truthy_flow,bitops,round_builtin,str_format,str_format_spec,fstring_spec,py_builtins,slice_step}.static.py`，跑 `python3 staticpy/semantics_diff.py`。
 
 ### class（记录类型 + 静态分派）
 
@@ -241,7 +241,11 @@ bash selfcheck.sh                                            # 端到端回归
 
 - `s.strip()/upper()/lower()/split(sep)/join(list)/replace(a,b)/startswith(x)/find(x)/zfill(n)…`
   在种子与环 2 都映射到 prelude 的 `str-*`；**接收者必须是 str**（字面量、f-string 或已推断为 `str`），
-  否则仍走旧的 `({recv}-{attr})` 兜底。`str.format` 与 `split(maxsplit)` **响亮报错**，不静默降级。
+  否则仍走旧的 `({recv}-{attr})` 兜底。`split(maxsplit)` **响亮报错**，不静默降级。
+- `str.format` 支持 `{}` / `{n}` / `{name}`（关键字实参）/ `{:spec}` / `{{}}`，
+  格式说明与 f-string **共用同一套 prelude 函数** `py-format`（见下节）。
+  `{}` 与 `{0}` 混用按 CPython 报错（`自动编号与手动编号不能混用`）；
+  `{0[1]}` / `{x.attr}` 字段**运行期 `error`**。
 - 函数值调用的 `static_` 前缀：形参、`f = lambda …`、**元素全是函数值的 list** 的循环变量
   （`for f in [inc, dbl]: f(1)`）与下标取用（`fs[0](7)`）都不加前缀；
   对应环境类型记 `fn` / `fn-list`，仅用于代码生成。
@@ -251,10 +255,17 @@ bash selfcheck.sh                                            # 端到端回归
 - `f"{x}"` → `(py-str x)`；`f"{x!r}"` → `(py-repr x)`；`f"{x!s}"` 同默认。
   `f"{x=}"` 的自文档走 CPython 的 ast 形状：`Constant("x=")` + `FormattedValue(conversion=114)`，
   相邻字面量必须**合并成一个 Constant**（环 2 的 `parse_lib` 用 `add_fconst` 保证与 CPython ast dump 一致）。
+- **格式说明（format spec）已实现**：`f"{x:>5}"` / `f"{x:.2f}"` / `"{:>5}".format(x)` 都发到
+  prelude 的 `py-format 值 "spec"`（`!r` 先转成 `py-repr`，即 `format(repr(x), spec)`）。
+  `py-format` 支持 fill/align `< > ^ =`、sign `+ - 空格`、`#`、`0`、width、
+  `,`/`_` 分组、`.prec`、类型 `s d b o x X c n f F e E g G %`；
+  覆盖的 38 条实测（`0.0/#g`→`0.00000`、`999999.5/g`→`1e+06`、`1/=+8`→`+      1`、
+  `255/#010x`→`0x000000ff`、`1234567/,`→`1,234,567`…）与 CPython 逐字符一致。
+  不支持的组合（如 `,x`、`+` 配 str）**运行期 `error`**，不静默忽略。
 - **没有实现的东西一律响亮失败，不许静默降级**：
-  - 构建期（`TRANS_ERRORS` → stderr + 退出码 2）：`f"{x:>5}"` / `f"{x:.2f}"`（格式说明）、`f"{x!a}"`、
-    未知字符串方法、`super().attr(..)` 等；
-  - 运行期（prelude `error`）：`%e/%g/%c/%(name)s`、`"{:>5}".format(x)`、`split(maxsplit)` 等。
+  - 构建期（`TRANS_ERRORS` → stderr + 退出码 2）：`f"{x!a}"`、格式说明里含**嵌套 `{}`**
+    （静态展开不了）、未知字符串方法、`super().attr(..)` 等；
+  - 运行期（prelude `error`）：`%e/%g/%c/%(name)s`、`split(maxsplit)`、`{0[1]}` 字段等。
 - `TRANS_ERRORS` **只在收集、必须报**：种子在 `main()` 末尾统一写 stderr 并 `sys.exit(2)`
   （`STATICPY_TRANS_ERRORS_WARN=1` 仅告警不退，供存量代码盘点用）。
   环 2 没有构建期失败通道，同样的形状发**运行期** `(error 'f-string …)`——两环都响。

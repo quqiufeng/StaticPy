@@ -3811,6 +3811,35 @@ def emit_chained_compare(node):
     return f"(let* ({' '.join(binds)}) (and {' '.join(cmps)}))"
 
 
+def format_spec_text(spec):
+    """f-string 的 format_spec（JoinedStr）→ 字面文本；无 spec/空 spec 分得清。
+
+    返回 "" 表示「写了冒号但没写内容」（等价无 spec），None 表示含嵌套 {}。
+    """
+    if spec is None:
+        return ""
+    vals = getattr(spec, "values", None)
+    if vals is None:
+        return ""
+    out = []
+    for v in vals:
+        if isinstance(v, ast.Constant) and isinstance(v.value, str):
+            out.append(v.value)
+        else:
+            return None
+    return "".join(out)
+
+
+def scheme_str(text):
+    """Python 字符串 → Scheme 字面量（与环 2 的 str_lit 逐字节一致）"""
+    t = text.replace("\\", "\\\\")
+    t = t.replace('"', '\\"')
+    t = t.replace("\n", "\\n")
+    t = t.replace("\t", "\\t")
+    t = t.replace("\r", "\\r")
+    return '"' + t + '"'
+
+
 def translate_expr(node):
     """翻译一个表达式"""
     if node is None:
@@ -4156,7 +4185,17 @@ def translate_expr(node):
                 if attr == "splitlines":
                     return f"(str-split-lines {value})"
                 if attr == "format":
-                    # "{} {}".format(a, b)：支持 {} / {n}，格式说明（:>8）响亮报错
+                    # "{} {n} {name} {:spec}".format(...)：与 f-string 共用 py-format
+                    kws = [(k.arg, translate_expr(k.value))
+                           for k in node.keywords if k.arg is not None]
+                    if any(k.arg is None for k in node.keywords):
+                        TRANS_ERRORS.append(
+                            f"第 {getattr(node, 'lineno', 0)} 行: format 的 **kwargs 尚未支持")
+                        return "#f"
+                    if kws:
+                        pos = " ".join(args)
+                        kwsrc = " ".join(f'(cons {scheme_str(n)} {v})' for n, v in kws)
+                        return (f"(py-str-format-kw {value} (list {pos}) (list {kwsrc}))")
                     rest = " ".join(args)
                     return f"(py-str-format {value} {rest})" if rest else f"(py-str-format {value})"
                 fn = STR_METHODS.get(attr)
@@ -4542,20 +4581,28 @@ def translate_expr(node):
                 # 否则 (format "~a") 会露出 #t / #(1 2) / py-none 这类内核表示。
                 conv = getattr(val, "conversion", -1)
                 spec = getattr(val, "format_spec", None)
-                if spec is not None:
-                    # {x:>5} / {x:.2f}：格式说明尚未实现 —— 响亮失败，不静默降级成无格式
-                    TRANS_ERRORS.append(
-                        f"第 {getattr(node, 'lineno', 0)} 行: f-string 的格式说明"
-                        f"（{{expr:…}}）尚未支持")
-                    parts.append("#f")
-                elif conv == 114:      # !r
-                    parts.append(f"(py-repr {expr})")
-                elif conv in (-1, 115):  # 默认 / !s
-                    parts.append(f"(py-str {expr})")
-                else:                  # !a
+                # {x:} 的 format_spec 是空 JoinedStr —— 存在但等于没写，必须接受
+                spec_text = format_spec_text(spec)
+                if conv == 97:         # !a
                     TRANS_ERRORS.append(
                         f"第 {getattr(node, 'lineno', 0)} 行: f-string 的 !a 转换尚未支持")
                     parts.append("#f")
+                elif conv not in (-1, 114, 115):
+                    TRANS_ERRORS.append(
+                        f"第 {getattr(node, 'lineno', 0)} 行: 未知的 f-string 转换符 !{chr(conv)}")
+                    parts.append("#f")
+                elif spec_text is None:
+                    # 嵌套 {} 的格式说明：无法静态展开，响亮失败
+                    TRANS_ERRORS.append(
+                        f"第 {getattr(node, 'lineno', 0)} 行: f-string 的格式说明含嵌套 {{}}，尚未支持")
+                    parts.append("#f")
+                elif spec_text == "":
+                    # 无格式说明：默认/!s 走 py-str，!r 走 py-repr
+                    parts.append(f"(py-repr {expr})" if conv == 114 else f"(py-str {expr})")
+                else:
+                    # 有格式说明：format(值, spec)，转换符先作用在值上
+                    base = f"(py-repr {expr})" if conv == 114 else expr
+                    parts.append(f'(py-format {base} {scheme_str(spec_text)})')
             else:
                 parts.append('""')
         if len(parts) == 1:
