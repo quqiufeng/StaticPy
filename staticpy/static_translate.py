@@ -4536,11 +4536,26 @@ def translate_expr(node):
             if isinstance(val, ast.Constant):
                 parts.append(translate_expr(val))
             elif isinstance(val, ast.FormattedValue):
-                # {expr} → (format "~s" expr)
+                # {expr} → (py-str expr) / {expr!r} → (py-repr expr)
                 expr = translate_expr(val.value)
                 # CPython 的 f-string 用 str()：None/True/容器都要走 py-str，
                 # 否则 (format "~a") 会露出 #t / #(1 2) / py-none 这类内核表示。
-                parts.append(f"(py-str {expr})")
+                conv = getattr(val, "conversion", -1)
+                spec = getattr(val, "format_spec", None)
+                if spec is not None:
+                    # {x:>5} / {x:.2f}：格式说明尚未实现 —— 响亮失败，不静默降级成无格式
+                    TRANS_ERRORS.append(
+                        f"第 {getattr(node, 'lineno', 0)} 行: f-string 的格式说明"
+                        f"（{{expr:…}}）尚未支持")
+                    parts.append("#f")
+                elif conv == 114:      # !r
+                    parts.append(f"(py-repr {expr})")
+                elif conv in (-1, 115):  # 默认 / !s
+                    parts.append(f"(py-str {expr})")
+                else:                  # !a
+                    TRANS_ERRORS.append(
+                        f"第 {getattr(node, 'lineno', 0)} 行: f-string 的 !a 转换尚未支持")
+                    parts.append("#f")
             else:
                 parts.append('""')
         if len(parts) == 1:
@@ -5090,6 +5105,15 @@ def _run_pipeline(input_files, plugin_arg="", lib_mode=False):
         print("\n;;=== WARNINGS ===")
         for w in WARNINGS:
             print(f";;{w}")
+
+    # 翻译期"响亮失败"必须真的响：TRANS_ERRORS 一直只收集不报，等于静默降级成 #f/None。
+    # STATICPY_TRANS_ERRORS_WARN=1 时只告警不退（用于存量代码盘点）。
+    if TRANS_ERRORS:
+        sys.stderr.write(f"翻译失败（{len(TRANS_ERRORS)} 处不支持）：\n")
+        for e in TRANS_ERRORS:
+            sys.stderr.write("  " + str(e).rstrip() + "\n")
+        if os.environ.get("STATICPY_TRANS_ERRORS_WARN", "") != "1":
+            sys.exit(2)
 
 
 if __name__ == "__main__":

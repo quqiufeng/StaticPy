@@ -208,7 +208,7 @@ diff <(./dist/translator_self ~/iso_gen/t.static.py) <(./dist/translator ~/iso_g
 
 | 环节 | 现在是否要 CPython | 说明 |
 |---|---|---|
-| 翻译 `.static.py` → Scheme IR | **否** | `dist/translator`（自举 ELF）；全量 32 个 `.static.py` 的 `check_translate.sh`：fail=1，唯一例外是 `examples/syntax_plugin/demo.static.py`（它要 `syntax_plugin` 自定义语法，得带插件跑） |
+| 翻译 `.static.py` → Scheme IR | **否** | `dist/translator`（自举 ELF）；全量 66 个 `.static.py` 的 `check_translate.sh`：fail=1，例外是 `examples/syntax_plugin/demo.static.py`（它要 `syntax_plugin` 自定义语法，得带插件跑）与两个**故意构造的响亮失败**用例`tests/semantics/{fstring_spec,fstring_conv_a}.static.py`（种子的 `TRANS_ERRORS` 按设计退出码 2，环 2 发运行期 `(error …)`）；`check_parse.sh` 同集合 fail=0 |
 | IR → AOT → 独立 ELF | **否** | `.scm` 输入跳过翻译；只依赖 `scheme` + `gcc` |
 | 运行产物 | **否** | 独立 ELF，目标机零依赖（见 [DEPLOY.md](./DEPLOY.md)） |
 | 起爆翻译器本身 | 是（**一次**） | 种子 `static_translate.py`；之后靠 ③ 自持，Python 可完全退场 |

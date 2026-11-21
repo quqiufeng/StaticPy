@@ -245,3 +245,23 @@ bash selfcheck.sh                                            # 端到端回归
 - 函数值调用的 `static_` 前缀：形参、`f = lambda …`、**元素全是函数值的 list** 的循环变量
   （`for f in [inc, dbl]: f(1)`）与下标取用（`fs[0](7)`）都不加前缀；
   对应环境类型记 `fn` / `fn-list`，仅用于代码生成。
+
+### f-string 与「响亮失败」
+
+- `f"{x}"` → `(py-str x)`；`f"{x!r}"` → `(py-repr x)`；`f"{x!s}"` 同默认。
+  `f"{x=}"` 的自文档走 CPython 的 ast 形状：`Constant("x=")` + `FormattedValue(conversion=114)`，
+  相邻字面量必须**合并成一个 Constant**（环 2 的 `parse_lib` 用 `add_fconst` 保证与 CPython ast dump 一致）。
+- **没有实现的东西一律响亮失败，不许静默降级**：
+  - 构建期（`TRANS_ERRORS` → stderr + 退出码 2）：`f"{x:>5}"` / `f"{x:.2f}"`（格式说明）、`f"{x!a}"`、
+    未知字符串方法、`super().attr(..)` 等；
+  - 运行期（prelude `error`）：`%e/%g/%c/%(name)s`、`"{:>5}".format(x)`、`split(maxsplit)` 等。
+- `TRANS_ERRORS` **只在收集、必须报**：种子在 `main()` 末尾统一写 stderr 并 `sys.exit(2)`
+  （`STATICPY_TRANS_ERRORS_WARN=1` 仅告警不退，供存量代码盘点用）。
+  环 2 没有构建期失败通道，同样的形状发**运行期** `(error 'f-string …)`——两环都响。
+- 用例侧用标记声明期望的失败（`semantics_diff.py` 认）：
+  ```python
+  # expect: build-error f-string 的格式说明
+  # expect: runtime-error 不支持的 %-格式符
+  ```
+  前者断言「构建必须非零退出且信息含该子串」，后者断言「构建通过、运行非零退出且信息含该子串」；
+  这类用例不参与 stdout 比对（CPython 侧不会失败，比了没意义）。

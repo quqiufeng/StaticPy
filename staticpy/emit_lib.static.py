@@ -680,7 +680,16 @@ def translate_joined(n) -> str:
     while j < py_list_length(vs):
         e = py_list_ref(vs, j)
         if nt(e) == "FormattedValue":
-            ps = py_list_append(ps, "(py-str " + translate_expr(dict_get(e, "value")) + ")")
+            inner: str = translate_expr(dict_get(e, "value"))
+            spec = dict_get(e, "format_spec")
+            conv = dict_get(e, "conversion")
+            if ir_present(spec) != 0:
+                # {x:>5} / {x:.2f}：格式说明尚未实现 —— 响亮失败（与种子同口径）
+                ps = py_list_append(ps, "(error 'f-string \"f-string 的格式说明（:…）尚未支持\")")
+            elif conv == 114:
+                ps = py_list_append(ps, "(py-repr " + inner + ")")
+            else:
+                ps = py_list_append(ps, "(py-str " + inner + ")")
         elif nt(e) == "Constant":
             ps = py_list_append(ps, translate_expr(e))
         else:

@@ -25,9 +25,9 @@
       "path": "staticpy/static_translate.py",
       "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
       "state": "present",
-      "sha256": "4c75b28298bb14aa52c623b17d50211a30c5ddfafcf4df38bdcdea7170db461a",
-      "bytes": 227086,
-      "lines": 5096
+      "sha256": "4a82c3a4186ef7d0cb5669c5c9a78e044cc46288b8019eaf9e3877e473ee6567",
+      "bytes": 228480,
+      "lines": 5120
     },
     {
       "role": "seed",
@@ -88,18 +88,18 @@
       "path": "staticpy/parse_lib.static.py",
       "why": "环2 实现：解析器",
       "state": "present",
-      "sha256": "a0284dfdaf231da7b981e16ca676044ecbed7388440df36b6ec94d6aeaa1b44c",
-      "bytes": 58869,
-      "lines": 2052
+      "sha256": "f3fbfaa35130d557e09c4c005b2495296758975822914a752a3c3936269cb765",
+      "bytes": 59427,
+      "lines": 2061
     },
     {
       "role": "impl",
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "ad00865201d2a0a26ff4f82ece3ffb3987bf5389b3f0d0225a7f45fbf3cdcba2",
-      "bytes": 146802,
-      "lines": 3843
+      "sha256": "6ca290f63140727d9e612efe100aef1c9ef29c5de49d568356e4733d37a6666b",
+      "bytes": 147299,
+      "lines": 3852
     },
     {
       "role": "impl",
@@ -160,9 +160,9 @@
       "path": "staticpy/semantics_diff.py",
       "why": "判据：语义差分（CPython 跑 vs ELF 跑）",
       "state": "present",
-      "sha256": "50ada1f3ae2cf296fb1ff05d7329bc3cb7b85d0bf6869067db816da74c497dd2",
-      "bytes": 4431,
-      "lines": 101
+      "sha256": "8ebf07d5660af062f3aea9f5e9252167bcad8fdf9941e2cdd066c5ebf08018c7",
+      "bytes": 6896,
+      "lines": 163
     },
     {
       "role": "harness",

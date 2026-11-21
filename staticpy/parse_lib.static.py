@@ -941,7 +941,13 @@ def parse_fbody_into(parts, body: str):
             sub = parse_fvalue(inner)
             k2: int = 0
             while k2 < py_list_length(sub):
-                parts = py_list_append(parts, py_list_ref(sub, k2))
+                el = py_list_ref(sub, k2)
+                # `f"{x=} {y=}"`：自文档那段 Constant 要与前面的字面量合并成一段，
+                # CPython 的 ast 里就是 Constant(" y=") 而不是 Constant(" ") + Constant("y=")
+                if dict_get(el, "_t") == "Constant":
+                    parts = add_fconst(parts, dict_get(el, "value"))
+                else:
+                    parts = py_list_append(parts, el)
                 k2 = k2 + 1
             i = j + 1
             continue
@@ -1014,10 +1020,13 @@ def parse_fvalue(inner: str):
         if str_starts_with(rest, ":"):
             spec = build_spec(sl(rest, 1, str_length(rest)))
     if str_ends_with(expr_text, "="):
-        selfdoc = str_trim(expr_text) + "="
+        # `f"{x=}"` 自文档：CPython 的 ast 把源码原文（含 '='，含空白）放进 Constant，
+        # 即 Constant("x=") + FormattedValue(x, conversion=114)；不能再补一个 '='
+        selfdoc = expr_text
         expr_text = sl(expr_text, 0, str_length(expr_text) - 1)
         if conv < 0:
             conv = 114
+
     e = parse_expr_text(expr_text)
     d = an("FormattedValue")
     af(d, "value", e)

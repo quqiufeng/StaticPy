@@ -41,17 +41,75 @@ def run_cpython(src, tmpdir):
     return r.stdout, r.returncode, r.stderr
 
 
-def run_staticpy(src, name, tmpdir):
-    """AOT 编译成 ELF 再执行"""
+def build_staticpy(src, name):
+    """AOT 编译成 ELF；返回 (elf 路径或 None, 构建输出尾部, 原始输出全文)"""
     env = dict(os.environ, STATICPY_OUTDIR=OUTDIR)
     b = subprocess.run(["bash", BUILD, src, name], capture_output=True, text=True,
                        env=env, timeout=600, cwd=ROOT)
     elf = os.path.join(OUTDIR, name)
+    full = (b.stdout or "") + (b.stderr or "")
     if b.returncode != 0 or not os.path.exists(elf):
-        tail = (b.stderr or b.stdout).strip().splitlines()[-6:]
-        return None, None, "构建失败:\n    " + "\n    ".join(tail)
+        tail = full.strip().splitlines()[-6:]
+        return None, "构建失败:\n    " + "\n    ".join(tail), full
+    return elf, "", full
+
+
+def run_elf(elf):
     r = subprocess.run([elf], capture_output=True, text=True, timeout=120)
     return r.stdout, r.returncode, r.stderr
+
+
+def run_staticpy(src, name, tmpdir):
+    """AOT 编译成 ELF 再执行"""
+    elf, err, _ = build_staticpy(src, name)
+    if elf is None:
+        return None, None, err
+    return run_elf(elf)
+
+
+def expect_of(src):
+    """用例头部的响亮失败声明：`# expect: build-error 子串` / `# expect: runtime-error 子串`
+
+    这两种用例测的不是输出值，而是**不支持的东西必须响**（VISION：静默降级=bug）。
+    """
+    with open(src, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line.startswith("# expect:"):
+                continue
+            body = line[len("# expect:"):].strip()
+            kind, _, needle = body.partition(" ")
+            return kind.strip(), needle.strip()
+    return "", ""
+
+
+def check_loud(case, src, name, kind, needle, verbose=False):
+    """响亮失败用例：不支持的东西必须在**构建期或运行期**报出 needle（非零退出）"""
+    elf, build_err, build_full = build_staticpy(src, name)
+    if kind == "build-error":
+        if elf is not None:
+            print(f"LOUD  {case}: 期望构建期报错，但构建成功了")
+            return False
+        ok = (needle == "") or (needle in build_full)
+        print(("PASS  " if ok else "LOUD  ") + f"{case}  (构建期响亮失败)")
+        if not ok:
+            print(f"    期望报错信息含 {needle!r}，实际：\n    {build_err}")
+        elif verbose:
+            print("".join(f"    | {l}\n" for l in build_full.strip().splitlines()[-4:]))
+        return ok
+    if elf is None:
+        print(f"LOUD  {case}: 期望运行期报错，但构建就失败了\n    {build_err}")
+        return False
+    out, rc, err = run_elf(elf)
+    loud = rc != 0
+    ok = loud and ((needle == "") or (needle in err or needle in out))
+    tail = (out + err).strip().splitlines()
+    print(("PASS  " if ok else "LOUD  ") + f"{case}  (运行期响亮失败 rc={rc})")
+    if not ok:
+        print(f"    期望：rc≠0 且信息含 {needle!r}；实际 rc={rc}")
+    if verbose or not ok:
+        print("".join(f"    | {l}\n" for l in tail[-4:]))
+    return ok
 
 
 def main():
@@ -69,6 +127,10 @@ def main():
     for c in cases:
         src = os.path.join(CASES, c)
         name = "sem_" + c.replace(".static.py", "")
+        kind, needle = expect_of(src)
+        if kind in ("build-error", "runtime-error"):
+            fails += 0 if check_loud(c, src, name, kind, needle, verbose) else 1
+            continue
         with tempfile.TemporaryDirectory() as tmp:
             py_out, py_rc, py_err = run_cpython(src, tmp)
         sp_out, sp_rc, sp_err = run_staticpy(src, name, OUTDIR)
