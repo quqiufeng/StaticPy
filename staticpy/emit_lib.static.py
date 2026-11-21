@@ -225,6 +225,26 @@ def tenv_set(nm: str, t: str) -> int:
     dict_set(py_list_ref(fr, n - 1), mangle_name(nm), t)
     return 0
 
+def tenv_set_ann(nm: str, t: str) -> int:
+    """标注（AnnAssign/形参）写类型，并记为「标注得来」"""
+    tenv_set(nm, t)
+    fr = tenv_frames()
+    n = py_list_length(fr)
+    if n > 0:
+        dict_set(py_list_ref(fr, n - 1), "_ann:" + mangle_name(nm), 1)
+    return 0
+
+def tenv_is_ann(nm: str) -> int:
+    """这个变量的类型是不是标注给的（标注才不许被推断覆盖，同种子 TYPE_ENV）"""
+    fr = tenv_frames()
+    k: str = "_ann:" + mangle_name(nm)
+    j = py_list_length(fr) - 1
+    while j >= 0:
+        if dict_get(py_list_ref(fr, j), k) is not None:
+            return 1
+        j = j - 1
+    return 0
+
 # ========== 类型标注 / 类型推断 ==========
 
 def ann_str(ann) -> str:
@@ -405,7 +425,7 @@ def collect_function_types(n, src: str) -> int:
         a = py_list_ref(args, i)
         t = ann_str(dict_get(a, "annotation"))
         if t != "":
-            tenv_set(dict_get(a, "arg"), t)
+            tenv_set_ann(dict_get(a, "arg"), t)
         i = i + 1
     scan_types(dict_get(n, "body"), src)
     return 0
@@ -420,7 +440,7 @@ def scan_types(stmts, src: str) -> int:
             if nt(tgt) == "Name":
                 a = ann_str(dict_get(s, "annotation"))
                 if a != "":
-                    tenv_set(dict_get(tgt, "id"), a)
+                    tenv_set_ann(dict_get(tgt, "id"), a)
         elif t == "FunctionDef":
             collect_function_types(s, src)
         elif t == "While" or t == "For":
@@ -1249,7 +1269,9 @@ def block_assign(exprs, s, t: str):
     if nt(tg) == "Name":
         nm = dict_get(tg, "id")
         iv = infer_expr_type(v)
-        if iv != "":
+        # 已有标注就别覆盖：`items: list[Box] = [...]` 的推断只有 "list"，
+        # 覆盖掉就丢了元素类型（`items[0].n` 会退化成 `(n …)`）——同种子
+        if iv != "" and tenv_is_ann(nm) == 0:
             tenv_set(nm, iv)
         return py_list_append(exprs, f"(set! {mangle_name(nm)} {translate_expr(v)})")
     if nt(tg) == "Attribute":
@@ -2644,6 +2666,7 @@ def collect_classes(body) -> int:
             methods = make_dict()
             cms = make_dict()
             sms = make_dict()
+            ftypes = make_dict()
             bs = dict_get(s, "bases")
             if py_list_length(bs) > 0 and nt(py_list_ref(bs, 0)) == "Name":
                 base = dict_get(py_list_ref(bs, 0), "id")
@@ -2656,10 +2679,21 @@ def collect_classes(body) -> int:
                     ib = dict_get(it, "body")
                     k: int = 0
                     while k < py_list_length(ib):
-                        fs = field_add(fs, seen, self_assign_field(py_list_ref(ib, k)))
+                        st = py_list_ref(ib, k)
+                        f = self_assign_field(st)
+                        fs = field_add(fs, seen, f)
+                        # self.x: T = v 的标注也记下（链式解析 o.box.n 要用）
+                        if f != "" and nt(st) == "AnnAssign":
+                            ft = ann_str(dict_get(st, "annotation"))
+                            if ft != "" and dict_get(ftypes, f) is None:
+                                dict_set(ftypes, f, ft)
                         k = k + 1
                 elif nt(it) == "AnnAssign" and nt(dict_get(it, "target")) == "Name":
-                    fs = field_add(fs, seen, dict_get(dict_get(it, "target"), "id"))
+                    fnm: str = dict_get(dict_get(it, "target"), "id")
+                    fs = field_add(fs, seen, fnm)
+                    ft = ann_str(dict_get(it, "annotation"))
+                    if ft != "" and dict_get(ftypes, fnm) is None:
+                        dict_set(ftypes, fnm, ft)
                 elif nt(it) == "FunctionDef":
                     # 方法分类（同种子 analyze_class）：@classmethod / @staticmethod / 实例方法
                     dn: str = dict_get(it, "name")
@@ -2679,6 +2713,7 @@ def collect_classes(body) -> int:
             dict_set(info, "methods", methods)
             dict_set(info, "classmethods", cms)
             dict_set(info, "staticmethods", sms)
+            dict_set(info, "field_types", ftypes)
             dict_set(CLASSES, nm, info)
         i = i + 1
     i = 0
@@ -2879,6 +2914,18 @@ def class_field_owner(cls: str, f: str) -> str:
         guard = guard + 1
     return ""
 
+def class_field_type(cls: str, f: str) -> str:
+    """字段的类型标注（沿继承链找）；没有标注返回 ""（同种子 record_field_type）"""
+    cur = cls
+    guard: int = 0
+    while cur != "" and class_known(cur) == 1 and guard < 32:
+        ft = dict_get(dict_get(dict_get(CLASSES, cur), "field_types"), f)
+        if ft is not None and ft != "":
+            return ft
+        cur = dict_get(dict_get(CLASSES, cur), "base")
+        guard = guard + 1
+    return ""
+
 def deco_names(fn):
     """装饰器名列表（同种子 _decorator_names）"""
     out = py_list()
@@ -2987,6 +3034,24 @@ def resolve_expr_class(expr) -> str:
                         if class_known(ret) == 1:
                             return ret
             return ""
+        return ""
+    if t == "Attribute":
+        # 链式属性：字段标注是类才继续（o.box.n -> Box 的字段）
+        owner = resolve_expr_class(dict_get(expr, "value"))
+        if owner != "":
+            ft = class_field_type(owner, dict_get(expr, "attr"))
+            if class_known(ft) == 1:
+                return ft
+        return ""
+    if t == "Subscript":
+        # 容器下标取元素：items[0].n / items[0].scaled() （同种子 _container_elem_class）
+        bv = dict_get(expr, "value")
+        if nt(bv) == "Name":
+            elem = tenv_get(dict_get(bv, "id"))
+            if str_starts_with(elem, "list["):
+                elem = str_slice(elem, 5, str_length(elem) - 1)
+                if class_known(elem) == 1:
+                    return elem
         return ""
     return ""
 

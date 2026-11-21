@@ -903,6 +903,10 @@ def resolve_imported_name(name):
 
 # ====== 全局类型环境 ======
 TYPE_ENV = {}
+# 标注（AnnAssign / 形参）写进 TYPE_ENV 的名字：只有这些才不许被推断覆盖。
+# 普通赋值不设这条豁免——否则 `j = f(...)` 会留着外层作用域的 j 类型，
+# 种子与自举翻译器就会一边出 `+` 一边出 `fx+`（IR 不一致）。
+ANNOT_ENV = set()
 CURRENT_PARAMS = set()   # 当前作用域的参数名（调用时不加 static_ 前缀）
 
 def parse_type_annotation(node):
@@ -956,6 +960,7 @@ def collect_function_types(node):
         t = parse_type_annotation(arg)
         if t:
             TYPE_ENV[mangle_name(arg.arg)] = t
+            ANNOT_ENV.add(mangle_name(arg.arg))
     # 遍历函数体收集 AnnAssign（递归进 while/if/for/with 体）
     def scan(stmts):
         for stmt in stmts:
@@ -964,6 +969,7 @@ def collect_function_types(node):
                 t = parse_type_annotation(stmt)
                 if target and t:
                     TYPE_ENV[target] = t
+                    ANNOT_ENV.add(target)
             elif isinstance(stmt, ast.FunctionDef):
                 collect_function_types(stmt)
             elif isinstance(stmt, (ast.While, ast.For)):
@@ -1630,8 +1636,10 @@ def translate_block(stmts):
                     destructure_done = True
             if target and val:
                 # 从右侧表达式推断目标变量类型，仅用于辅助代码生成
+                # 已有标注时不要覆盖：`items: list[Box] = [...]` 的推断只有 "list"，
+                # 覆盖掉就丢了元素类型（`items[0].n` 会退化成 `(n …)`）
                 inferred = infer_expr_type(s.value)
-                if inferred:
+                if inferred and target not in ANNOT_ENV:
                     TYPE_ENV[target] = inferred
                 exprs.append(f"(set! {target} {val})")
             elif not destructure_done:
@@ -2228,6 +2236,36 @@ def translate_class(node, source_file=""):
 
 # --- class 成员解析（self.x / obj.m() / Cls.m()）---------------------------
 
+def _type_base(t):
+    """Type 对象 / 字符串 → 基础类型名
+
+    field_types 存的是 Type，TYPE_ENV 里存的是字符串（parse_type_annotation），
+    两种表示都要认——只认 str 会让 `o.box.n` 退化成 `(n (Outer-box o))`。
+    """
+    if isinstance(t, str):
+        return t
+    base = getattr(t, "base", None)
+    if isinstance(base, str):
+        return base
+    return None
+
+
+def _container_elem_class(t):
+    """`list[Box]` / Type(list, [Box]) → "Box"；容器元素类型推不出返回 None
+
+    TYPE_ENV 里两种表示都可能出现：AnnAssign 走 parse_type_annotation（字符串
+    "list[Box]"），类型检查器写回的是 Type 对象。
+    """
+    if isinstance(t, str):
+        if t.startswith("list[") and t.endswith("]"):
+            return t[5:-1].strip() or None
+        return None
+    params = getattr(t, "params", None)
+    if _type_base(t) == "list" and params:
+        return _type_base(params[0])
+    return None
+
+
 def resolve_expr_class(expr, depth=0):
     """推断表达式的所属类名（CLASSES 中的键）；推断不出返回 None"""
     if depth > 6 or expr is None:
@@ -2251,8 +2289,8 @@ def resolve_expr_class(expr, depth=0):
             if owner:
                 hit = _lookup_member(owner, f.attr, "classmethods") or _lookup_member(owner, f.attr, "methods")
                 if hit:
-                    ret = parse_type(hit[1].returns) if hit[1].returns is not None else None
-                    if isinstance(ret, str) and ret in CLASSES:
+                    ret = _type_base(parse_type(hit[1].returns))
+                    if ret in CLASSES:
                         return ret
             return None
         ret = infer_expr_type(expr)
@@ -2269,9 +2307,15 @@ def resolve_expr_class(expr, depth=0):
         # 链式属性：只有字段类型标注是类时才继续
         owner = resolve_expr_class(expr.value, depth + 1)
         if owner:
-            ft = RECORD_FIELDS.get(owner, {}).get(expr.attr)
-            if isinstance(ft, str) and ft in CLASSES:
+            ft = _type_base(record_field_type(owner, expr.attr))
+            if ft in CLASSES:
                 return ft
+        return None
+    if isinstance(expr, ast.Subscript) and isinstance(expr.value, ast.Name):
+        # boxes[i]：容器标注是 list[Box] 时元素就是 Box
+        inner = _container_elem_class(TYPE_ENV.get(expr.value.id))
+        if inner in CLASSES:
+            return inner
         return None
     return None
 
@@ -4096,9 +4140,10 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
       - method_kind = method：保留 self 形参（记录对象作为第一参数）
       - method_kind = classmethod/staticmethod：去掉 self/cls 形参
     """
-    global TYPE_ENV, CURRENT_CLASS
+    global TYPE_ENV, ANNOT_ENV, CURRENT_CLASS
     # 每个函数独立的类型环境，避免嵌套函数污染
     saved_env = TYPE_ENV.copy()
+    saved_annot = set(ANNOT_ENV)
     saved_class = CURRENT_CLASS
     collect_function_types(node)
 
@@ -4191,8 +4236,9 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                         body_exprs.append(f"(py-set! {d} {k} {v})")
             if target and val and target != "__destructured__":
                 # 从右侧表达式推断目标变量类型，仅用于辅助代码生成（如 subscript 选择 accessor）
+                # 已有标注就别覆盖：`items: list[Box] = [...]` 的推断只有 "list"
                 inferred = infer_expr_type(stmt.value)
-                if inferred:
+                if inferred and mangle_name(target) not in ANNOT_ENV:
                     TYPE_ENV[mangle_name(target)] = inferred
                 if isinstance(stmt.value, ast.Lambda):
                     TYPE_ENV[mangle_name(target)] = "fn"
@@ -4360,6 +4406,7 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
     
     # 恢复外层类型环境
     TYPE_ENV = saved_env
+    ANNOT_ENV = saved_annot
     CURRENT_CLASS = saved_class
     CURRENT_TENSOR_VARS = saved_tensor_vars
     CURRENT_PARAMS = saved_params
@@ -4499,6 +4546,7 @@ def _run_pipeline(input_files, plugin_arg="", lib_mode=False):
     
     # 重置全局状态
     TYPE_ENV = {}
+    ANNOT_ENV.clear()
     EXTERN_FUNCTIONS = {}
     IMPORTED_NAMES = {}
     RECORD_TYPES = {}
