@@ -741,7 +741,7 @@ BUILTIN_MODULES = {
         "sin": "sin", "cos": "cos", "tan": "tan",
         "log": "log", "log2": "log2", "log10": "log10", "exp": "exp",
         "sqrt": "sqrt", "abs": "abs", "pow": "pow", "fmod": "fmod",
-        "floor": "floor", "ceil": "ceil", "round": "round",
+        "floor": "floor", "ceil": "ceil", "round": "py-round",
         "sinh": "sinh", "cosh": "cosh", "tanh": "tanh",
         "atan2": "atan2", "asin": "asin", "acos": "acos", "atan": "atan",
         "pi": "pi", "e": "e",
@@ -1035,8 +1035,8 @@ def collect_assigned_names(stmts):
 BUILTIN_VALUE_WRAPPERS = {
     "len": "py-len",
     "str": "py-str",
-    "int": "(lambda (x) (exact (round x)))",
-    "float": "(lambda (x) (inexact x))",
+    "int": "(lambda (x) (exact (truncate x)))",
+    "float": "py-float",
     "bool": "py-truthy",
     "abs": "abs",
     "sum": "py-sum",
@@ -1280,11 +1280,22 @@ def translate_binop(op_name, left_node, right_node):
         "Sub":    ("fx-", "fl-", "-"),
         "Mult":   ("fx*", "fl*", "*"),
         "Div":    ("fx/", "fl/", "/"),
-        "FloorDiv": ("fxdiv", "fldiv", "quotient"),
-        "Mod":    ("fxmod", "flmod", "mod"),
-        "Pow":    ("fxexpt", "flexpt", "expt"),
+        # // % ** 一律走 CPython 语义的运行时函数：Chez 的 quotient/remainder 向零
+        # 截断（-7//2 → -3，CPython 是 -4），fxdiv/fxmod 还会在大整数上溢出；
+        # fxexpt 干脆不存在。数值正确性交给 py-floordiv / py-mod / py-pow。
+        "FloorDiv": ("py-floordiv", "py-floordiv", "py-floordiv"),
+        "Mod":    ("py-mod", "py-mod", "py-mod"),
+        "Pow":    ("py-pow", "py-pow", "py-pow"),
     }
     fx_op, fl_op, generic = op_map.get(op_name, (None, None, op_name.lower()))
+    # 单边是 int 的浮点运算：fl*/fl+/fl- 只吃 flonum，(fl* 1.5 4) 会炸
+    # "4 is not a flonum"。类型已知是 int 的那一侧显式转 flonum
+    # （exact->inexact 对 flonum 是恒等，推断不准也不会算错）。
+    if is_float and not is_int:
+        if lt == "int":
+            left = f"(exact->inexact {left})"
+        if rt == "int":
+            right = f"(exact->inexact {right})"
 
     if op_name == "Add":
         l_list = lt and str(lt).startswith("list")
@@ -1364,6 +1375,11 @@ def translate_compare(op, left_node, right_node):
     if is_float:
         fx_op, fl_op, generic = op_map_num.get(type(op).__name__, (None, None, None))
         if fl_op:
+            # 混合 int/float 比较：fl</fl= 只吃 flonum，int 那侧显式转
+            if lt == "int":
+                left = f"(exact->inexact {left})"
+            if rt == "int":
+                right = f"(exact->inexact {right})"
             return f"({fl_op} {left} {right})"
     if (is_str or lt == "str" or rt == "str"):
         str_op = op_map_str.get(type(op).__name__)
@@ -1397,6 +1413,21 @@ def translate_aug_assign(node):
                 # 复用 setter 的结构，替换右值
                 head, _, _ = setter.rpartition(" ")
                 return head + " " + recv + ")"
+    # lst[i] += v / d[k] += v → (py-set! c k (op (py-get c k) v))
+    if isinstance(node.target, ast.Subscript):
+        c = translate_expr(node.target.value)
+        k = translate_expr(node.target.slice)
+        cur = f"(py-get {c} {k})"
+        val = translate_binop(type(node.op).__name__, node.target, node.value) \
+            if type(node.op).__name__ in ("Add", "Sub", "Mult", "Div", "FloorDiv", "Mod", "Pow") else None
+        if val is None:
+            # 位运算等：退化成 (op cur v)，prelude 的 bitand/bitor/... 接得住
+            op = {"BitAnd": "bitand", "BitOr": "bitor", "BitXor": "bitxor",
+                  "LShift": "lshift", "RShift": "rshift"}.get(type(node.op).__name__)
+            if op is None:
+                return gen_error(node, f"unsupported augmented operator on subscript")
+            val = f"({op} {cur} {translate_expr(node.value)})"
+        return f"(py-set! {c} {k} {val})"
     return f"(void)"
 
 def translate_type(py_type):
@@ -1466,7 +1497,7 @@ def translate_stmt(node, bindings=None):
     elif isinstance(node, ast.Expr):
         return f"  {translate_expr(node.value)}"
     elif isinstance(node, ast.If):
-        test = translate_expr(node.test)
+        test = cp_truthy_test(node.test)
         body = "\n".join(translate_stmt(s) for s in node.body)
         orelse = node.orelse
         if orelse:
@@ -1475,7 +1506,7 @@ def translate_stmt(node, bindings=None):
         else:
             return f"  (if {test}\n    (begin\n{body}))"
     elif isinstance(node, ast.While):
-        test = translate_expr(node.test)
+        test = cp_truthy_test(node.test)
         body = "\n".join(translate_stmt(s) for s in node.body)
         return f"  (let loop ()\n    (if {test}\n      (begin\n{body}\n        (loop))))"
     elif isinstance(node, ast.For):
@@ -1654,7 +1685,7 @@ def translate_block(stmts):
             exprs.append(translate_aug_assign(s))
         elif isinstance(s, ast.If):
             # 嵌套 if
-            test = translate_expr(s.test)
+            test = cp_truthy_test(s.test)
             inner_then = translate_block(s.body)
             if s.orelse:
                 inner_else = translate_block(s.orelse)
@@ -1664,7 +1695,7 @@ def translate_block(stmts):
         elif isinstance(s, ast.For):
             exprs.append(emit_for_stmt(s))
         elif isinstance(s, ast.While):
-            test = translate_expr(s.test)
+            test = cp_truthy_test(s.test)
             body_str = " ".join(translate_block(s.body))
             if has_direct_break(s.body) or has_direct_continue(s.body):
                 inner = body_str
@@ -3355,8 +3386,11 @@ def expr_is_bool(node):
     """
     if node is None:
         return False
-    if isinstance(node, ast.Compare) or isinstance(node, ast.BoolOp):
+    if isinstance(node, ast.Compare):
         return True
+    if isinstance(node, ast.BoolOp):
+        # and/or 返回**操作数**，不是布尔：`1 and 0` 是 0（Scheme 里 0 为真）
+        return all(expr_is_bool(v) for v in node.values)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         return True
     if isinstance(node, ast.Constant) and isinstance(node.value, bool):
@@ -3686,6 +3720,63 @@ def translate_match(stmt):
             f" (letrec ({' '.join(thunks)}) ({subj}_k0)))")
 
 
+def cp_truthy_test(node):
+    """CPython 真值判定表达式。
+
+    布尔型表达式（比较/布尔运算/not/布尔内建）本来就是 #t/#f，免套 py-truthy；
+    其余一律套——Scheme 只有 #f 为假，而 CPython 里 0 / "" / [] / {} / None 全为假。
+    `1 if 0 else 2` 早先直接发 (if 0 ...)，Scheme 判 0 为真，于是静默算错。
+    """
+    expr = translate_expr(node)
+    if expr_is_bool(node):
+        return expr
+    return f"(py-truthy {expr})"
+
+
+def emit_boolop(op_name, nodes):
+    """and / or：短路求值**并返回操作数**（CPython 语义），不是返回布尔。
+
+    Scheme 的 and/or 只认 #f，`(and 0 2)` 给 2（CPython 给 0）。整串操作数都是
+    布尔型时直接发 and/or（语义等价、IR 干净）；否则逐层展开成
+    `(let ((py-bt a)) (if (py-truthy py-bt) <rest> py-bt))`。
+    py-bt 是保留名，嵌套的 let 自然遮蔽外层绑定，每个操作数只求值一次。
+    """
+    if all(expr_is_bool(n) for n in nodes):
+        return f"({op_name} {' '.join(translate_expr(n) for n in nodes)})"
+    if len(nodes) == 1:
+        return translate_expr(nodes[0])
+    head = translate_expr(nodes[0])
+    rest = emit_boolop(op_name, nodes[1:])
+    if op_name == "and":
+        return f"(let ((py-bt {head})) (if (py-truthy py-bt) {rest} py-bt))"
+    return f"(let ((py-bt {head})) (if (py-truthy py-bt) py-bt {rest}))"
+
+
+def emit_chained_compare(node):
+    """链式比较 a < b < c：中间操作数**只求值一次**，逐对短路与，结果是布尔。
+
+    发 `(let* ((py-c0 a) (py-c1 b) (py-c2 c)) (and (cmp py-c0 py-c1) (cmp py-c1 py-c2)))`。
+    早先这里是半成品占位符 `(and <a> ... cmp)`，产物直接编译不过。
+    """
+    srcs = [node.left] + list(node.comparators)
+    names = []
+    binds = []
+    for i, src in enumerate(srcs):
+        nm = f"py-c{i}"
+        binds.append(f"({nm} {translate_expr(src)})")
+        names.append(nm)
+        # 让 translate_compare 认得临时名的类型，才能发出特化算子（fx</fl</string<?）
+        vt = infer_expr_type(src)
+        if vt:
+            TYPE_ENV[nm] = vt
+    cmps = []
+    for i, op in enumerate(node.ops):
+        cmps.append(translate_compare(op,
+                                      ast.Name(id=names[i], ctx=ast.Load()),
+                                      ast.Name(id=names[i + 1], ctx=ast.Load())))
+    return f"(let* ({' '.join(binds)}) (and {' '.join(cmps)}))"
+
+
 def translate_expr(node):
     """翻译一个表达式"""
     if node is None:
@@ -3728,7 +3819,8 @@ def translate_expr(node):
         CURRENT_PARAMS = saved_p
         return f"(lambda ({' '.join(mangle_name(x) for x in ps)}) {body})"
     elif isinstance(node, ast.IfExp):
-        return f"(if {translate_expr(node.test)} {translate_expr(node.body)} {translate_expr(node.orelse)})"
+        return (f"(if {cp_truthy_test(node.test)} {translate_expr(node.body)} "
+                f"{translate_expr(node.orelse)})")
     elif isinstance(node, ast.UnaryOp):
         if isinstance(node.op, ast.Not):
             # `not` 走 CPython 真值（None/0/""/[]/{} 都为假）。
@@ -3753,7 +3845,7 @@ def translate_expr(node):
     elif isinstance(node, ast.Compare):
         if len(node.ops) == 1 and len(node.comparators) == 1:
             return translate_compare(node.ops[0], node.left, node.comparators[0])
-        return f"(and {translate_expr(node.left)} ... cmp)"
+        return emit_chained_compare(node)
     elif isinstance(node, ast.Call):
         func = node.func
         args = [translate_expr(a) for a in node.args]
@@ -3803,7 +3895,9 @@ def translate_expr(node):
                 return f"({scheme_fn} {' '.join(args)})"
             # Pythonic from import: from math import sin
             if name in MATH_FUNCTIONS:
-                return f"({name} {' '.join(args)})"
+                # round 要银行家舍入 + 返回 int（C/Chez 的 round 是远离零 + flonum）
+                fn = "py-round" if name == "round" else name
+                return f"({fn} {' '.join(args)})"
             # 外部 FFI 函数
             if name in EXTERN_FUNCTIONS:
                 ffi = EXTERN_FUNCTIONS[name]
@@ -3845,9 +3939,14 @@ def translate_expr(node):
             if name == "range":
                 return f"({args[0]})"  # simplified
             if name == "int":
-                return f"(exact (round {args[0]}))" if args else "0"
+                # CPython int() 是**截断**（int(2.9) → 2，int(-2.9) → -2），不是四舍五入
+                return f"(exact (truncate {args[0]}))" if args else "0"
+            if name == "round":
+                # Python 3：四舍六入五取偶，round(x) 返回 int（见 prelude py-round）
+                return f"(py-round {' '.join(args)})" if args else "0"
             if name == "float":
-                return f"(inexact {args[0]})" if args else "0.0"
+                # float("2.5") 要能解析字符串，float(3) → 3.0
+                return f"(py-float {' '.join(args)})" if args else "0.0"
             if name == "bool":
                 # CPython 真值语义：None/0/""/[]/{} 都为假
                 return f"(py-truthy {args[0]})" if args else "#f"
@@ -3963,7 +4062,7 @@ def translate_expr(node):
                     "sin": "sin", "cos": "cos", "tan": "tan",
                     "log": "log", "log2": "log2", "log10": "log10", "exp": "exp",
                     "sqrt": "sqrt", "abs": "abs", "pow": "pow", "fmod": "fmod",
-                    "floor": "floor", "ceil": "ceil", "round": "round",
+                    "floor": "floor", "ceil": "ceil", "round": "py-round",
                     "sinh": "sinh", "cosh": "cosh", "tanh": "tanh",
                     "atan2": "atan2", "asin": "asin", "acos": "acos", "atan": "atan",
                     "pi": "pi", "e": "e",
@@ -4334,15 +4433,14 @@ def translate_expr(node):
             return parts[0]
         return "(string-append " + " ".join(parts) + ")"
     elif isinstance(node, ast.IfExp):
-        test = translate_expr(node.test)
+        test = cp_truthy_test(node.test)
         body = translate_expr(node.body)
         orelse = translate_expr(node.orelse)
         return f"(if {test} {body} {orelse})"
     elif isinstance(node, ast.BoolOp):
-        # a and b and c, a or b or c
+        # a and b / a or b：短路 + 返回操作数（CPython 语义，见 emit_boolop）
         op = "and" if isinstance(node.op, ast.And) else "or"
-        vals = [translate_expr(v) for v in node.values]
-        return f"({op} {' '.join(vals)})"
+        return emit_boolop(op, list(node.values))
     elif isinstance(node, ast.NamedExpr):
         return translate_expr(node.value)
     elif isinstance(node, ast.Starred):
@@ -4476,7 +4574,7 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
             elif target != "__destructured__" and not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Subscript)):
                 body_exprs.append(f";; {ast.dump(stmt)}")
         elif isinstance(stmt, ast.If):
-            test = translate_expr(stmt.test)
+            test = cp_truthy_test(stmt.test)
             then_exprs = translate_block(stmt.body)
             else_body = stmt.orelse
             
@@ -4539,7 +4637,7 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
         elif isinstance(stmt, ast.Match):
             body_exprs.append(translate_match(stmt))
         elif isinstance(stmt, ast.While):
-            test = translate_expr(stmt.test)
+            test = cp_truthy_test(stmt.test)
             body_str = " ".join(translate_block(stmt.body))
             if has_direct_break(stmt.body) or has_direct_continue(stmt.body):
                 inner = body_str

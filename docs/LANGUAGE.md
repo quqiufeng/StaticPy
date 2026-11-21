@@ -57,6 +57,25 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 捕获、`|`、序列 `[a, *rest]`、映射 `{"k": v}`、类模式 `Pt(x=0)`/`Pt(1, y)`）、
 元组解构 `x, y = 1, 2`、切片 `a[1:3]`、`dataclass`（编译成 record）、`enum`（编译成常量）。
 
+### 数值与真值语义（对齐 CPython，不照抄 Scheme）
+
+`+ - * /` 之类落地成 `fx*` / `fl*` 时要注意：**Scheme 的算子语义不等于 Python 的**。
+下面这些坑由 `static_prelude.scm` 的 `py-floordiv` / `py-mod` / `py-pow` / `py-round` /
+`py-truthy` 吸收，翻译器只负责选对名字：
+
+| Python | 落到 | 关键差异（别用 Scheme 原生） |
+|---|---|---|
+| `a // b` | `py-floordiv` | 向下取整：`-7 // 2 == -4`（`fxdiv` 给 -3） |
+| `a % b` | `py-mod` | 符号随除数：`-7 % 2 == 1`（`fxmod` 给 -1） |
+| `a ** b` | `py-pow` | 整数幂走 bignum（`fxexpt` 不存在） |
+| `round(x)` | `py-round` | 银行家舍入 + 返回 int（不是 flonum） |
+| `if x:` / `while x:` / `not x` / `a and b` / `a or b` | `py-truthy` | None / `0` / `""` / `[]` / `{}` 为假；`and`/`or` **返回操作数**而非布尔 |
+| `a < b < c` | `emit_chained_compare` | 中间操作数只求值一次，逐对短路 |
+
+整数与浮点混算时翻译器插 `exact->inexact`（`(fl* 1.5 4)` 会报 `4 is not a flonum`）。
+每条规则都有对应用例：`tests/semantics/{int_arith,float_arith,aug_assign,cmp_chain,`
+`ternary_flow,truthy_flow,bitops,round_builtin}.static.py`，跑 `python3 staticpy/semantics_diff.py`。
+
 ### class（记录类型 + 静态分派）
 
 `class` 编译成 `define-record-type`：字段是 record 槽，方法是**带 `self` 的普通过程**

@@ -25,7 +25,7 @@
       "fmod": "fmod",
       "floor": "floor",
       "ceil": "ceil",
-      "round": "round",
+      "round": "py-round",
       "sinh": "sinh",
       "cosh": "cosh",
       "tanh": "tanh",

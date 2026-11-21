@@ -852,7 +852,7 @@ def translate_expr(n) -> str:
     if t == "UnaryOp":
         return translate_unary(n)
     if t == "IfExp":
-        return f"(if {translate_expr(dict_get(n, 'test'))} {translate_expr(dict_get(n, 'body'))} {translate_expr(dict_get(n, 'orelse'))})"
+        return f"(if {cp_truthy_test(dict_get(n, 'test'))} {translate_expr(dict_get(n, 'body'))} {translate_expr(dict_get(n, 'orelse'))})"
     if t == "Subscript":
         return translate_subscript(n)
     if t == "Tuple":
@@ -887,13 +887,7 @@ def translate_expr(n) -> str:
         op: str = "or"
         if nt(dict_get(n, "op")) == "And":
             op = "and"
-        vs = dict_get(n, "values")
-        ps = py_list()
-        j: int = 0
-        while j < py_list_length(vs):
-            ps = py_list_append(ps, translate_expr(py_list_ref(vs, j)))
-            j = j + 1
-        return "(" + op + " " + jn(ps) + ")"
+        return emit_boolop(op, dict_get(n, "values"))
     if t == "Lambda":
         return translate_lambda(n)
     if t == "Attribute":
@@ -927,12 +921,18 @@ def translate_binop(op: str, ln, rn) -> str:
         if op == "Mult":
             return f"(fx* {left} {right})"
         if op == "FloorDiv":
-            return f"(fxdiv {left} {right})"
+            return f"(py-floordiv {left} {right})"
         if op == "Mod":
-            return f"(fxmod {left} {right})"
+            return f"(py-mod {left} {right})"
         if op == "Pow":
-            return f"(fxexpt {left} {right})"
+            return f"(py-pow {left} {right})"
     if is_float == 1:
+        # 单边 int：fl*/fl+/fl- 只吃 flonum，(fl* 1.5 4) 会炸 "4 is not a flonum"
+        if is_int == 0:
+            if lt == "int":
+                left = f"(exact->inexact {left})"
+            if rt == "int":
+                right = f"(exact->inexact {right})"
         if op == "Add":
             return f"(fl+ {left} {right})"
         if op == "Sub":
@@ -942,11 +942,11 @@ def translate_binop(op: str, ln, rn) -> str:
         if op == "Div":
             return f"(fl/ {left} {right})"
         if op == "FloorDiv":
-            return f"(fldiv {left} {right})"
+            return f"(py-floordiv {left} {right})"
         if op == "Mod":
-            return f"(flmod {left} {right})"
+            return f"(py-mod {left} {right})"
         if op == "Pow":
-            return f"(flexpt {left} {right})"
+            return f"(py-pow {left} {right})"
     if (lt == "str" or rt == "str") and op == "Add":
         return f"(string-append {left} {right})"
     if op == "Add":
@@ -958,18 +958,17 @@ def translate_binop(op: str, ln, rn) -> str:
     if op == "Div":
         return f"(/ {left} {right})"
     if op == "FloorDiv":
-        return f"(quotient {left} {right})"
+        return f"(py-floordiv {left} {right})"
     if op == "Mod":
-        return f"(mod {left} {right})"
+        return f"(py-mod {left} {right})"
     if op == "Pow":
-        return f"(expt {left} {right})"
+        return f"(py-pow {left} {right})"
     return f"({str_lower(op)} {left} {right})"
 
 def translate_compare(ops, ln, coms) -> str:
     """按类型生成特化比较；只用 ops[0]/comparators[0]（同旧版）"""
     if py_list_length(ops) > 1 or py_list_length(coms) > 1:
-        # 链式比较：旧版就发这个占位形（bug-for-bug 对齐）
-        return f"(and {translate_expr(ln)} ... cmp)"
+        return emit_chained_compare(ln, ops, coms)
     op = nt(py_list_ref(ops, 0))
     rn = py_list_ref(coms, 0)
     if op == "Is" or op == "IsNot":
@@ -1018,6 +1017,11 @@ def translate_cmp_typed(op: str, ln, rn) -> str:
     if lt == "int" and rt == "int":
         return f"(fx{sym} {left} {right})"
     if (lt == "int" or lt == "float") and (rt == "int" or rt == "float"):
+        # 单边是 int：fl</fl= 只吃 flonum，(fl< 1.0 2) 会炸
+        if lt == "int":
+            left = f"(exact->inexact {left})"
+        if rt == "int":
+            right = f"(exact->inexact {right})"
         return f"(fl{sym} {left} {right})"
     if lt == "str" or rt == "str":
         return f"(string{sym}? {left} {right})"
@@ -1030,7 +1034,16 @@ def expr_is_bool(n) -> int:
     if n is None:
         return 0
     t = nt(n)
-    if t == "Compare" or t == "BoolOp":
+    if t == "Compare":
+        return 1
+    if t == "BoolOp":
+        # and/or 现在返回操作数（CPython 语义），只有全布尔操作数才是布尔
+        vs = dict_get(n, "values")
+        i: int = 0
+        while i < py_list_length(vs):
+            if expr_is_bool(py_list_ref(vs, i)) == 0:
+                return 0
+            i = i + 1
         return 1
     if t == "UnaryOp" and nt(dict_get(n, "op")) == "Not":
         return 1
@@ -1048,6 +1061,96 @@ def expr_is_bool(n) -> int:
             if str_contains(BOOL_METHODS, " " + a + " "):
                 return 1
     return 0
+
+def mk_name(nm: str):
+    """造一个 Name 节点（链式比较的临时名要用它再走一遍类型特化）"""
+    d = make_dict()
+    dict_set(d, "_t", "Name")
+    dict_set(d, "id", nm)
+    return d
+
+def cp_truthy_test(n) -> str:
+    """CPython 真值判定：布尔表达式免套 py-truthy，其余一律套。
+
+    Scheme 只有 #f 为假，CPython 里 0 / "" / [] / {} / None 全为假；
+    `1 if 0 else 2` 早先发 (if 0 ...) 会静默算错。
+    """
+    e: str = translate_expr(n)
+    if expr_is_bool(n) == 1:
+        return e
+    return f"(py-truthy {e})"
+
+def boolop_tail(op: str, vs, i: int) -> str:
+    # 与种子 emit_boolop 的递归结构对齐：剩余操作数**全布尔**就直接 (op a b ...)
+    allb: int = 1
+    k: int = i
+    while k < py_list_length(vs):
+        if expr_is_bool(py_list_ref(vs, k)) == 0:
+            allb = 0
+        k = k + 1
+    if allb == 1:
+        ps = py_list()
+        k = i
+        while k < py_list_length(vs):
+            ps = py_list_append(ps, translate_expr(py_list_ref(vs, k)))
+            k = k + 1
+        return "(" + op + " " + jn(ps) + ")"
+    if i == py_list_length(vs) - 1:
+        return translate_expr(py_list_ref(vs, i))
+    head: str = translate_expr(py_list_ref(vs, i))
+    rest: str = boolop_tail(op, vs, i + 1)
+    if op == "and":
+        return f"(let ((py-bt {head})) (if (py-truthy py-bt) {rest} py-bt))"
+    return f"(let ((py-bt {head})) (if (py-truthy py-bt) py-bt {rest}))"
+
+def emit_boolop(op: str, vs) -> str:
+    """and / or：短路求值并返回操作数（CPython 语义）"""
+    allb: int = 1
+    i: int = 0
+    while i < py_list_length(vs):
+        if expr_is_bool(py_list_ref(vs, i)) == 0:
+            allb = 0
+        i = i + 1
+    if allb == 1:
+        ps = py_list()
+        j: int = 0
+        while j < py_list_length(vs):
+            ps = py_list_append(ps, translate_expr(py_list_ref(vs, j)))
+            j = j + 1
+        return "(" + op + " " + jn(ps) + ")"
+    if py_list_length(vs) == 0:
+        return "#f"
+    return boolop_tail(op, vs, 0)
+
+def emit_chained_compare(ln, ops, coms) -> str:
+    """链式比较 a < b < c：中间操作数只求值一次，逐对短路与"""
+    srcs = py_list()
+    srcs = py_list_append(srcs, ln)
+    i: int = 0
+    while i < py_list_length(coms):
+        srcs = py_list_append(srcs, py_list_ref(coms, i))
+        i = i + 1
+    binds: str = ""
+    j: int = 0
+    while j < py_list_length(srcs):
+        if j > 0:
+            binds = binds + " "
+        nm: str = f"py-c{j}"
+        binds = binds + f"({nm} {translate_expr(py_list_ref(srcs, j))})"
+        vt: str = infer_expr_type(py_list_ref(srcs, j))
+        if vt != "":
+            tenv_set(nm, vt)
+        j = j + 1
+    cmps: str = ""
+    k: int = 0
+    while k < py_list_length(ops):
+        if k > 0:
+            cmps = cmps + " "
+        one_op = py_list_append(py_list(), py_list_ref(ops, k))
+        one_cm = py_list_append(py_list(), mk_name(f"py-c{k + 1}"))
+        cmps = cmps + translate_compare(one_op, mk_name(f"py-c{k}"), one_cm)
+        k = k + 1
+    return f"(let* ({binds}) (and {cmps}))"
 
 def translate_unary(n) -> str:
     op = nt(dict_get(n, "op"))
@@ -1161,9 +1264,20 @@ def translate_call(n) -> str:
         # 表达式位置（for 头由 block_for 单独化 do 循环）
         return f"(py-range->list {a})"
     if nm == "int":
-        return f"(exact (round {a}))"
+        # CPython int() 是截断（int(2.9) -> 2、int(-2.9) -> -2），不是四舍五入
+        if a == "":
+            return "0"
+        return f"(exact (truncate {a}))"
+    if nm == "round":
+        # Python 3：四舍六入五取偶，round(x) 返回 int
+        if a == "":
+            return "0"
+        return f"(py-round {a})"
     if nm == "float":
-        return f"(inexact {a})"
+        # float(3) -> 3.0、float("2.5") -> 2.5
+        if a == "":
+            return "0.0"
+        return f"(py-float {a})"
     if nm == "bool":
         return f"(py-truthy {a})"
     if nm == "abs":
@@ -1238,6 +1352,78 @@ def jn(l) -> str:
         out = out + py_list_ref(l, i)
         i = i + 1
     return out
+
+def aug_attr_sym(op: str) -> str:
+    """self.x += v 用的运算符（同种子：不特化，发裸 + - * / quotient modulo）"""
+    if op == "Sub":
+        return "-"
+    if op == "Mult":
+        return "*"
+    if op == "Div":
+        return "/"
+    if op == "FloorDiv":
+        return "quotient"
+    if op == "Mod":
+        return "modulo"
+    return "+"
+
+def aug_bitsym(op: str) -> str:
+    if op == "BitAnd":
+        return "bitand"
+    if op == "BitOr":
+        return "bitor"
+    if op == "BitXor":
+        return "bitxor"
+    if op == "LShift":
+        return "lshift"
+    if op == "RShift":
+        return "rshift"
+    return ""
+
+def block_aug_assign(exprs, s):
+    """i += 1 / self.x *= 2 / d[k] += v（旧版整条丢掉，静默算错）"""
+    tg = dict_get(s, "target")
+    v = dict_get(s, "value")
+    op: str = nt(dict_get(s, "op"))
+    if nt(tg) == "Name":
+        nm = mangle_name(dict_get(tg, "id"))
+        return py_list_append(exprs, f"(set! {nm} {translate_binop(op, tg, v)})")
+    if nt(tg) == "Attribute":
+        obj = dict_get(tg, "value")
+        attr: str = dict_get(tg, "attr")
+        head: str = ""
+        getter: str = ""
+        if nt(obj) == "Name" and dict_get(obj, "id") == "self" and cur_class_get() != "":
+            own = class_field_owner(cur_class_get(), attr)
+            if own != "":
+                head = "(" + own + "-" + attr + "-set! self"
+                getter = "(" + own + "-" + attr + " self)"
+        if head == "":
+            rc: str = resolve_expr_class(obj)
+            if rc != "":
+                ow2: str = class_field_owner(rc, attr)
+                if ow2 != "":
+                    osrc: str = translate_expr(obj)
+                    head = "(" + ow2 + "-" + attr + "-set! " + osrc
+                    getter = "(" + ow2 + "-" + attr + " " + osrc + ")"
+        if head != "":
+            recv: str = "(" + aug_attr_sym(op) + " " + getter + " " + translate_expr(v) + ")"
+            return py_list_append(exprs, head + " " + recv + ")")
+        return py_list_append(exprs, ";; AugAssign")
+    if nt(tg) == "Subscript":
+        c: str = translate_expr(dict_get(tg, "value"))
+        k: str = translate_expr(dict_get(tg, "slice"))
+        cur: str = f"(py-get {c} {k})"
+        val: str = ""
+        if op == "Add" or op == "Sub" or op == "Mult" or op == "Div" or op == "FloorDiv" or op == "Mod" or op == "Pow":
+            val = translate_binop(op, tg, v)
+        else:
+            sym: str = aug_bitsym(op)
+            if sym == "":
+                return py_list_append(exprs, ";; AugAssign")
+            val = f"({sym} {cur} {translate_expr(v)})"
+        return py_list_append(exprs, f"(py-set! {c} {k} {val})")
+    return py_list_append(exprs, ";; AugAssign")
 
 def block_assign(exprs, s, t: str):
     tg = dict_get(s, "target")
@@ -1346,6 +1532,8 @@ def translate_block(stmts, lvl: int):
         t = nt(s)
         if t == "Assign" or t == "AnnAssign":
             exprs = block_assign(exprs, s, t)
+        elif t == "AugAssign":
+            exprs = block_aug_assign(exprs, s)
         elif t == "Expr":
             exprs = py_list_append(exprs, translate_expr(dict_get(s, "value")))
         elif t == "Return":
@@ -1421,7 +1609,7 @@ def if_merge_tail(s, nxt) -> int:
     return 0
 
 def block_if_tail(s, nxt) -> str:
-    test = translate_expr(dict_get(s, "test"))
+    test = cp_truthy_test(dict_get(s, "test"))
     th = jn(translate_block(dict_get(s, "body"), 0))
     nv: str = "#f"
     if dict_get(nxt, "value") is not None:
@@ -1429,7 +1617,7 @@ def block_if_tail(s, nxt) -> str:
     return f"(if {test}\n    (begin {th})\n    {nv})"
 
 def block_if(s) -> str:
-    test = translate_expr(dict_get(s, "test"))
+    test = cp_truthy_test(dict_get(s, "test"))
     th = jn(translate_block(dict_get(s, "body"), 0))
     el = dict_get(s, "orelse")
     if py_list_length(el) > 0:
@@ -1438,7 +1626,7 @@ def block_if(s) -> str:
     return f"(if {test}\n        (begin {th}))"
 
 def block_while(s) -> str:
-    test = translate_expr(dict_get(s, "test"))
+    test = cp_truthy_test(dict_get(s, "test"))
     body = dict_get(s, "body")
     bs = jn(translate_block(body, 0))
     if has_direct_control(body, "Break") or has_direct_control(body, "Continue"):
@@ -3430,6 +3618,10 @@ def try_class_call(n) -> str:
                         if bi is not None:
                             fa = fill_defaults_s(bi, tl, 1)
                             return ir_call("static_" + base + "___init__", py_list_cons("self", fa))
+                        if needs_synth_init(dict_get(CLASSES, base)) == 1 and py_list_length(tl) == 0:
+                            # 基类没写 __init__ 但有类属性默认值 → 合成 init 必须被调用，
+                            # 否则默认值不落盘（旧版直接发 self，静默漏初始化）
+                            return ir_call("static_" + base + "___init__", py_list_cons("self", py_list()))
                         if py_list_length(tl) == 0:
                             return "self"      # 基类没有 __init__：super().__init__() 是空操作
                     # 其余形状（super().m(..) / 基类无 __init__ 却传了参数）不认 → 交回内核

@@ -376,6 +376,46 @@
 ;; ~x 在 Python 是 -(x+1)（二进制补码语义），bitwise-not 正是这个
 (define (Invert a) (bitwise-not a))
 
+;; ====== CPython 算术语义：// % ** round ======
+;; C 与 Chez 的除法都向零截断，CPython 向负无穷取整：
+;;   -7 // 2 → -4（quotient 给 -3）、-7 % 2 → 1（remainder 给 -1）
+;; 且 // 的结果类型跟着操作数走：7//2 → 3（exact），7.0//2 → 3.0。
+(define (py-floordiv a b)
+  (if (and (exact? a) (exact? b))
+      (let* ((q (quotient a b)) (r (remainder a b)))
+        ;; 余数非零且与除数异号 → 商再减一
+        (if (if (positive? b) (negative? r) (positive? r)) (- q 1) q))
+      (floor (/ a b))))
+
+;; % 的符号跟随**除数**（-7 % 2 → 1，7 % -2 → -1）
+(define (py-mod a b)
+  (if (and (exact? a) (exact? b))
+      (let ((r (remainder a b)))
+        (if (if (positive? b) (negative? r) (positive? r)) (+ r b) r))
+      (- a (* b (floor (/ a b))))))
+
+;; ** ：负指数在 Python 返回 float（2**-1 → 0.5），Chez 的 expt 给 1/2 有理数
+(define (py-pow a b)
+  (if (and (exact? b) (negative? b)) (expt (exact->inexact a) b) (expt a b)))
+
+;; round()：四舍六入五取偶（banker's），且 round(x) **返回 int**（C round 是远离零）
+;; (round 2.5) → 2，(round -2.5) → -2；给了 ndigits 才回 float。
+(define (py-round x . nd)
+  (if (null? nd)
+      (if (exact? x) x (exact (round x)))
+      (let ((n (car nd)))
+        (if (fx= n 0)
+            (py-round x)
+            (inexact (/ (py-round (* (inexact x) (expt 10 n)))
+                        (expt 10 n)))))))
+
+;; float(x)：数字转 flonum，字符串按 Python 字面量解析（float("2.5") → 2.5）
+(define (py-float x)
+  (cond ((string? x)
+         (let ((n (string->number x)))
+           (if n (inexact n) (error 'py-float "could not convert string to float" x))))
+        (else (inexact x))))
+
 ;; 统一迭代源：dict→键、str→字符、vector/list/tagged-array 原样
 (define (py-iter-seq x)
   (cond ((py-array? x) (py-array-items-h x))
