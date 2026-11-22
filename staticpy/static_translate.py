@@ -47,6 +47,7 @@ def scheme_name(name):
         # prelude 里定义的是 kebab 形式 (py-float-repr x)；不映射会生成
         # (py_float_repr v) → 「variable py_float_repr is not bound」（自举翻译器踩过）
         "py_float_repr": "py-float-repr",
+        "tok_at": "tok-at",
     }
     return RUNTIME_MAP.get(name, name)
 
@@ -813,7 +814,7 @@ PRELUDE_FUNCTIONS = {
     "csv_parse", "csv_encode",
     "str_split", "str_join", "str_trim", "str_lower", "str_upper",
     "str_replace", "str_contains", "str_starts_with", "str_ends_with",
-    "read_text_file", "str_length", "str_slice", "str_code_at",
+    "read_text_file", "str_length", "str_slice", "str_code_at", "tok_at",
     "os_list_dir", "os_getenv", "os_getcwd", "os_file_size",
     "os_file_exists", "os_move_file", "os_delete_file",
     "os_mkdir", "os_rmdir", "os_shell", "os_cwd",
@@ -4814,7 +4815,7 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                 iter_name = stmt.iter.id
                 body_parts = translate_block(stmt.body)
                 body_str = " ".join(body_parts)
-                body_exprs.append(f"(let* ((__iter (py-iter-seq {iter_name})) (__n (vector-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({target} (vector-ref __iter __i))) {body_str})))")
+                body_exprs.append(f"(let* ((__iter (py-iter-prep {iter_name})) (__n (py-seq-len __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({target} (py-seq-ref __iter __i))) {body_str})))")
             else:
                 # 其余可迭代（字符串常量 / zip / enumerate / 属性调用…）统一交给 emit_for_stmt，
                 # 不再静默产注释（静默降级 = 程序悄悄少跑一段）
