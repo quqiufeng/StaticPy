@@ -1444,6 +1444,27 @@ def translate_call(n) -> str:
         if at == "append" and nt(rv) == "Name" and py_list_length(al) == 1:
             vn = mangle_name(dict_get(rv, "id"))
             return f"(set! {vn} (py-list-append {vn} {a}))"
+        # 字段 append：self.f.append(x) / obj.f.append(x) -> 字段 setter 回写。
+        # 以前这里没有分支，落到下面的 `(py-m-append recv x)` 兜底——列表非 glist 时
+        # py-list-append 会先拷贝再 push，返回值又是语句位置被丢弃，等于**静默丢 append**
+        # （`self.bufs.append(p.zeros_like())` 后 bufs 仍为空）。同种子 try_list_method。
+        if at == "append" and nt(rv) == "Attribute" and py_list_length(al) == 1:
+            fo = dict_get(rv, "value")
+            fa: str = dict_get(rv, "attr")
+            ow: str = ""
+            rsrc: str = ""
+            if nt(fo) == "Name" and dict_get(fo, "id") == "self" and cur_class_get() != "":
+                ow = class_field_owner(cur_class_get(), fa)
+                rsrc = "self"
+            if ow == "":
+                fcls: str = resolve_expr_class(fo)
+                if fcls != "":
+                    ow = class_field_owner(fcls, fa)
+                    rsrc = translate_expr(fo)
+            if ow != "":
+                acc2 = "(" + ow + "-" + fa + " " + rsrc + ")"
+                return ("(" + ow + "-" + fa + "-set! " + rsrc
+                        + " (py-list-append " + acc2 + " " + a + "))")
         if at == "copy" and py_list_length(al) == 0:
             return "(dict-copy " + translate_expr(rv) + ")"
         if str_contains(CONTAINER_METHODS, " " + at + " "):

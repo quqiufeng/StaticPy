@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / SGD | 差分 **24/24** + ELF 25/25 |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **86/86** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -274,8 +274,16 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
 - **C ABI**（`torch_capi.h`）：`from_csv/to_csv/shape_csv/numel/ndim`、`zeros/ones/full/randn/arange`、
   `add/sub/mul/div/matmul`、`add_scalar/mul_scalar`、`relu/sigmoid/tanh/softmax(dim)`、
   `sum/mean/sum_dim`、`reshape/transpose/clone/detach`、`set_requires_grad/requires_grad/backward/grad/zero_grad`、
-  `item/version/last_error/free`、`is_tensor`（句柄判型）、`sgd_step`（NoGrad 原地 `p -= lr*g`）。
+  `item/version/last_error/free`、`is_tensor`（句柄判型）、`sgd_step`（NoGrad 原地 `p -= lr*g`）；
+  一元/归约 `exp/log/sqrt/abs/pow_scalar`、`max/min/std/argmax/max_dim/mean_dim`；
+  形状 `cat/stack/squeeze/unsqueeze/zeros_like/ones_like/empty_like`、`cast/dtype/index_select/save`；
+  `nn` 内核（conv2d/max_pool2d/avg_pool2d 类前反向、batchnorm、cross-entropy、embedding、dropout）
+  与优化器步进（`adam_step` 含 `decoupled` 开关给 AdamW）。
   失败一律置 `last_error` 并返回 `0`（不抛异常越 ABI 边界）。
+- **`nn` / 优化器（v3）**：`tensor_lib.static.py` 里是**纯 StaticPy 类**（`Conv2d/MaxPool2d/AvgPool2d/
+  Flatten/Dropout/BatchNorm1d/CrossEntropyLoss/Embedding/Sequential`、`Adam/AdamW/RMSprop/MomentumSGD`），
+  每个类都不重写数学，只把参数经 CSV 灌进 C ABI、调用 ATen。`Sequential` 靠 `layers:list` 串参数，
+  `Adam*` 的 `m/v` 缓冲用 `p.zeros_like()` 惰性建（无外部依赖的 `Optimizer` 基类）。
 - **训练回路（PyTorch 风格）**：`runtime.scm` 只做薄封装，语义与 `torch.nn.functional` 对齐——
   `torch.linear(x,w,b)` = `matmul + add`（广播）、`torch.mse_loss/l1_loss`、
   `torch.backward/zero_grad/grad`、`torch.sgd_step(w,g,lr)`（= `with no_grad: w -= lr*g`）。
@@ -293,6 +301,9 @@ LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/ltdemo   # 不打 rpath 的实现需要
 STATICPY_PLUGINS=core,ltorch bash staticpy/static_build.sh plugins/ltorch/train_demo.static.py train_demo
 LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/train_demo   # 线性回归 + MLP 训练收敛（约 100 步到 1e-10）
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：86/86（v2 30 + v3 56）
+python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 95 条全验证 / 5 项显式缺口
+python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：34/34（容差 1e-10）
 ```
 
 - **两侧必须分进程**：pip 的 torch 与 `/opt/libtorch` 的 `c10` 符号互不兼容，

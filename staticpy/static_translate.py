@@ -2853,14 +2853,26 @@ def try_list_method(node, args):
     if isinstance(recv, ast.Name) and recv.id not in CLASSES and resolve_expr_class(recv) is None:
         return f"(set! {mangle_name(recv.id)} (py-list-append {mangle_name(recv.id)} {args[0]}))"
     # self.f.append(x) / obj.f.append(x) -> 字段 setter
+    # 头部**直接构造**（以前借 try_field_set 再按空格切字符串：值是多 token 表达式
+    # 如 `(static_Tensor_zeros_like p)` 时会被切坏，产出少一个右括号的坏 IR）
     if isinstance(recv, ast.Attribute):
         acc = try_class_attr(recv)
-        if acc:
-            setter = try_field_set(ast.Assign(targets=[recv], value=node.args[0],
-                                              lineno=getattr(node, 'lineno', 0)))
-            if setter:
-                head, _, _ = setter.rpartition(" ")
-                return head + f" (py-list-append {acc} {args[0]}))"
+        if not acc:
+            return None
+        if isinstance(recv.value, ast.Name) and recv.value.id in SELF_PARAMS and CURRENT_CLASS:
+            owner = _field_owner(CURRENT_CLASS, recv.attr)
+            if not owner:
+                return None
+            return (f"({owner}-{recv.attr}-set! {mangle_name(recv.value.id)}"
+                    f" (py-list-append {acc} {args[0]}))")
+        cls = resolve_expr_class(recv.value)
+        if not cls:
+            return None
+        owner = _field_owner(cls, recv.attr)
+        if not owner:
+            return None
+        return (f"({owner}-{recv.attr}-set! {translate_expr(recv.value)}"
+                f" (py-list-append {acc} {args[0]}))")
     return None
 
 

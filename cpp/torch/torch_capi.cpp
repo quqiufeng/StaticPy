@@ -8,9 +8,11 @@
 
 #include <torch/torch.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -121,11 +123,73 @@ at::Tensor *unwrap(torchc_tensor h) {
     return 0;                                     \
   }
 
+// double 返回版
+#define TORCHC_GUARD_END_DOUBLE(tag)              \
+  }                                               \
+  catch (const std::exception &e) {               \
+    set_error(std::string(tag) + ": " + e.what());  \
+    return 0.0;                                   \
+  }                                               \
+  catch (...) {                                   \
+    set_error(std::string(tag) + ": unknown error"); \
+    return 0.0;                                   \
+  }
+
+// const char* 返回版
+#define TORCHC_GUARD_END_CSTR(tag)                \
+  }                                               \
+  catch (const std::exception &e) {               \
+    set_error(std::string(tag) + ": " + e.what());  \
+    return "";                                    \
+  }                                               \
+  catch (...) {                                   \
+    set_error(std::string(tag) + ": unknown error"); \
+    return "";                                    \
+  }
+
 #define TORCHC_NEED(h, name)                     \
   if ((h) == nullptr) {                          \
     set_error(std::string(name) + ": 空张量句柄"); \
     return nullptr;                              \
   }
+
+#define TORCHC_NEED_LONG(h, name)                \
+  if ((h) == nullptr) {                          \
+    set_error(std::string(name) + ": 空张量句柄"); \
+    return 0;                                    \
+  }
+
+bool parse_dtype(const char *name, at::ScalarType &out) {
+  std::string d = name == nullptr ? "" : std::string(name);
+  if (d.rfind("torch.", 0) == 0) d = d.substr(6);  /* 接受 torch.float64 形态 */
+  if (d == "float64" || d == "double" || d == "") out = at::kDouble;
+  else if (d == "float32" || d == "float") out = at::kFloat;
+  else if (d == "float16" || d == "half") out = at::kHalf;
+  else if (d == "int64" || d == "long") out = at::kLong;
+  else if (d == "int32" || d == "int") out = at::kInt;
+  else if (d == "int8") out = at::kChar;
+  else if (d == "uint8" || d == "byte") out = at::kByte;
+  else if (d == "bool") out = at::kBool;
+  else {
+    set_error("未知 dtype: '" + d + "'（float64/float32/int64/int32/bool）");
+    return false;
+  }
+  return true;
+}
+
+/* 对外 dtype 名与 PyTorch 对齐：str(torch.tensor(1., dtype=torch.float64).dtype)
+   == "torch.float64"；parse_dtype 也能吃回去。 */
+std::string dtype_name_of(at::ScalarType st) {
+  if (st == at::kDouble) return "torch.float64";
+  if (st == at::kFloat) return "torch.float32";
+  if (st == at::kHalf) return "torch.float16";
+  if (st == at::kLong) return "torch.int64";
+  if (st == at::kInt) return "torch.int32";
+  if (st == at::kChar) return "torch.int8";
+  if (st == at::kByte) return "torch.uint8";
+  if (st == at::kBool) return "torch.bool";
+  return "other";
+}
 
 const char *scratch(const std::string &s) {
   g_scratch = s;
@@ -531,20 +595,377 @@ long torchc_sgd_step(torchc_tensor w, torchc_tensor g, double lr) {
   TORCHC_GUARD_END_LONG("sgd_step")
 }
 
+/* ================= v2：一元数学 / 归约 / 形状 / dtype ================= */
+
+torchc_tensor torchc_exp(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "exp")
+  TORCHC_GUARD_BEGIN return wrap(unwrap(a)->exp()); TORCHC_GUARD_END("exp")
+}
+torchc_tensor torchc_log(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "log")
+  TORCHC_GUARD_BEGIN return wrap(unwrap(a)->log()); TORCHC_GUARD_END("log")
+}
+torchc_tensor torchc_sqrt(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "sqrt")
+  TORCHC_GUARD_BEGIN return wrap(unwrap(a)->sqrt()); TORCHC_GUARD_END("sqrt")
+}
+torchc_tensor torchc_abs(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "abs")
+  TORCHC_GUARD_BEGIN return wrap(unwrap(a)->abs()); TORCHC_GUARD_END("abs")
+}
+torchc_tensor torchc_pow_scalar(torchc_tensor a, double p) {
+  clear_error(); TORCHC_NEED(a, "pow_scalar")
+  TORCHC_GUARD_BEGIN return wrap(unwrap(a)->pow(p)); TORCHC_GUARD_END("pow_scalar")
+}
+
+double torchc_max(torchc_tensor a) {
+  clear_error(); if (a == nullptr) { set_error("max: 空句柄"); return 0.0; }
+  TORCHC_GUARD_BEGIN return unwrap(a)->max().item<double>();
+  TORCHC_GUARD_END_DOUBLE("max")
+}
+
+double torchc_min(torchc_tensor a) {
+  clear_error(); if (a == nullptr) { set_error("min: 空句柄"); return 0.0; }
+  TORCHC_GUARD_BEGIN return unwrap(a)->min().item<double>();
+  TORCHC_GUARD_END_DOUBLE("min")
+}
+
+double torchc_std(torchc_tensor a, long unbiased) {
+  clear_error(); if (a == nullptr) { set_error("std: 空句柄"); return 0.0; }
+  TORCHC_GUARD_BEGIN
+    auto f = unwrap(a)->to(at::kDouble).contiguous().view({-1});
+    int64_t n = f.numel();
+    if (n <= 1) return 0.0;
+    double mu = f.mean().item<double>();
+    auto d = f.sub(mu);
+    double ss = d.mul(d).sum().item<double>();
+    double den = unbiased != 0 ? static_cast<double>(n - 1) : static_cast<double>(n);
+    return std::sqrt(ss / den);
+  TORCHC_GUARD_END_DOUBLE("std")
+}
+
+long torchc_argmax(torchc_tensor a) {
+  clear_error(); if (a == nullptr) { set_error("argmax: 空句柄"); return -1; }
+  TORCHC_GUARD_BEGIN
+    return static_cast<long>(unwrap(a)->contiguous().view({-1}).argmax().item<int64_t>());
+  TORCHC_GUARD_END_LONG("argmax")
+}
+
+torchc_tensor torchc_max_dim(torchc_tensor a, long dim, long want_index) {
+  clear_error(); TORCHC_NEED(a, "max_dim")
+  TORCHC_GUARD_BEGIN
+    auto r = at::max(*unwrap(a), dim);
+    if (want_index != 0) return wrap(std::get<1>(r).to(at::kLong));
+    return wrap(std::get<0>(r));
+  TORCHC_GUARD_END("max_dim")
+}
+
+torchc_tensor torchc_mean_dim(torchc_tensor a, long dim) {
+  clear_error(); TORCHC_NEED(a, "mean_dim")
+  TORCHC_GUARD_BEGIN return wrap(unwrap(a)->mean(dim)); TORCHC_GUARD_END("mean_dim")
+}
+
+torchc_tensor torchc_cat(torchc_tensor a, torchc_tensor b, long dim) {
+  clear_error(); TORCHC_NEED(a, "cat"); TORCHC_NEED(b, "cat")
+  TORCHC_GUARD_BEGIN return wrap(at::cat({*unwrap(a), *unwrap(b)}, dim));
+  TORCHC_GUARD_END("cat")
+}
+
+torchc_tensor torchc_stack(torchc_tensor a, torchc_tensor b, long dim) {
+  clear_error(); TORCHC_NEED(a, "stack"); TORCHC_NEED(b, "stack")
+  TORCHC_GUARD_BEGIN return wrap(at::stack({*unwrap(a), *unwrap(b)}, dim));
+  TORCHC_GUARD_END("stack")
+}
+
+torchc_tensor torchc_squeeze(torchc_tensor a, long dim) {
+  clear_error(); TORCHC_NEED(a, "squeeze")
+  TORCHC_GUARD_BEGIN
+    if (dim < 0) return wrap(unwrap(a)->squeeze());
+    return wrap(unwrap(a)->squeeze(dim));
+  TORCHC_GUARD_END("squeeze")
+}
+
+torchc_tensor torchc_unsqueeze(torchc_tensor a, long dim) {
+  clear_error(); TORCHC_NEED(a, "unsqueeze")
+  TORCHC_GUARD_BEGIN return wrap(unwrap(a)->unsqueeze(dim)); TORCHC_GUARD_END("unsqueeze")
+}
+
+torchc_tensor torchc_zeros_like(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "zeros_like")
+  TORCHC_GUARD_BEGIN return wrap(at::zeros_like(*unwrap(a))); TORCHC_GUARD_END("zeros_like")
+}
+torchc_tensor torchc_ones_like(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "ones_like")
+  TORCHC_GUARD_BEGIN return wrap(at::ones_like(*unwrap(a))); TORCHC_GUARD_END("ones_like")
+}
+torchc_tensor torchc_empty_like(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "empty_like")
+  TORCHC_GUARD_BEGIN return wrap(at::empty_like(*unwrap(a))); TORCHC_GUARD_END("empty_like")
+}
+
+torchc_tensor torchc_cast(torchc_tensor a, const char *dtype_name) {
+  clear_error(); TORCHC_NEED(a, "cast")
+  TORCHC_GUARD_BEGIN
+    at::ScalarType st;
+    if (!parse_dtype(dtype_name, st)) return nullptr;
+    return wrap(unwrap(a)->to(st));
+  TORCHC_GUARD_END("cast")
+}
+
+torchc_tensor torchc_zeros_dtype(const char *shape_csv, const char *dtype_name) {
+  clear_error();
+  TORCHC_GUARD_BEGIN
+    std::vector<int64_t> shape;
+    if (!parse_shape(shape_csv, shape)) return nullptr;
+    at::ScalarType st;
+    if (!parse_dtype(dtype_name, st)) return nullptr;
+    return wrap(torch::zeros(shape, at::TensorOptions().dtype(st)));
+  TORCHC_GUARD_END("zeros_dtype")
+}
+
+const char *torchc_dtype(torchc_tensor a) {
+  clear_error(); if (a == nullptr) { set_error("dtype: 空句柄"); return ""; }
+  TORCHC_GUARD_BEGIN return scratch(dtype_name_of(unwrap(a)->scalar_type()));
+  TORCHC_GUARD_END_CSTR("dtype")
+}
+
+torchc_tensor torchc_index_select(torchc_tensor w, const char *idx_csv) {
+  clear_error(); TORCHC_NEED(w, "index_select")
+  TORCHC_GUARD_BEGIN
+    std::vector<double> vals;
+    if (!parse_values(idx_csv, vals)) return nullptr;
+    std::vector<int64_t> idx;
+    idx.reserve(vals.size());
+    for (double v : vals) idx.push_back(static_cast<int64_t>(v));
+    auto it = at::from_blob(idx.data(), {static_cast<int64_t>(idx.size())},
+                            at::TensorOptions().dtype(at::kLong)).clone();
+    return wrap(unwrap(w)->index_select(0, it));
+  TORCHC_GUARD_END("index_select")
+}
+
+/* ================= v2：nn 层内核 ================= */
+
+torchc_tensor torchc_conv2d(torchc_tensor x, torchc_tensor w, torchc_tensor b,
+                            long sh, long sw, long ph, long pw) {
+  clear_error(); TORCHC_NEED(x, "conv2d"); TORCHC_NEED(w, "conv2d")
+  TORCHC_GUARD_BEGIN
+    auto opt = at::Tensor();
+    if (b != nullptr) opt = *unwrap(b);
+    return wrap(at::conv2d(*unwrap(x), *unwrap(w), opt,
+                           {sh, sw}, {ph, pw}, {1, 1}, 1));
+  TORCHC_GUARD_END("conv2d")
+}
+
+torchc_tensor torchc_max_pool2d(torchc_tensor x, long kh, long kw, long sh, long sw) {
+  clear_error(); TORCHC_NEED(x, "max_pool2d")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::max_pool2d(*unwrap(x), {kh, kw}, {sh, sw}, {0, 0}, {1, 1}, false));
+  TORCHC_GUARD_END("max_pool2d")
+}
+
+torchc_tensor torchc_avg_pool2d(torchc_tensor x, long kh, long kw, long sh, long sw) {
+  clear_error(); TORCHC_NEED(x, "avg_pool2d")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::avg_pool2d(*unwrap(x), {kh, kw}, {sh, sw}, {0, 0}, false, true));
+  TORCHC_GUARD_END("avg_pool2d")
+}
+
+torchc_tensor torchc_batch_norm(torchc_tensor x, torchc_tensor mean, torchc_tensor var,
+                                torchc_tensor gamma, torchc_tensor beta, double eps) {
+  clear_error(); TORCHC_NEED(x, "batch_norm")
+  TORCHC_GUARD_BEGIN
+    auto t = *unwrap(x);
+    int64_t c = t.size(1);
+    auto x3 = t.contiguous().view({t.size(0), c, -1});
+    auto m = at::zeros({c}, t.options());
+    auto v = at::ones({c}, t.options());
+    auto g = at::ones({c}, t.options());
+    auto bb = at::zeros({c}, t.options());
+    if (mean != nullptr) m = unwrap(mean)->to(t.options());
+    if (var != nullptr) v = unwrap(var)->to(t.options());
+    if (gamma != nullptr) g = unwrap(gamma)->to(t.options());
+    if (beta != nullptr) bb = unwrap(beta)->to(t.options());
+    m = m.view({1, c, 1}); v = v.view({1, c, 1});
+    g = g.view({1, c, 1}); bb = bb.view({1, c, 1});
+    auto y = x3.sub(m).div(v.add(eps).sqrt()).mul(g).add(bb);
+    return wrap(y.view(t.sizes()));
+  TORCHC_GUARD_END("batch_norm")
+}
+
+torchc_tensor torchc_cross_entropy(torchc_tensor logits, const char *target_csv) {
+  clear_error(); TORCHC_NEED(logits, "cross_entropy")
+  TORCHC_GUARD_BEGIN
+    std::vector<double> vals;
+    if (!parse_values(target_csv, vals)) return nullptr;
+    std::vector<int64_t> idx;
+    idx.reserve(vals.size());
+    for (double v : vals) idx.push_back(static_cast<int64_t>(v));
+    auto t = *unwrap(logits);
+    auto tgt = at::from_blob(idx.data(), {static_cast<int64_t>(idx.size())},
+                             at::TensorOptions().dtype(at::kLong)).clone();
+    auto l = t.to(at::kDouble);
+    auto lse = at::logsumexp(l, 1);
+    auto picked = l.gather(1, tgt.unsqueeze(1)).squeeze(1);
+    return wrap(lse.sub(picked).mean());
+  TORCHC_GUARD_END("cross_entropy")
+}
+
+torchc_tensor torchc_dropout(torchc_tensor x, double p, long training, long seed) {
+  clear_error(); TORCHC_NEED(x, "dropout")
+  TORCHC_GUARD_BEGIN
+    if (seed > 0) at::manual_seed(seed);
+    return wrap(at::dropout(*unwrap(x), p, training != 0));
+  TORCHC_GUARD_END("dropout")
+}
+
+torchc_tensor torchc_l1_loss(torchc_tensor pred, torchc_tensor target) {
+  clear_error(); TORCHC_NEED(pred, "l1_loss"); TORCHC_NEED(target, "l1_loss")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::l1_loss(*unwrap(pred), *unwrap(target), at::Reduction::Mean));
+  TORCHC_GUARD_END("l1_loss")
+}
+
+/* ================= v2：优化器内核 ================= */
+
+long torchc_sgd_step_momentum(torchc_tensor w, torchc_tensor g, torchc_tensor buf,
+                              double lr, double momentum, double weight_decay,
+                              long nesterov) {
+  clear_error();
+  if (w == nullptr || g == nullptr) { set_error("sgd_step_momentum: 空句柄"); return 0; }
+  TORCHC_GUARD_BEGIN
+    torch::NoGradGuard ng;
+    auto &W = *unwrap(w);
+    auto grad = *unwrap(g);
+    if (weight_decay != 0.0) grad = grad.add(W, weight_decay);
+    if (momentum != 0.0) {
+      if (buf == nullptr) { set_error("sgd_step_momentum: momentum 需要缓冲"); return 0; }
+      auto &B = *unwrap(buf);
+      B.mul_(momentum).add_(grad);
+      if (nesterov != 0) grad = grad.add(B, momentum);
+      else grad = B;
+    }
+    W.sub_(grad.mul(lr));
+    return 1;
+  TORCHC_GUARD_END_LONG("sgd_step_momentum")
+}
+
+long torchc_adam_step(torchc_tensor w, torchc_tensor g, torchc_tensor m, torchc_tensor v,
+                      double lr, double beta1, double beta2, double eps,
+                      double weight_decay, long step, long decoupled) {
+  clear_error();
+  if (w == nullptr || g == nullptr || m == nullptr || v == nullptr) {
+    set_error("adam_step: 空句柄");
+    return 0;
+  }
+  TORCHC_GUARD_BEGIN
+    torch::NoGradGuard ng;
+    auto &W = *unwrap(w);
+    auto &G0 = *unwrap(g);
+    auto &M = *unwrap(m);
+    auto &V = *unwrap(v);
+    auto grad = G0;
+    if (weight_decay != 0.0) {
+      if (decoupled != 0) W.mul_(1.0 - lr * weight_decay);
+      else grad = grad.add(W, weight_decay);
+    }
+    long s = step;
+    double bc1 = 1.0 - std::pow(beta1, static_cast<double>(s));
+    double bc2 = 1.0 - std::pow(beta2, static_cast<double>(s));
+    M.lerp_(grad, 1.0 - beta1);
+    V.mul_(beta2).addcmul_(grad, grad, 1.0 - beta2);
+    double step_size = lr / bc1;
+    auto denom = V.sqrt().div(std::sqrt(bc2)).add_(eps);
+    W.addcdiv_(M, denom, -step_size);
+    return 1;
+  TORCHC_GUARD_END_LONG("adam_step")
+}
+
+long torchc_rmsprop_step(torchc_tensor w, torchc_tensor g, torchc_tensor sq,
+                         double lr, double alpha, double eps, double weight_decay) {
+  clear_error();
+  if (w == nullptr || g == nullptr || sq == nullptr) {
+    set_error("rmsprop_step: 空句柄");
+    return 0;
+  }
+  TORCHC_GUARD_BEGIN
+    torch::NoGradGuard ng;
+    auto &W = *unwrap(w);
+    auto &S = *unwrap(sq);
+    auto grad = *unwrap(g);
+    if (weight_decay != 0.0) grad = grad.add(W, weight_decay);
+    S.mul_(alpha).addcmul_(grad, grad, 1.0 - alpha);
+    auto avg = S.sqrt().add_(eps);
+    W.addcdiv_(grad, avg, -lr);
+    return 1;
+  TORCHC_GUARD_END_LONG("rmsprop_step")
+}
+
+/* ================= v2：梯度模式 / 存取 ================= */
+
+long torchc_set_grad_enabled(long flag) {
+  clear_error();
+  TORCHC_GUARD_BEGIN
+    at::GradMode::set_enabled(flag != 0);
+    // 无 void 返回：返回**设置后**的模式（0/1），与 is_grad_enabled 同口径
+    return at::GradMode::is_enabled() ? 1 : 0;
+  TORCHC_GUARD_END_LONG("set_grad_enabled")
+}
+
+long torchc_is_grad_enabled(void) {
+  return at::GradMode::is_enabled() ? 1 : 0;
+}
+
+long torchc_save(torchc_tensor a, const char *path) {
+  clear_error();
+  if (a == nullptr || path == nullptr) { set_error("save: 空参数"); return 0; }
+  TORCHC_GUARD_BEGIN
+    torch::save(*unwrap(a), std::string(path));
+    return 1;
+  TORCHC_GUARD_END_LONG("save")
+}
+
+torchc_tensor torchc_load(const char *path) {
+  clear_error();
+  if (path == nullptr) { set_error("load: 空路径"); return nullptr; }
+  TORCHC_GUARD_BEGIN
+    auto t = at::zeros({1}, at::TensorOptions().dtype(at::kDouble));
+    torch::load(t, std::string(path));
+    return wrap(t);
+  TORCHC_GUARD_END("load")
+}
+
+torchc_tensor torchc_flatten(torchc_tensor a, long start_dim) {
+  clear_error(); TORCHC_NEED(a, "flatten")
+  TORCHC_GUARD_BEGIN
+    return wrap(unwrap(a)->flatten(start_dim, -1));
+  TORCHC_GUARD_END("flatten")
+}
+
+long torchc_copy_into(torchc_tensor dst, torchc_tensor src) {
+  clear_error(); TORCHC_NEED_LONG(dst, "copy_into"); TORCHC_NEED_LONG(src, "copy_into")
+  TORCHC_GUARD_BEGIN
+    torch::NoGradGuard ng;
+    unwrap(dst)->copy_(*unwrap(src));
+    return 1;
+  TORCHC_GUARD_END_LONG("copy_into")
+}
+
 long torchc_is_tensor(torchc_tensor a) {
   if (a == nullptr) return 0;
   return g_live.count(a) ? 1 : 0;
 }
 
+// 释放句柄。幂等：不在存活表里说明已经 delete 过（或根本不是我们的句柄），
+// 直接忽略——用户代码重复释放不该把进程带走。
 void torchc_free(torchc_tensor a) {
   if (a == nullptr) return;
-  g_live.erase(a);
+  if (g_live.erase(a) == 0) return;
   delete unwrap(a);
 }
 
 long torchc_free_int(torchc_tensor a) {
   if (a == nullptr) return 0;
-  g_live.erase(a);
+  if (g_live.erase(a) == 0) return 0;
   delete unwrap(a);
   return 1;
 }

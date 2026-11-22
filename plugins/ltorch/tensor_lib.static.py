@@ -74,6 +74,54 @@ extern fn torchc_is_tensor(a: ptr) -> int from "torchc"
 extern fn torchc_free_int(a: ptr) -> int from "torchc"
 
 
+# ---- v3：一元数学 / 归约 / 形状 / dtype / nn / 优化器 / 存取 ----
+extern fn torchc_exp(a: ptr) -> ptr from "torchc"
+extern fn torchc_log(a: ptr) -> ptr from "torchc"
+extern fn torchc_sqrt(a: ptr) -> ptr from "torchc"
+extern fn torchc_abs(a: ptr) -> ptr from "torchc"
+extern fn torchc_pow_scalar(a: ptr, p: double) -> ptr from "torchc"
+
+extern fn torchc_max(a: ptr) -> double from "torchc"
+extern fn torchc_min(a: ptr) -> double from "torchc"
+extern fn torchc_std(a: ptr, unbiased: int) -> double from "torchc"
+extern fn torchc_argmax(a: ptr) -> int from "torchc"
+extern fn torchc_max_dim(a: ptr, dim: int, want_index: int) -> ptr from "torchc"
+extern fn torchc_mean_dim(a: ptr, dim: int) -> ptr from "torchc"
+
+extern fn torchc_cat(a: ptr, b: ptr, dim: int) -> ptr from "torchc"
+extern fn torchc_stack(a: ptr, b: ptr, dim: int) -> ptr from "torchc"
+extern fn torchc_squeeze(a: ptr, dim: int) -> ptr from "torchc"
+extern fn torchc_unsqueeze(a: ptr, dim: int) -> ptr from "torchc"
+extern fn torchc_zeros_like(a: ptr) -> ptr from "torchc"
+extern fn torchc_ones_like(a: ptr) -> ptr from "torchc"
+extern fn torchc_empty_like(a: ptr) -> ptr from "torchc"
+
+extern fn torchc_cast(a: ptr, dtype_name: str) -> ptr from "torchc"
+extern fn torchc_zeros_dtype(shape: str, dtype_name: str) -> ptr from "torchc"
+extern fn torchc_dtype(a: ptr) -> str from "torchc"
+extern fn torchc_index_select(w: ptr, idx: str) -> ptr from "torchc"
+extern fn torchc_flatten(a: ptr, start_dim: int) -> ptr from "torchc"
+extern fn torchc_copy_into(dst: ptr, src: ptr) -> int from "torchc"
+
+extern fn torchc_conv2d(x: ptr, w: ptr, b: ptr, sh: int, sw: int, ph: int, pw: int) -> ptr from "torchc"
+extern fn torchc_max_pool2d(x: ptr, kh: int, kw: int, sh: int, sw: int) -> ptr from "torchc"
+extern fn torchc_avg_pool2d(x: ptr, kh: int, kw: int, sh: int, sw: int) -> ptr from "torchc"
+extern fn torchc_batch_norm(x: ptr, mean: ptr, var: ptr, gamma: ptr, beta: ptr, eps: double) -> ptr from "torchc"
+extern fn torchc_cross_entropy(logits: ptr, target: str) -> ptr from "torchc"
+extern fn torchc_l1_loss(pred: ptr, target: ptr) -> ptr from "torchc"
+extern fn torchc_dropout(x: ptr, p: double, training: int, seed: int) -> ptr from "torchc"
+
+extern fn torchc_sgd_step_momentum(w: ptr, g: ptr, buf: ptr, lr: double, momentum: double, weight_decay: double, nesterov: int) -> int from "torchc"
+extern fn torchc_adam_step(w: ptr, g: ptr, m: ptr, v: ptr, lr: double, beta1: double, beta2: double, eps: double, weight_decay: double, step: int, decoupled: int) -> int from "torchc"
+extern fn torchc_rmsprop_step(w: ptr, g: ptr, sq: ptr, lr: double, alpha: double, eps: double, weight_decay: double) -> int from "torchc"
+
+extern fn torchc_set_grad_enabled(flag: int) -> int from "torchc"
+extern fn torchc_is_grad_enabled() -> int from "torchc"
+
+extern fn torchc_save(a: ptr, path: str) -> int from "torchc"
+extern fn torchc_load(path: str) -> ptr from "torchc"
+
+
 # ============================== 元信息 ==============================
 
 def version() -> str:
@@ -246,6 +294,85 @@ class Tensor:
         torchc_zero_grad(self.h)
 
     # ---------- 生命周期 ----------
+    # ---- v3：一元数学 ----
+
+    def exp(self) -> Tensor:
+        return Tensor(torchc_exp(self.h))
+
+    def log(self) -> Tensor:
+        return Tensor(torchc_log(self.h))
+
+    def sqrt(self) -> Tensor:
+        return Tensor(torchc_sqrt(self.h))
+
+    def abs(self) -> Tensor:
+        return Tensor(torchc_abs(self.h))
+
+    def pow(self, p: float) -> Tensor:
+        return Tensor(torchc_pow_scalar(self.h, p))
+
+    # ---- v3：归约（标量返回 / dim 版）----
+
+    def max(self) -> double:
+        return torchc_max(self.h)
+
+    def min(self) -> double:
+        return torchc_min(self.h)
+
+    def std(self, unbiased: int) -> double:
+        return torchc_std(self.h, unbiased)
+
+    def argmax(self) -> int:
+        return torchc_argmax(self.h)
+
+    def max_dim(self, dim: int) -> Tensor:
+        return Tensor(torchc_max_dim(self.h, dim, 0))
+
+    def argmax_dim(self, dim: int) -> Tensor:
+        return Tensor(torchc_max_dim(self.h, dim, 1))
+
+    def mean_dim(self, dim: int) -> Tensor:
+        return Tensor(torchc_mean_dim(self.h, dim))
+
+    # ---- v3：形状 ----
+
+    def cat(self, other: Tensor, dim: int) -> Tensor:
+        return Tensor(torchc_cat(self.h, other.h, dim))
+
+    def stack(self, other: Tensor, dim: int) -> Tensor:
+        return Tensor(torchc_stack(self.h, other.h, dim))
+
+    def squeeze(self, dim: int) -> Tensor:
+        return Tensor(torchc_squeeze(self.h, dim))
+
+    def unsqueeze(self, dim: int) -> Tensor:
+        return Tensor(torchc_unsqueeze(self.h, dim))
+
+    def zeros_like(self) -> Tensor:
+        return Tensor(torchc_zeros_like(self.h))
+
+    def ones_like(self) -> Tensor:
+        return Tensor(torchc_ones_like(self.h))
+
+    def empty_like(self) -> Tensor:
+        return Tensor(torchc_empty_like(self.h))
+
+    # ---- v3：dtype ----
+
+    def to(self, dtype_name: str) -> Tensor:
+        return Tensor(torchc_cast(self.h, dtype_name))
+
+    def dtype(self) -> str:
+        return torchc_dtype(self.h)
+
+    # ---- v3：索引 / 落盘 ----
+
+    def index_select(self, idx: list) -> Tensor:
+        return Tensor(torchc_index_select(self.h, _csv_int(idx)))
+
+    def save(self, path: str) -> int:
+        return torchc_save(self.h, path)
+
     def free(self) -> None:
         if torchc_is_tensor(self.h) != 0:
             torchc_free_int(self.h)
@@ -405,3 +532,508 @@ class SGD:
                 n += 1
             i += 1
         return n
+
+
+# ============================== v3：nn 层 ==============================
+
+class Conv2d(Module):
+    """对标 nn.Conv2d：输入 NCHW，w 形状 (out, in, k, k)，b 形状 (out,)。"""
+
+    w: Tensor
+    b: Tensor
+    stride: int
+    padding: int
+
+    def __init__(self, n_in: int, n_out: int, k: int, stride: int, padding: int, seed: int):
+        super().__init__()
+        self.tag = "conv2d"
+        self.stride = stride
+        self.padding = padding
+        fan_in: int = n_in * k * k
+        scale: float = 1.0 / sqrt_float(fan_in)
+        self.w = randn([n_out, n_in, k, k], seed).mul_scalar(scale).requires_grad_(1)
+        self.b = zeros([n_out]).requires_grad_(1)
+
+    def load(self, w_csv: str, w_shape: str, b_csv: str, b_shape: str) -> None:
+        self.w = tensor_from_csv(w_csv, w_shape).requires_grad_(1)
+        self.b = tensor_from_csv(b_csv, b_shape).requires_grad_(1)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return Tensor(torchc_conv2d(x.h, self.w.h, self.b.h,
+                                    self.stride, self.stride, self.padding, self.padding))
+
+    def parameters(self) -> list:
+        out: list = []
+        out.append(self.w)
+        out.append(self.b)
+        return out
+
+    def zero_grad(self) -> None:
+        self.w.zero_grad()
+        self.b.zero_grad()
+
+
+class MaxPool2d(Module):
+    def __init__(self, k: int, stride: int):
+        super().__init__()
+        self.tag = "maxpool2d"
+        self.k = k
+        self.stride = stride
+
+    def forward(self, x: Tensor) -> Tensor:
+        return Tensor(torchc_max_pool2d(x.h, self.k, self.k, self.stride, self.stride))
+
+
+class AvgPool2d(Module):
+    def __init__(self, k: int, stride: int):
+        super().__init__()
+        self.tag = "avgpool2d"
+        self.k = k
+        self.stride = stride
+
+    def forward(self, x: Tensor) -> Tensor:
+        return Tensor(torchc_avg_pool2d(x.h, self.k, self.k, self.stride, self.stride))
+
+
+class Flatten(Module):
+    """对标 nn.Flatten(start_dim=1)：保留 batch 维，其余展平。"""
+
+    def __init__(self):
+        super().__init__()
+        self.tag = "flatten"
+
+    def forward(self, x: Tensor) -> Tensor:
+        return Tensor(torchc_flatten(x.h, 1))
+
+
+class Dropout(Module):
+    """对标 nn.Dropout：eval 时恒等；train 时按 p 置零并缩放（C 侧内核算）。"""
+
+    p: float
+    training: int
+    seed: int
+
+    def __init__(self, p: float, seed: int):
+        super().__init__()
+        self.tag = "dropout"
+        self.p = p
+        self.seed = seed
+        self.training = 1
+
+    def eval(self) -> None:
+        self.training = 0
+
+    def train(self) -> None:
+        self.training = 1
+
+    def forward(self, x: Tensor) -> Tensor:
+        return Tensor(torchc_dropout(x.h, self.p, self.training, self.seed))
+
+
+class BatchNorm1d(Module):
+    """推理分支：y = (x - mean) / sqrt(var + eps) * gamma + beta（running stats 由 load 灌入）。"""
+
+    mean: Tensor
+    var: Tensor
+    gamma: Tensor
+    beta: Tensor
+    eps: float
+
+    def __init__(self, n: int, eps: float):
+        super().__init__()
+        self.tag = "batchnorm1d"
+        self.eps = eps
+        self.mean = zeros([n])
+        self.var = ones([n])
+        self.gamma = ones([n]).requires_grad_(1)
+        self.beta = zeros([n]).requires_grad_(1)
+
+    def load(self, mean_csv: str, var_csv: str, gamma_csv: str, beta_csv: str, n: int) -> None:
+        """灌 running_mean / running_var / weight / bias（各 (C,) 一条 CSV）。"""
+        nstr: str = _csv_int([n])
+        self.mean = tensor_from_csv(mean_csv, nstr)
+        self.var = tensor_from_csv(var_csv, nstr)
+        self.gamma = tensor_from_csv(gamma_csv, nstr).requires_grad_(1)
+        self.beta = tensor_from_csv(beta_csv, nstr).requires_grad_(1)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return Tensor(torchc_batch_norm(x.h, self.mean.h, self.var.h,
+                                        self.gamma.h, self.beta.h, self.eps))
+
+    def parameters(self) -> list:
+        out: list = []
+        out.append(self.gamma)
+        out.append(self.beta)
+        return out
+
+
+class CrossEntropyLoss:
+    """对标 nn.CrossEntropyLoss()：log_softmax + NLL，均值归约；target 是类别下标列表。"""
+
+    tag: str
+
+    def __init__(self):
+        self.tag = "cross_entropy"
+
+    def forward(self, logits: Tensor, target: list) -> Tensor:
+        return Tensor(torchc_cross_entropy(logits.h, _csv_int(target)))
+
+
+class Embedding(Module):
+    """对标 nn.Embedding(num, dim)：forward(下标列表) = weight[index_select(0)]。"""
+
+    w: Tensor
+
+    def __init__(self, num: int, dim: int, seed: int):
+        super().__init__()
+        self.tag = "embedding"
+        scale: float = 1.0 / sqrt_float(dim)
+        self.w = randn([num, dim], seed).mul_scalar(scale).requires_grad_(1)
+
+    def load(self, w_csv: str, w_shape: str) -> None:
+        self.w = tensor_from_csv(w_csv, w_shape).requires_grad_(1)
+
+    def forward(self, idx: list) -> Tensor:
+        return self.w.index_select(idx)
+
+    def parameters(self) -> list:
+        out: list = []
+        out.append(self.w)
+        return out
+
+
+class L1Loss:
+    """对标 nn.L1Loss()：mean(|pred - target|)。"""
+
+    tag: str
+
+    def __init__(self):
+        self.tag = "l1"
+
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
+        return Tensor(torchc_l1_loss(pred.h, target.h))
+
+
+class Sequential(Module):
+    """对标 nn.Sequential：按登记顺序 forward / 收参数。
+
+    静态语言没有动态派发（docs/LANGUAGE.md「没有多态」），`layer: Module` 上的
+    `layer.forward(..)` 会编译期直接绑到 `Module.forward`（原样返回 / 返回 []）。
+    所以这里走「显式派发表」：子层按 kind + 同 kind 序号登记，forward 里按 kind 分支，
+    每一支先把元素标注成具体类再调，派发点就落到了具体类上。
+    """
+
+    kinds: list
+    idxs: list
+    linears: list
+    bns: list
+    drops: list
+    relu_m: ReLU
+    sig_m: Sigmoid
+    tanh_m: Tanh
+    flat_m: Flatten
+
+    def __init__(self):
+        super().__init__()
+        self.tag = "sequential"
+        self.kinds = []
+        self.idxs = []
+        self.linears = []
+        self.bns = []
+        self.drops = []
+        self.relu_m = ReLU()
+        self.sig_m = Sigmoid()
+        self.tanh_m = Tanh()
+        self.flat_m = Flatten()
+
+    def push(self, kind: str, idx: int) -> None:
+        self.kinds.append(kind)
+        self.idxs.append(idx)
+
+    def add_linear(self, m: Linear) -> None:
+        self.linears.append(m)
+        self.push("linear", len(self.linears) - 1)
+
+    def add_bn(self, m: BatchNorm1d) -> None:
+        self.bns.append(m)
+        self.push("bn", len(self.bns) - 1)
+
+    def add_dropout(self, m: Dropout) -> None:
+        self.drops.append(m)
+        self.push("dropout", len(self.drops) - 1)
+
+    def add_relu(self) -> None:
+        self.push("relu", 0)
+
+    def add_sigmoid(self) -> None:
+        self.push("sigmoid", 0)
+
+    def add_tanh(self) -> None:
+        self.push("tanh", 0)
+
+    def add_flatten(self) -> None:
+        self.push("flatten", 0)
+
+    def forward(self, x: Tensor) -> Tensor:
+        y: Tensor = x
+        i: int = 0
+        while i < len(self.kinds):
+            k: str = self.kinds[i]
+            j: int = self.idxs[i]
+            if k == "linear":
+                l: Linear = self.linears[j]
+                y = l.forward(y)
+            if k == "bn":
+                b: BatchNorm1d = self.bns[j]
+                y = b.forward(y)
+            if k == "dropout":
+                d: Dropout = self.drops[j]
+                y = d.forward(y)
+            if k == "relu":
+                y = self.relu_m.forward(y)
+            if k == "sigmoid":
+                y = self.sig_m.forward(y)
+            if k == "tanh":
+                y = self.tanh_m.forward(y)
+            if k == "flatten":
+                y = self.flat_m.forward(y)
+            i += 1
+        return y
+
+    def parameters(self) -> list:
+        out: list = []
+        i: int = 0
+        while i < len(self.linears):
+            l: Linear = self.linears[i]
+            ps: list = l.parameters()
+            j: int = 0
+            while j < len(ps):
+                out.append(ps[j])
+                j += 1
+            i += 1
+        i = 0
+        while i < len(self.bns):
+            b: BatchNorm1d = self.bns[i]
+            qs: list = b.parameters()
+            j = 0
+            while j < len(qs):
+                out.append(qs[j])
+                j += 1
+            i += 1
+        return out
+
+    def zero_grad(self) -> None:
+        ps: list = self.parameters()
+        i: int = 0
+        while i < len(ps):
+            p: Tensor = ps[i]
+            p.zero_grad()
+            i += 1
+
+
+# ============================== v3：optim 扩展 ==============================
+
+class MomentumSGD:
+    """对标 torch.optim.SGD(params, lr, momentum, weight_decay, nesterov)。"""
+
+    params: list
+    bufs: list
+    lr: float
+    momentum: float
+    weight_decay: float
+    nesterov: int
+
+    def __init__(self, params: list, lr: float, momentum: float, weight_decay: float, nesterov: int):
+        self.params = params
+        self.lr = lr
+        self.momentum = momentum
+        self.weight_decay = weight_decay
+        self.nesterov = nesterov
+        self.bufs = []
+        self.init_bufs()
+
+    def init_bufs(self) -> None:
+        """动量缓冲：必须放普通方法里做——__init__ 体不进类型环境（见 docs/MIGRATION.md「已知坑」）。"""
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            self.bufs.append(p.zeros_like())
+            i += 1
+
+    def zero_grad(self) -> None:
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            p.zero_grad()
+            i += 1
+
+    def step(self) -> int:
+        n: int = 0
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            g: Tensor = p.grad()
+            if torchc_is_tensor(g.h) != 0:
+                buf: Tensor = self.bufs[i]
+                torchc_sgd_step_momentum(p.h, g.h, buf.h, self.lr, self.momentum,
+                                         self.weight_decay, self.nesterov)
+                n += 1
+            i += 1
+        return n
+
+
+class Adam:
+    """对标 torch.optim.Adam(params, lr, betas=(0.9,0.999), eps, weight_decay)。"""
+
+    params: list
+    ms: list
+    vs: list
+    lr: float
+    beta1: float
+    beta2: float
+    eps: float
+    weight_decay: float
+    decoupled: int
+    t: int
+
+    def __init__(self, params: list, lr: float, beta1: float, beta2: float, eps: float, weight_decay: float):
+        self.params = params
+        self.lr = lr
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.eps = eps
+        self.weight_decay = weight_decay
+        self.decoupled = 0
+        self.t = 0
+        self.ms = []
+        self.vs = []
+        self.init_state()
+
+    def init_state(self) -> None:
+        """m/v 一阶二阶矩：同 init_bufs，放普通方法里才拿得到局部类型。"""
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            self.ms.append(p.zeros_like())
+            self.vs.append(p.zeros_like())
+            i += 1
+
+    def zero_grad(self) -> None:
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            p.zero_grad()
+            i += 1
+
+    def step(self) -> int:
+        self.t += 1
+        n: int = 0
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            g: Tensor = p.grad()
+            if torchc_is_tensor(g.h) != 0:
+                m: Tensor = self.ms[i]
+                v: Tensor = self.vs[i]
+                torchc_adam_step(p.h, g.h, m.h, v.h, self.lr, self.beta1, self.beta2,
+                                 self.eps, self.weight_decay, self.t, self.decoupled)
+                n += 1
+            i += 1
+        return n
+
+
+class AdamW(Adam):
+    """对标 torch.optim.AdamW：weight_decay 走 decoupled 分支（w -= lr*wd*w）。"""
+
+    def __init__(self, params: list, lr: float, beta1: float, beta2: float, eps: float, weight_decay: float):
+        super().__init__(params, lr, beta1, beta2, eps, weight_decay)
+        self.decoupled = 1
+
+
+class RMSprop:
+    """对标 torch.optim.RMSprop(params, lr, alpha, eps, weight_decay)。"""
+
+    params: list
+    sqs: list
+    lr: float
+    alpha: float
+    eps: float
+    weight_decay: float
+
+    def __init__(self, params: list, lr: float, alpha: float, eps: float, weight_decay: float):
+        self.params = params
+        self.lr = lr
+        self.alpha = alpha
+        self.eps = eps
+        self.weight_decay = weight_decay
+        self.sqs = []
+        self.init_sqs()
+
+    def init_sqs(self) -> None:
+        """平方梯度累积：同 init_bufs。"""
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            self.sqs.append(p.zeros_like())
+            i += 1
+
+    def zero_grad(self) -> None:
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            p.zero_grad()
+            i += 1
+
+    def step(self) -> int:
+        n: int = 0
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            g: Tensor = p.grad()
+            if torchc_is_tensor(g.h) != 0:
+                sq: Tensor = self.sqs[i]
+                torchc_rmsprop_step(p.h, g.h, sq.h, self.lr, self.alpha, self.eps, self.weight_decay)
+                n += 1
+            i += 1
+        return n
+
+
+# ============================== v3：梯度模式 / 存取 ==============================
+
+def set_grad_enabled(flag: int) -> int:
+    return torchc_set_grad_enabled(flag)
+
+
+def is_grad_enabled() -> int:
+    return torchc_is_grad_enabled()
+
+
+def load_tensor(path: str) -> Tensor:
+    return Tensor(torchc_load(path))
+
+
+def save_state_dict(params: list, paths: list) -> int:
+    """把参数逐个落盘（一参数一文件，路径自己给全）；返回写成功的个数。"""
+    n: int = 0
+    i: int = 0
+    while i < len(params):
+        p: Tensor = params[i]
+        path: str = paths[i]
+        if torchc_save(p.h, path) != 0:
+            n += 1
+        i += 1
+    return n
+
+
+def load_state_dict(params: list, paths: list) -> int:
+    n: int = 0
+    i: int = 0
+    while i < len(params):
+        p: Tensor = params[i]
+        path: str = paths[i]
+        t: Tensor = load_tensor(path)
+        if torchc_is_tensor(t.h) != 0:
+            torchc_copy_into(p.h, t.h)
+            n += 1
+        i += 1
+    return n

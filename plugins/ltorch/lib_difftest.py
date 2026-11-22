@@ -96,6 +96,162 @@ def main():
     final: Tensor = mse.forward(l2.forward(relu.forward(l1.forward(xs))), ys)
     print("mlp_loss=" + str(final.item()))
     print("mlp_pred=" + l2.forward(relu.forward(l1.forward(xs))).values())
+
+    # ================= v3：一元数学 / 归约 =================
+    s: Tensor = b.abs().add_scalar(0.5)
+    print("exp=" + b.exp().values())
+    print("log=" + s.log().values())
+    print("sqrt=" + s.sqrt().values())
+    print("abs=" + b.abs().values())
+    print("pow=" + s.pow(2.5).values())
+    print("t_max=" + str(b.max()))
+    print("t_min=" + str(b.min()))
+    print("t_std1=" + str(b.std(1)))
+    print("t_std0=" + str(b.std(0)))
+    print("t_argmax=" + str(b.argmax()))
+    print("max_dim=" + b.max_dim(0).values())
+    print("argmax_dim=" + b.argmax_dim(1).values())
+    print("mean_dim=" + b.mean_dim(0).values())
+
+    # ================= v3：形状 / dtype / 索引 =================
+    print("cat0=" + a.cat(b, 0).values())
+    print("cat1=" + a.cat(b, 1).values())
+    print("stack0=" + a.stack(b, 0).values())
+    print("stack1=" + a.stack(b, 1).values())
+    print("unsq0=" + a.unsqueeze(0).values())
+    sq: Tensor = tensor([1.0, 2.0, 3.0, 4.0], [1, 4])
+    print("sq_shape=" + sq.squeeze(0).shape())
+    print("sq_vals=" + sq.squeeze(0).values())
+    print("zeros_like=" + b.zeros_like().values())
+    print("ones_like=" + b.ones_like().values())
+    print("empty_like_shape=" + b.empty_like().shape())
+    idx: list = []
+    idx.append(1)
+    idx.append(1)
+    idx.append(0)
+    print("index_select=" + b.index_select(idx).values())
+    print("f32_dtype=" + b.to("float32").dtype())
+    print("f32_shape=" + b.to("float32").shape())
+    print("i64=" + b.to("int64").values())
+    print("base_dtype=" + b.dtype())
+
+    # ================= v3：nn 层 =================
+    conv: Conv2d = Conv2d(1, 2, 3, 1, 0, 0)
+    conv.load({CW}, {SCW}, {CB}, {SCB})
+    xc: Tensor = tensor_from_csv({XC}, {SXC})
+    print("conv_y=" + conv.forward(xc).values())
+    print("conv_shape=" + conv.forward(xc).shape())
+    convp: Conv2d = Conv2d(1, 2, 3, 1, 1, 0)
+    convp.load({CW}, {SCW}, {CB}, {SCB})
+    print("conv_pad=" + convp.forward(xc).values())
+    xp: Tensor = tensor_from_csv({XP}, {SXP})
+    print("maxpool=" + MaxPool2d(2, 2).forward(xp).values())
+    print("avgpool=" + AvgPool2d(2, 2).forward(xp).values())
+    print("flatten_shape=" + Flatten().forward(xp).shape())
+
+    dr: Dropout = Dropout(0.5, 7)
+    dr.eval()
+    print("drop_eval=" + dr.forward(b).values())
+    dr0: Dropout = Dropout(0.0, 7)
+    print("drop_p0=" + dr0.forward(b).values())
+
+    bn: BatchNorm1d = BatchNorm1d({NB}, 1e-5)
+    bn.load({BNM}, {BNV}, {BNG}, {BNB}, {NB})
+    xb: Tensor = tensor_from_csv({XB}, {SXB})
+    print("bn=" + bn.forward(xb).values())
+
+    ce: CrossEntropyLoss = CrossEntropyLoss()
+    lg: Tensor = tensor_from_csv({LG}, {SLG})
+    print("ce=" + ce.forward(lg, {TG}).values())
+    emb: Embedding = Embedding(4, 3, 0)
+    emb.load({EW}, {SEW})
+    print("emb=" + emb.forward({EIDX}).values())
+    print("l1loss=" + L1Loss().forward(a, b).values())
+
+    sq1: Linear = Linear(2, 3, 0)
+    sq1.load({Q1W}, {SQ1W}, {Q1B}, {SQ1B})
+    sq2: Linear = Linear(3, 1, 0)
+    sq2.load({Q2W}, {SQ2W}, {Q2B}, {SQ2B})
+    net: Sequential = Sequential()
+    net.add_linear(sq1)
+    net.add_relu()
+    net.add_linear(sq2)
+    print("seq_y=" + net.forward(xs).values())
+    ps: list = net.parameters()
+    print("seq_nparams=" + str(len(ps)))
+
+    # ================= v3：优化器（3 步，Adam 的 t 计数要盖住） =================
+    o1: Linear = Linear(2, 1, 0)
+    o1.load({OW}, {SOW}, {OB}, {SOB})
+    ox: Tensor = tensor_from_csv({OX}, {SOX})
+    oy: Tensor = tensor_from_csv({OY}, {SOY})
+    mse2: MSELoss = MSELoss()
+    optm: MomentumSGD = MomentumSGD(o1.parameters(), 0.1, 0.9, 0.0, 0)
+    i = 0
+    while i < 3:
+        optm.zero_grad()
+        lm: Tensor = mse2.forward(o1.forward(ox), oy)
+        lm.backward()
+        optm.step()
+        i += 1
+    print("opt_momentum_w=" + o1.w.values())
+    print("opt_momentum_b=" + o1.b.values())
+
+    o2: Linear = Linear(2, 1, 0)
+    o2.load({OW}, {SOW}, {OB}, {SOB})
+    opta: Adam = Adam(o2.parameters(), 0.01, 0.9, 0.999, 9.9999999999999995e-09, 0.0)
+    i = 0
+    while i < 3:
+        opta.zero_grad()
+        la: Tensor = mse2.forward(o2.forward(ox), oy)
+        la.backward()
+        opta.step()
+        i += 1
+    print("opt_adam_w=" + o2.w.values())
+    print("opt_adam_b=" + o2.b.values())
+
+    o3: Linear = Linear(2, 1, 0)
+    o3.load({OW}, {SOW}, {OB}, {SOB})
+    optw: AdamW = AdamW(o3.parameters(), 0.01, 0.9, 0.999, 9.9999999999999995e-09, 0.01)
+    i = 0
+    while i < 3:
+        optw.zero_grad()
+        lw: Tensor = mse2.forward(o3.forward(ox), oy)
+        lw.backward()
+        optw.step()
+        i += 1
+    print("opt_adamw_w=" + o3.w.values())
+    print("opt_adamw_b=" + o3.b.values())
+
+    o4: Linear = Linear(2, 1, 0)
+    o4.load({OW}, {SOW}, {OB}, {SOB})
+    optr: RMSprop = RMSprop(o4.parameters(), 0.01, 0.99, 9.9999999999999995e-09, 0.0)
+    i = 0
+    while i < 3:
+        optr.zero_grad()
+        lr4: Tensor = mse2.forward(o4.forward(ox), oy)
+        lr4.backward()
+        optr.step()
+        i += 1
+    print("opt_rmsprop_w=" + o4.w.values())
+    print("opt_rmsprop_b=" + o4.b.values())
+
+    # ================= v3：存取 / 梯度模式 =================
+    sp: Tensor = tensor([1.5, -2.5, 3.5, 0.0], [2, 2])
+    spl: list = []
+    spl.append(sp)
+    pth: list = []
+    pth.append({SPATH})
+    print("save_n=" + str(save_state_dict(spl, pth)))
+    dst: Tensor = zeros([2, 2])
+    dpl: list = []
+    dpl.append(dst)
+    print("load_n=" + str(load_state_dict(dpl, pth)))
+    print("load_vals=" + dst.values())
+
+    print("gradmode_off=" + str(set_grad_enabled(0)))
+    print("gradmode_is=" + str(is_grad_enabled()))
+    print("gradmode_on=" + str(set_grad_enabled(1)))
     print("ok")
 
 
@@ -169,12 +325,51 @@ def main():
     xs = [1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0]
     ys = [2.0, 4.0, 6.0, 8.0]
 
+    # ---- v3 用的同源初值（两边都从这些 list 建张量，杜绝 RNG 差异）----
+    g2 = torch.Generator().manual_seed(7)
+    cw = torch.randn(2, 1, 3, 3, generator=g2, dtype=torch.float64) * 0.4
+    cb = [0.1, -0.2]
+    xc = [float(i) for i in range(1, 10)]          # 1x1x3x3
+    xp = [float(i) for i in range(1, 17)]          # 1x1x4x4
+    bn_mean, bn_var = [0.2, -0.1, 0.05], [1.3, 0.7, 2.1]
+    bn_gamma, bn_beta = [1.1, 0.9, 1.4], [0.05, -0.03, 0.2]
+    xb = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]            # 2x3
+    lg = [1.0, 2.0, 0.5, -1.0, 0.0, 3.0, 2.0, 1.0, -2.0]   # 3x3 logits
+    ce_t = [0, 2, 1]
+    ew = torch.randn(4, 3, generator=g2, dtype=torch.float64) * 0.5
+    emb_idx = [2, 0]
+    q1w = torch.randn(3, 2, generator=g2, dtype=torch.float64) * 0.6
+    q1b = [0.1, -0.1, 0.05]
+    q2w = torch.randn(1, 3, generator=g2, dtype=torch.float64) * 0.6
+    q2b = [0.2]
+    ow = [0.3, -0.4]
+    ob = [0.05]
+    ox = [1.0, 2.0, 3.0, 4.0, 0.5, -1.0]           # 3x2
+    oy = [1.0, 2.0, 3.0]                           # 3x1
+
+    spath = os.path.join(WORK, "saved_param.bin")
+    if os.path.exists(spath):
+        os.remove(spath)
+
     pairs = {
         "W1": csv(flat(w1)), "S1": "2,3", "B1": csv(flat(b1)), "SB1": "1,2",
         "XI": csv(xin), "SX": "2,3", "TI": csv(tgt), "ST": "2,2",
         "W2": csv(flat(w2)), "S2": "4,2", "B2": csv(flat(b2)), "SB2": "1,4",
         "W3": csv(flat(w3)), "S3": "1,4", "B3": csv(flat(b3)), "SB3": "1,1",
         "XS": csv(xs), "SXS": "4,2", "YS": csv(ys), "SYS": "4,1",
+        # v3
+        "CW": csv(flat(cw)), "SCW": "2,1,3,3", "CB": csv(cb), "SCB": "2",
+        "XC": csv(xc), "SXC": "1,1,3,3", "XP": csv(xp), "SXP": "1,1,4,4",
+        "NB": "3", "BNM": csv(bn_mean), "BNV": csv(bn_var),
+        "BNG": csv(bn_gamma), "BNB": csv(bn_beta), "XB": csv(xb), "SXB": "2,3",
+        "LG": csv(lg), "SLG": "3,3", "TG": "[" + ",".join(str(i) for i in ce_t) + "]",
+        "EW": csv(flat(ew)), "SEW": "4,3",
+        "EIDX": "[" + ",".join(str(i) for i in emb_idx) + "]",
+        "Q1W": csv(flat(q1w)), "SQ1W": "3,2", "Q1B": csv(q1b), "SQ1B": "1,3",
+        "Q2W": csv(flat(q2w)), "SQ2W": "1,3", "Q2B": csv(q2b), "SQ2B": "1,1",
+        "OW": csv(ow), "SOW": "1,2", "OB": csv(ob), "SOB": "1,1",
+        "OX": csv(ox), "SOX": "3,2", "OY": csv(oy), "SOY": "3,1",
+        "SPATH": '"' + spath + '"',
     }
     ours = run_elf(pairs, verbose)
 
@@ -235,13 +430,110 @@ def main():
     ref["mlp_loss"] = [float(((pred - my) ** 2).mean().item())]
     ref["mlp_pred"] = flat(pred.detach())
 
+    # ---------------- v3：一元数学 / 归约 ----------------
+    F = torch.nn.functional
+    s = torch.abs(b) + 0.5
+    ref["exp"] = flat(torch.exp(b))
+    ref["log"] = flat(torch.log(s))
+    ref["sqrt"] = flat(torch.sqrt(s))
+    ref["abs"] = flat(torch.abs(b))
+    ref["pow"] = flat(s ** 2.5)
+    ref["t_max"] = [float(b.max())]
+    ref["t_min"] = [float(b.min())]
+    ref["t_std1"] = [float(b.std(unbiased=True))]
+    ref["t_std0"] = [float(b.std(unbiased=False))]
+    ref["t_argmax"] = [float(torch.argmax(b))]
+    ref["max_dim"] = flat(torch.max(b, dim=0).values)
+    ref["argmax_dim"] = flat(torch.argmax(b, dim=1))
+    ref["mean_dim"] = flat(b.mean(dim=0))
+
+    # ---------------- v3：形状 / dtype / 索引 ----------------
+    ref["cat0"] = flat(torch.cat([a, b], 0))
+    ref["cat1"] = flat(torch.cat([a, b], 1))
+    ref["stack0"] = flat(torch.stack([a, b], 0))
+    ref["stack1"] = flat(torch.stack([a, b], 1))
+    ref["unsq0"] = flat(a.unsqueeze(0))
+    sq = T([1.0, 2.0, 3.0, 4.0], (1, 4)).squeeze(0)
+    ref["sq_shape"] = [float(d) for d in sq.shape]
+    ref["sq_vals"] = flat(sq)
+    ref["zeros_like"] = [0.0] * 4
+    ref["ones_like"] = [1.0] * 4
+    ref["empty_like_shape"] = [2.0, 2.0]
+    ref["index_select"] = flat(torch.index_select(b, 0, torch.tensor([1, 1, 0])))
+    ref["f32_dtype"] = str(torch.float32)   # torch 口径：'torch.float32'
+    ref["f32_shape"] = [2.0, 2.0]
+    ref["i64"] = flat(b.to(torch.int64))
+    ref["base_dtype"] = str(b.dtype)        # 'torch.float64'
+
+    # ---------------- v3：nn 层 ----------------
+    cw4 = cw
+    cb1 = T(cb, (2,))
+    xc4 = T(xc, (1, 1, 3, 3))
+    ref["conv_y"] = flat(F.conv2d(xc4, cw4, cb1))
+    ref["conv_shape"] = [1.0, 2.0, 1.0, 1.0]
+    ref["conv_pad"] = flat(F.conv2d(xc4, cw4, cb1, stride=1, padding=1))
+    xp4 = T(xp, (1, 1, 4, 4))
+    ref["maxpool"] = flat(F.max_pool2d(xp4, 2, 2))
+    ref["avgpool"] = flat(F.avg_pool2d(xp4, 2, 2))
+    ref["flatten_shape"] = [1.0, 16.0]
+    ref["drop_eval"] = flat(b)
+    ref["drop_p0"] = flat(b)
+    xb2 = T(xb, (2, 3))
+    ref["bn"] = flat(F.batch_norm(xb2, T(bn_mean, (3,)), T(bn_var, (3,)),
+                                  T(bn_gamma, (3,)), T(bn_beta, (3,)),
+                                  training=False, momentum=0.0, eps=1e-5))
+    ref["ce"] = [float(F.cross_entropy(T(lg, (3, 3)), torch.tensor(ce_t)))]
+    ref["emb"] = flat(torch.index_select(ew, 0, torch.tensor(emb_idx)))
+    ref["l1loss"] = [float((a - b).abs().mean())]
+    hseq = T(xs, (4, 2)) @ q1w.T + T(q1b, (1, 3))
+    ref["seq_y"] = flat(torch.relu(hseq) @ q2w.T + T(q2b, (1, 1)))
+    ref["seq_nparams"] = [4.0]
+
+    # ---------------- v3：优化器（同初值 3 步）----------------
+    def opt_run(ctor):
+        w = T(ow, (1, 2)).requires_grad_(True)
+        bb = T(ob, (1, 1)).requires_grad_(True)
+        X = T(ox, (3, 2))
+        Y = T(oy, (3, 1))
+        opt = ctor([w, bb])
+        for _ in range(3):
+            opt.zero_grad()
+            ((X @ w.T + bb - Y) ** 2).mean().backward()
+            opt.step()
+        return flat(w.detach()), flat(bb.detach())
+
+    for name, ctor in (
+        ("momentum", lambda p: torch.optim.SGD(p, lr=0.1, momentum=0.9)),
+        ("adam", lambda p: torch.optim.Adam(p, lr=0.01, eps=1e-8)),
+        ("adamw", lambda p: torch.optim.AdamW(p, lr=0.01, eps=1e-8, weight_decay=0.01)),
+        ("rmsprop", lambda p: torch.optim.RMSprop(p, lr=0.01, alpha=0.99, eps=1e-8)),
+    ):
+        wv, bv = opt_run(ctor)
+        ref["opt_%s_w" % name] = wv
+        ref["opt_%s_b" % name] = bv
+
+    # ---------------- v3：存取 / 梯度模式 ----------------
+    ref["save_n"] = [1.0]
+    ref["load_n"] = [1.0]
+    ref["load_vals"] = [1.5, -2.5, 3.5, 0.0]
+    ref["gradmode_off"] = [0.0]
+    ref["gradmode_is"] = [0.0]
+    ref["gradmode_on"] = [1.0]
+
     # ---------------- 比对 ----------------
     bad = 0
     for k, want in ref.items():
         got = ours.get(k)
-        if got is None or isinstance(got, str):
+        if got is None:
             print("FAIL %-16s 缺失（%r）" % (k, got))
             bad += 1
+            continue
+        if isinstance(want, str) or isinstance(got, str):
+            if str(got) != str(want):
+                print("FAIL %-16s 字符串 %r vs %r" % (k, got, want))
+                bad += 1
+            elif verbose:
+                print("ok   %-16s %s" % (k, want))
             continue
         if len(got) != len(want):
             print("FAIL %-16s 长度 %d vs %d" % (k, len(got), len(want)))
