@@ -801,6 +801,28 @@ torchc_tensor torchc_batch_norm(torchc_tensor x, torchc_tensor mean, torchc_tens
   TORCHC_GUARD_END("batch_norm")
 }
 
+torchc_tensor torchc_batch_norm_train(torchc_tensor x, torchc_tensor mean, torchc_tensor var,
+                                      torchc_tensor gamma, torchc_tensor beta,
+                                      double eps, double momentum, long training) {
+  clear_error(); TORCHC_NEED(x, "batch_norm_train")
+  TORCHC_GUARD_BEGIN
+    auto t = *unwrap(x);
+    int64_t c = t.size(1);
+    auto x3 = t.contiguous().view({t.size(0), c, -1});
+    auto m = at::zeros({c}, t.options());
+    auto v = at::ones({c}, t.options());
+    auto g = at::ones({c}, t.options());
+    auto bb = at::zeros({c}, t.options());
+    // 训练分支必须用调用方持有的 running 张量本身（batch_norm 原地写它们）
+    if (mean != nullptr) m = *unwrap(mean);
+    if (var != nullptr) v = *unwrap(var);
+    if (gamma != nullptr) g = *unwrap(gamma);
+    if (beta != nullptr) bb = *unwrap(beta);
+    auto y = at::batch_norm(x3, g, bb, m, v, training != 0, momentum, eps, false);
+    return wrap(y.view(t.sizes()));
+  TORCHC_GUARD_END("batch_norm_train")
+}
+
 torchc_tensor torchc_cross_entropy(torchc_tensor logits, const char *target_csv) {
   clear_error(); TORCHC_NEED(logits, "cross_entropy")
   TORCHC_GUARD_BEGIN

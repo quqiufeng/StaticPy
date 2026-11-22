@@ -129,6 +129,10 @@ MAP = {
     ("nn", "parameters"): ["p:Linear.parameters", "p:Conv2d.parameters",
                            "p:BatchNorm1d.parameters", "p:Sequential.parameters"],
     ("nn", "zero_grad"): ["p:Optimizer.zero_grad", "p:Linear.zero_grad"],
+    # model.train()/eval()：递归切 Dropout / BatchNorm 的两态
+    ("nn", "train"): ["p:Sequential.train", "p:Dropout.train", "p:BatchNorm1d.train"],
+    ("nn", "eval"): ["p:Sequential.eval", "p:Dropout.eval", "p:BatchNorm1d.eval"],
+    ("nn", "running_mean"): ["p:BatchNorm1d.running_mean", "p:BatchNorm1d.running_var"],
     ("core", "save"): ["p:Tensor.save", "p:Linear.save", "p:Sequential.save"],
     ("core", "load"): ["p:load_params", "p:Linear.load_ckpt"],
     # ---- optim ----

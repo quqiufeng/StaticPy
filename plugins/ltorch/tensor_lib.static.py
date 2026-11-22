@@ -110,6 +110,7 @@ extern fn torchc_conv2d(x: ptr, w: ptr, b: ptr, sh: int, sw: int, ph: int, pw: i
 extern fn torchc_max_pool2d(x: ptr, kh: int, kw: int, sh: int, sw: int) -> ptr from "torchc"
 extern fn torchc_avg_pool2d(x: ptr, kh: int, kw: int, sh: int, sw: int) -> ptr from "torchc"
 extern fn torchc_batch_norm(x: ptr, mean: ptr, var: ptr, gamma: ptr, beta: ptr, eps: double) -> ptr from "torchc"
+extern fn torchc_batch_norm_train(x: ptr, mean: ptr, var: ptr, gamma: ptr, beta: ptr, eps: double, momentum: double, training: int) -> ptr from "torchc"
 extern fn torchc_cross_entropy(logits: ptr, target: str) -> ptr from "torchc"
 extern fn torchc_l1_loss(pred: ptr, target: ptr) -> ptr from "torchc"
 extern fn torchc_dropout(x: ptr, p: double, training: int, seed: int) -> ptr from "torchc"
@@ -502,6 +503,7 @@ class Linear(Module):
         d: dict = param_names(ps, self.tag)
         idx: int = int(d[name])
         return ps[idx]
+
     def state_dict(self) -> dict:
         return param_names(self.parameters(), self.tag)
 
@@ -663,6 +665,7 @@ class Conv2d(Module):
         d: dict = param_names(ps, self.tag)
         idx: int = int(d[name])
         return ps[idx]
+
     def state_dict(self) -> dict:
         return param_names(self.parameters(), self.tag)
 
@@ -738,11 +741,15 @@ class BatchNorm1d(Module):
     gamma: Tensor
     beta: Tensor
     eps: float
+    momentum: float
+    training: int
 
-    def __init__(self, n: int, eps: float):
+    def __init__(self, n: int, eps: float, momentum: float = 0.1):
         super().__init__()
         self.tag = "batchnorm1d"
         self.eps = eps
+        self.momentum = momentum
+        self.training = 1            # torch 语义：构造后即训练态
         self.mean = zeros([n])
         self.var = ones([n])
         self.gamma = ones([n]).requires_grad_(1)
@@ -756,9 +763,25 @@ class BatchNorm1d(Module):
         self.gamma = tensor_from_csv(gamma_csv, nstr).requires_grad_(1)
         self.beta = tensor_from_csv(beta_csv, nstr).requires_grad_(1)
 
+    def train(self) -> None:
+        """训练态：用 batch 统计归一化，并原地更新 running mean/var。"""
+        self.training = 1
+
+    def eval(self) -> None:
+        """推理态：用 running mean/var（torch 的 model.eval() 语义）。"""
+        self.training = 0
+
+    def running_mean(self) -> Tensor:
+        """当前 running_mean（训练若干步后即更新后的值，便于对拍/存盘）。"""
+        return self.mean
+
+    def running_var(self) -> Tensor:
+        return self.var
+
     def forward(self, x: Tensor) -> Tensor:
-        return Tensor(torchc_batch_norm(x.h, self.mean.h, self.var.h,
-                                        self.gamma.h, self.beta.h, self.eps))
+        return Tensor(torchc_batch_norm_train(x.h, self.mean.h, self.var.h,
+                                             self.gamma.h, self.beta.h, self.eps,
+                                             self.momentum, self.training))
 
     def parameters(self) -> list:
         out: list = []
@@ -777,15 +800,20 @@ class BatchNorm1d(Module):
         d: dict = param_names(ps, self.tag)
         idx: int = int(d[name])
         return ps[idx]
+
     def state_dict(self) -> dict:
         return param_names(self.parameters(), self.tag)
 
     def save(self, path: str) -> int:
-        return save_params(self.parameters(), path)
+        """gamma/beta 走 parameters()，running mean/var 另存 <path>.bn.* 两份。"""
+        n: int = save_params(self.parameters(), path)
+        n += save_params(bn_extras_one(self), path + ".bn")
+        return n
 
     def load_ckpt(self, path: str) -> int:
-        return load_params(self.parameters(), path)
-
+        n: int = load_params(self.parameters(), path)
+        n += load_params(bn_extras_one(self), path + ".bn")
+        return n
 
 
 class CrossEntropyLoss:
@@ -916,10 +944,16 @@ class Sequential(Module):
         return ps[idx]
 
     def save(self, path: str) -> int:
-        return save_params(self.parameters(), path)
+        """权重 <path>.i + 每个 BN 的 running mean/var <path>.bn.i
+        （torch 的 state_dict 里 BN 也带 running_mean/running_var，这里同语义）。"""
+        n: int = save_params(self.parameters(), path)
+        n += save_params(bn_extras(self.bns), path + ".bn")
+        return n
 
     def load_ckpt(self, path: str) -> int:
-        return load_params(self.parameters(), path)
+        n: int = load_params(self.parameters(), path)
+        n += load_params(bn_extras(self.bns), path + ".bn")
+        return n
 
     def forward(self, x: Tensor) -> Tensor:
         y: Tensor = x
@@ -975,6 +1009,32 @@ class Sequential(Module):
         while i < len(ps):
             p: Tensor = ps[i]
             p.zero_grad()
+            i += 1
+
+    def train(self) -> None:
+        """对标 model.train()：把 dropout / batchnorm 切到训练态（递归一层）。"""
+        i: int = 0
+        while i < len(self.drops):
+            d: Dropout = self.drops[i]
+            d.train()
+            i += 1
+        i = 0
+        while i < len(self.bns):
+            b: BatchNorm1d = self.bns[i]
+            b.train()
+            i += 1
+
+    def eval(self) -> None:
+        """对标 model.eval()：dropout 恒等、batchnorm 走 running stats。"""
+        i: int = 0
+        while i < len(self.drops):
+            d: Dropout = self.drops[i]
+            d.eval()
+            i += 1
+        i = 0
+        while i < len(self.bns):
+            b: BatchNorm1d = self.bns[i]
+            b.eval()
             i += 1
 
 
@@ -1351,6 +1411,26 @@ def load_params(params: list, path: str) -> int:
             n += 1
         i += 1
     return n
+
+
+def bn_extras_one(b: BatchNorm1d) -> list:
+    """单个 BN 的 running stats（顺序：mean, var）。"""
+    out: list = []
+    out.append(b.mean)
+    out.append(b.var)
+    return out
+
+
+def bn_extras(bns: list) -> list:
+    """一批 BN 的 running stats 展平（顺序与 bns 一致，各 mean/var 相邻）。"""
+    out: list = []
+    i: int = 0
+    while i < len(bns):
+        b: BatchNorm1d = bns[i]
+        out.append(b.mean)
+        out.append(b.var)
+        i += 1
+    return out
 
 
 def param_names(params: list, prefix: str) -> dict:

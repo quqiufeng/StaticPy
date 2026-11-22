@@ -111,6 +111,11 @@ torchc_tensor torchc_avg_pool2d(torchc_tensor x, long kh, long kw, long sh, long
    weight, bias, training, momentum, eps) 的推理分支 */
 torchc_tensor torchc_batch_norm(torchc_tensor x, torchc_tensor mean, torchc_tensor var,
                                 torchc_tensor gamma, torchc_tensor beta, double eps);
+/* 训练分支：batch 统计归一化，并**原地更新** running_mean / running_var
+   （torch 语义 running = (1-m)*running + m*batch_stat，无偏方差）*/
+torchc_tensor torchc_batch_norm_train(torchc_tensor x, torchc_tensor mean, torchc_tensor var,
+                                      torchc_tensor gamma, torchc_tensor beta,
+                                      double eps, double momentum, long training);
 torchc_tensor torchc_cross_entropy(torchc_tensor logits, const char *target_csv); /* 均值归约 */
 torchc_tensor torchc_dropout(torchc_tensor x, double p, long training, long seed);
 torchc_tensor torchc_l1_loss(torchc_tensor pred, torchc_tensor target);

@@ -99,6 +99,14 @@ def side_expect():
     put("batch_norm", torch.nn.functional.batch_norm(
         bn_x, tn([0.0, 0.0]), tn([1.0, 1.0]),
         tn([3.0, 4.0]), tn([4.0, 2.0]), False, 0.0, 1e-5))
+    # BN 训练分支：batch 统计 + 原地更新 running stats（动量 0.1）
+    bn2_x = tn([[1.0, 2.0], [3.0, 4.0], [5.0, 8.0], [7.0, 2.0]])
+    bn2_mu = tn([0.0, 0.0])
+    bn2_va = tn([1.0, 1.0])
+    put("batch_norm_train", torch.nn.functional.batch_norm(
+        bn2_x, bn2_mu, bn2_va, tn([1.0, 1.0]), tn([0.0, 0.0]), True, 0.1, 1e-5))
+    put("bn_running_mean", bn2_mu)
+    put("bn_running_var", bn2_va)
     put("cross_entropy", torch.nn.functional.cross_entropy(logits, tgt))
     put("l1_loss", torch.nn.functional.l1_loss(x, y))
     out["dtype_x"] = {"vals": [0.0], "shape": [], "text": "torch.float64"}
@@ -146,6 +154,8 @@ class Cap:
             ("torchc_avg_pool2d", P, [P, ctypes.c_long, ctypes.c_long,
                                       ctypes.c_long, ctypes.c_long]),
             ("torchc_batch_norm", P, [P, P, P, P, P, ctypes.c_double]),
+            ("torchc_batch_norm_train", P, [P, P, P, P, P, ctypes.c_double,
+                                            ctypes.c_double, ctypes.c_long]),
             ("torchc_cross_entropy", P, [P, ctypes.c_char_p]),
             ("torchc_l1_loss", P, [P, P]),
             ("torchc_dropout", P, [P, ctypes.c_double, ctypes.c_long, ctypes.c_long]),
@@ -250,6 +260,15 @@ def side_actual():
     mu = c.t([3.0, 4.0], "2")
     va = c.t([4.0, 2.0], "2")
     c.put(out, "batch_norm", L.torchc_batch_norm(bn_x, gm, bt, mu, va, 1e-5))
+    bn2_x = c.t([[1.0, 2.0], [3.0, 4.0], [5.0, 8.0], [7.0, 2.0]], "4,2")
+    bn2_mu = c.t([0.0, 0.0], "2")
+    bn2_va = c.t([1.0, 1.0], "2")
+    bn2_g = c.t([1.0, 1.0], "2")
+    bn2_b = c.t([0.0, 0.0], "2")
+    c.put(out, "batch_norm_train", L.torchc_batch_norm_train(
+        bn2_x, bn2_mu, bn2_va, bn2_g, bn2_b, 1e-5, 0.1, 1))
+    c.put(out, "bn_running_mean", bn2_mu)
+    c.put(out, "bn_running_var", bn2_va)
     c.put(out, "cross_entropy", L.torchc_cross_entropy(logits, b"0,2,1"))
     c.put(out, "l1_loss", L.torchc_l1_loss(x, y))
     out["dtype_x"] = {"vals": [0.0], "shape": [], "text": L.torchc_dtype(x).decode()}

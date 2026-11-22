@@ -1,4 +1,3 @@
-# parse: seed-only
 # ============================================================================
 # ltorch 训练模板（照抄改形状/超参就能用）
 #
@@ -35,8 +34,15 @@ def make_labels(x: Tensor, n: int) -> list:
 
 
 def build_model() -> Sequential:
+    """Linear → BN → ReLU → Dropout → Linear → ReLU → Linear。
+
+    BN 与 Dropout 都有训练/推理两态，靠 `m.train()` / `m.eval()` 一次切全部子层
+    （对标 torch 的 model.train()/eval()）。训练中 BN 用 batch 统计并更新
+    running mean/var；eval 时用 running 值。
+    """
     m: Sequential = Sequential()
     m.add_linear(Linear(4, 16, 11))
+    m.add_bn(BatchNorm1d(16, 1e-05, 0.1))
     m.add_relu()
     m.add_dropout(Dropout(0.1, 33))
     m.add_linear(Linear(16, 8, 12))
@@ -46,7 +52,8 @@ def build_model() -> Sequential:
 
 
 def accuracy(m: Sequential, x: Tensor, y: list) -> float:
-    """eval 态（dropout 关闭）下的命中率。"""
+    """eval 态（dropout 关闭、BN 用 running stats）下的命中率。"""
+    m.eval()
     out: Tensor = m.forward(x)
     am: Tensor = out.argmax_dim(1)
     pred: list = am.tolist()
@@ -65,6 +72,7 @@ def train_steps(m: Sequential, opt: AdamW, lossf: CrossEntropyLoss,
                 x: Tensor, y: list, base_lr: float, steps: int, tag: str) -> None:
     """跑 steps 步；每步 print 一行 loss（可重定向成曲线）。"""
     sch: StepLR = StepLR(base_lr, 8, 0.5)
+    m.train()                        # 训练态：BN 更新 running、Dropout 生效
     i: int = 0
     while i < steps:
         opt.lr = sch.step()          # scheduler 返回新 lr，由调用方写回

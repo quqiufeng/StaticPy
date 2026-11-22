@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **119/119** |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **134/134** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -303,6 +303,13 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   `state_dict` 只装**标量超参**（`lr/betas/eps/weight_decay/t`），Tensor 状态（`m/v`）不进 dict——
   权重走 `save/load_ckpt`（`save_params`/`load_params` 自由函数，`len` 不符抛 `Exception`）。
   注意 `super()` 只支持 `__init__`，子类的 `state_dict` 要自填字段而非 `super().state_dict()`。
+- **`BatchNorm1d` 训练态**：`torchc_batch_norm_train(x, running_mean, running_var, gamma, beta,
+  eps, momentum, training)` —— 落 `at::batch_norm`，训练时用 batch 统计归一化并**原地更新**
+  running mean/var（`(1-m)*running + m*batch`，方差无偏），与 `F.batch_norm(..., training=True)`
+  逐位一致（v7 15 项）。`m.train()/eval()` 一次切全部 BN/Dropout 子层（对标 `model.train/eval`）。
+  **坑**：running mean/var 不在 `parameters()` 里，所以 `save/load_ckpt` 额外存一份
+  `<path>.bn.i`（torch 的 `state_dict` 里 BN 也带这两项）；忘存就会「续训后精度掉一截」。
+  模板里的实测：`nparams 8` / `save 10`（8 权重 + 2 个 BN 统计）→ 清零 → `load 10` → acc 复原。
 - **训练模板** `plugins/ltorch/train_template.static.py`：**没有向上转型**——训练函数不能标
   `opt: Optimizer` 再接 `AdamW`（报 `argument 2 ... expects 'Optimizer', got 'AdamW'`），
   要按**具体优化器类**标注；`Dropout` 有 `train()/eval()` 两态，评估前 `eval()` 才确定性。
@@ -326,9 +333,9 @@ bash plugins/ltorch/build_app.sh my_train.static.py my_train && ./my_train
 # 现成模板（三层 MLP + Dropout + AdamW + StepLR + 中途 save/load 续训）：
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_template.static.py train_template && ./dist/train_template
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
-python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：119/119（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17）
-python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 101 条全验证、显式缺口 0（合计 5.7%）
-python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：37/37（容差 1e-10）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：134/134（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15）
+python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 104 条全验证、显式缺口 0（合计 5.9%）
+python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：40/40（容差 1e-10）
 ```
 
 - **两侧必须分进程**：pip 的 torch 与 `/opt/libtorch` 的 `c10` 符号互不兼容，

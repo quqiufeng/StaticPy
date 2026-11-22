@@ -158,6 +158,7 @@ def main():
     bn: BatchNorm1d = BatchNorm1d({NB}, 1e-5)
     bn.load({BNM}, {BNV}, {BNG}, {BNB}, {NB})
     xb: Tensor = tensor_from_csv({XB}, {SXB})
+    bn.eval()        # 推理分支：用灌入的 running mean/var（对标 training=False）
     print("bn=" + bn.forward(xb).values())
 
     ce: CrossEntropyLoss = CrossEntropyLoss()
@@ -355,6 +356,41 @@ def main():
     ga7.load_state_dict(gsd)
     print("adagrad_restored_lr=" + str(ga7.lr))
 
+    # ================= v7：BatchNorm1d 训练态（batch 统计 + running 更新） =================
+    bn7: BatchNorm1d = BatchNorm1d(3, 1e-05, 0.1)
+    bn7.load({BN7M}, {BN7V}, {BNG}, {BNB}, 3)
+    xbt: Tensor = tensor_from_csv({XBT}, {SXBT})
+    bn7.train()
+    o7a: Tensor = bn7.forward(xbt)
+    print("bn7_y1=" + o7a.values())
+    print("bn7_rm1=" + bn7.running_mean().values())
+    print("bn7_rv1=" + bn7.running_var().values())
+    o7b: Tensor = bn7.forward(xbt.mul_scalar(2.0))
+    print("bn7_y2=" + o7b.values())
+    print("bn7_rm2=" + bn7.running_mean().values())
+    print("bn7_rv2=" + bn7.running_var().values())
+    bn7path: str = "/home/quqiufeng/iso_gen/ck7/bn"
+    print("bn7_save=" + str(bn7.save(bn7path)))
+    z7: Tensor = zeros([3])
+    torchc_copy_into(bn7.running_mean().h, z7.h)
+    print("bn7_rm_zeroed=" + bn7.running_mean().values())
+    print("bn7_load=" + str(bn7.load_ckpt(bn7path)))
+    print("bn7_rm_loaded=" + bn7.running_mean().values())
+    print("bn7_rv_loaded=" + bn7.running_var().values())
+    bn7.eval()
+    print("bn7_y_eval=" + bn7.forward(xbt).values())
+    print("bn7_nparams=" + str(len(bn7.parameters())))
+    # 同一个 BN 进 Sequential：add_bn 的派发 + model.train()/eval() 传播
+    sq7: Sequential = Sequential()
+    sq7.add_linear(Linear(3, 3, 0))
+    sq7.add_bn(bn7)
+    print("sq7_nparams=" + str(len(sq7.parameters())))
+    sq7.train()          # 只验通路（Linear 权重随机，数值不可比）
+    q7a: Tensor = sq7.forward(xbt)
+    sq7.eval()
+    q7b: Tensor = sq7.forward(xbt)
+    print("sq7_shapes=" + q7a.shape() + "|" + q7b.shape())
+
     print("ok")
 
 
@@ -436,6 +472,8 @@ def main():
     xp = [float(i) for i in range(1, 17)]          # 1x1x4x4
     bn_mean, bn_var = [0.2, -0.1, 0.05], [1.3, 0.7, 2.1]
     bn_gamma, bn_beta = [1.1, 0.9, 1.4], [0.05, -0.03, 0.2]
+    bn7_mu, bn7_va = [0.1, -0.2, 0.3], [0.9, 1.1, 0.7]
+    xbt_v = [1.0, 2.0, 3.0, 4.5, -1.0, 2.5, 0.0, 3.0, -2.0, 2.0, 1.0, 0.5]   # 4x3
     xb = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]            # 2x3
     lg = [1.0, 2.0, 0.5, -1.0, 0.0, 3.0, 2.0, 1.0, -2.0]   # 3x3 logits
     ce_t = [0, 2, 1]
@@ -483,6 +521,8 @@ def main():
         "SPATH": '"' + spath + '"',
         "LX": "[" + csv(flat(lx)) + "]", "LW_IH": csv(flat(lw_ih)), "LW_HH": csv(flat(lw_hh)),
         "LB_IH": csv(flat(lb_ih)), "LB_HH": csv(flat(lb_hh)),
+        "BN7M": csv(bn7_mu), "BN7V": csv(bn7_va),
+        "XBT": csv(xbt_v), "SXBT": "4,3",
     }
     ours = run_elf(pairs, verbose)
 
@@ -712,6 +752,33 @@ def main():
     ref["adagrad_sd_lr_decay"] = [float(_g7["lr_decay"])]
     ref["adagrad_sd_wd"] = [float(_g7["weight_decay"])]
     ref["adagrad_restored_lr"] = [0.02]
+
+    # ---------------- v7：BatchNorm1d 训练态 ----------------
+    _bn7 = torch.nn.BatchNorm1d(3, eps=1e-05, momentum=0.1)
+    with torch.no_grad():
+        _bn7.running_mean.copy_(T(bn7_mu, (3,)))
+        _bn7.running_var.copy_(T(bn7_va, (3,)))
+        _bn7.weight.copy_(T(bn_gamma, (3,)))
+        _bn7.bias.copy_(T(bn_beta, (3,)))
+    _bn7.train()
+    xbt = T(xbt_v, (4, 3))
+    ref["bn7_y1"] = flat(_bn7(xbt))
+    ref["bn7_rm1"] = flat(_bn7.running_mean)
+    ref["bn7_rv1"] = flat(_bn7.running_var)
+    ref["bn7_y2"] = flat(_bn7(xbt * 2.0))
+    ref["bn7_rm2"] = flat(_bn7.running_mean)
+    ref["bn7_rv2"] = flat(_bn7.running_var)
+    _bn7.eval()
+    ref["bn7_y_eval"] = flat(_bn7(xbt))
+    ref["bn7_save"] = [4.0]      # gamma,beta + mean,var
+    ref["bn7_rm_zeroed"] = [0.0, 0.0, 0.0]
+    ref["bn7_load"] = [4.0]
+    ref["bn7_rm_loaded"] = ref["bn7_rm2"]      # 存盘点上的 running_mean
+    ref["bn7_rv_loaded"] = ref["bn7_rv2"]
+    ref["bn7_nparams"] = [2.0]
+    # Sequential(Linear, BN)：Linear 权重随机不可比 → 只比参数个数与 eval/train 形状
+    ref["sq7_nparams"] = [4.0]
+    ref["sq7_shapes"] = "4,3|4,3"
 
     # ---------------- 比对 ----------------
     bad = 0
