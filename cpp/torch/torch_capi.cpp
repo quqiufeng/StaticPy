@@ -1175,4 +1175,59 @@ torchc_tensor torchc_bce_with_logits(torchc_tensor pred, torchc_tensor target) {
   TORCHC_GUARD_END("bce_with_logits")
 }
 
+/* ================= v12：索引 / 形状面 ================= */
+
+torchc_tensor torchc_select(torchc_tensor a, long dim, long idx) {
+  clear_error(); TORCHC_NEED(a, "select")
+  TORCHC_GUARD_BEGIN
+    return wrap(unwrap(a)->select(static_cast<int64_t>(dim),
+                                  static_cast<int64_t>(idx)));
+  TORCHC_GUARD_END("select")
+}
+
+torchc_tensor torchc_narrow(torchc_tensor a, long dim, long start, long len) {
+  clear_error(); TORCHC_NEED(a, "narrow")
+  TORCHC_GUARD_BEGIN
+    return wrap(unwrap(a)->narrow(static_cast<int64_t>(dim),
+                                  static_cast<int64_t>(start),
+                                  static_cast<int64_t>(len)));
+  TORCHC_GUARD_END("narrow")
+}
+
+torchc_tensor torchc_repeat(torchc_tensor a, const char *reps_csv) {
+  clear_error(); TORCHC_NEED(a, "repeat")
+  TORCHC_GUARD_BEGIN
+    std::vector<int64_t> reps;
+    if (!parse_shape(reps_csv, reps)) return nullptr;
+    return wrap(unwrap(a)->repeat(reps));
+  TORCHC_GUARD_END("repeat")
+}
+
+torchc_tensor torchc_expand(torchc_tensor a, const char *shape_csv) {
+  clear_error(); TORCHC_NEED(a, "expand")
+  TORCHC_GUARD_BEGIN
+    std::vector<int64_t> shape;
+    if (!parse_shape(shape_csv, shape)) return nullptr;
+    return wrap(unwrap(a)->expand(shape));
+  TORCHC_GUARD_END("expand")
+}
+
+torchc_tensor torchc_t(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "t")
+  TORCHC_GUARD_BEGIN
+    return wrap(unwrap(a)->t());
+  TORCHC_GUARD_END("t")
+}
+
+double torchc_dot(torchc_tensor a, torchc_tensor b) {
+  clear_error();
+  if (a == nullptr || b == nullptr) {
+    set_error("dot: 空张量句柄");
+    return std::nan("");
+  }
+  TORCHC_GUARD_BEGIN
+    return at::dot(*unwrap(a), *unwrap(b)).item<double>();
+  TORCHC_GUARD_END_DOUBLE("dot")
+}
+
 }  // extern "C"

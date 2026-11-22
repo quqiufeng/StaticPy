@@ -117,6 +117,13 @@ MAP = {
     ("core", "nll_loss"): ["c:torchc_nll_loss", "p:NLLLoss"],
     ("core", "binary_cross_entropy_with_logits"): ["c:torchc_bce_with_logits",
                                                    "p:BCEWithLogitsLoss"],
+    # ---- tensor 成员（v12：索引 / 形状面）----
+    ("tensor", "select"): ["c:torchc_select", "p:Tensor.select"],
+    ("tensor", "narrow"): ["c:torchc_narrow", "p:Tensor.narrow"],
+    ("tensor", "repeat"): ["c:torchc_repeat", "p:Tensor.repeat"],
+    ("tensor", "expand"): ["c:torchc_expand", "p:Tensor.expand"],
+    ("tensor", "t"): ["c:torchc_t", "p:Tensor.t"],
+    ("tensor", "dot"): ["c:torchc_dot", "p:Tensor.dot"],
     # ---- nn（StaticPy 侧类）----
     ("nn", "Linear"): "p:Linear",
     ("nn", "Module"): "p:Module",

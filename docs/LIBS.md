@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **184/184** |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **192/192** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -324,6 +324,14 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   `LayerNorm` 的 `w/b` 按 torch 口径初始化（ones/zeros）+ `state_names()` 给 `weight/bias`。
   **坑**：`F.gelu`/`F.leaky_relu` 在 torch 里是函数、不是 Tensor 方法，`capi_difftest` 侧照抄函数形态；
   `norm_p` 是 `at::norm(p)` 的 p-范数（不是 `linalg.vector_norm`），p=1/2/3 都对得上。
+- **v12（索引 / 形状面）**：`Tensor.select(dim, idx)` / `narrow(dim, start, len)` /
+  `repeat(reps)` / `expand(shape)` / `t()` / `dot(other)` 直落 ATen
+  （`at::select` / `at::narrow` / `at::repeat` / `at::expand` / `at::t` / `at::dot`），
+  `repeat`/`expand` 的形状走 CSV 字符串（`"2,1"`、`"3,2"`）。用途是绕开「无动态分派」的硬限制：
+  取一列/一行、切片喂卷积、把 `(1,N)` 广播成 `(B,N)`、2 维转置，都不必先 `reshape` 再猜形状。
+  **坑**：`expand` 只能从维度 1 广播（`(3,4)` 直接 expand 到 `(2,4)` 会报错），
+  要先 `narrow` 成 `(1,4)`；链式 `a.narrow(...).expand(...)` 会丢静态类型 → 先落带标注的中间变量。
+  探针 8 项（`t12_*`），C ABI 侧同步 8 项。
 - **v11（自注意力 `nn.MultiheadAttention`）**：`MultiheadAttention(embed, nhead, seed)` +
   `load_qkv / load_out`（灌 q/k/v 与 out 投影权重）+ `attn_weights(x)` + `forward(x)`，
   前向照 torch 的路径写：`qkv = x @ w.T + b` → `reshape(T, H, d).transpose(0,1)` →
@@ -402,9 +410,9 @@ bash plugins/ltorch/build_app.sh plugins/ltorch/train_attn.static.py train_attn 
 # 现成模板 4（真 nn.MultiheadAttention：逐样本前向 + cat 拼批 + 残差 + LN + CE + 存盘续训）：
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_mha.static.py train_mha && ./dist/train_mha
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
-python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：184/184（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6 + v10 Transformer/分类 25 + v11 自注意力 9）
-python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 125 条全验证、显式缺口 0（合计 7.1%）
-python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：51/51（容差 1e-10）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：192/192（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6 + v10 Transformer/分类 25 + v11 自注意力 9 + v12 索引/形状 8）
+python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 131 条全验证、显式缺口 0（合计 7.4%）
+python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：59/59（容差 1e-10）
 ```
 
 - **两侧必须分进程**：pip 的 torch 与 `/opt/libtorch` 的 `c10` 符号互不兼容，

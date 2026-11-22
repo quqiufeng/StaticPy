@@ -125,6 +125,15 @@ def side_expect():
     put("bce_with_logits", torch.nn.functional.binary_cross_entropy_with_logits(
         x, x.sigmoid()))
     out["dtype_x"] = {"vals": [0.0], "shape": [], "text": "torch.float64"}
+    # ---- v12：索引 / 形状面 ----
+    put("select1_0", x.select(1, 0))
+    put("select0_1", x.select(0, 1))
+    put("narrow0", x.narrow(0, 0, 1))
+    put("narrow1", x.narrow(1, 1, 1))
+    put("repeat", x.repeat(2, 1))
+    put("expand", x.narrow(0, 0, 1).expand(3, 2))
+    put("t", x.t())
+    out["dot"] = {"vals": [float(torch.dot(vec.squeeze(0), vec.squeeze(0)))], "shape": []}
     return out
 
 
@@ -198,6 +207,13 @@ class Cap:
             ("torchc_load", P, [ctypes.c_char_p]),
             ("torchc_lstm", P, [P, P, P, P, P, P, P, ctypes.c_long]),
             ("torchc_free_int", ctypes.c_long, [P]),
+            # ---- v12：索引 / 形状面 ----
+            ("torchc_select", P, [P, ctypes.c_long, ctypes.c_long]),
+            ("torchc_narrow", P, [P, ctypes.c_long, ctypes.c_long, ctypes.c_long]),
+            ("torchc_repeat", P, [P, ctypes.c_char_p]),
+            ("torchc_expand", P, [P, ctypes.c_char_p]),
+            ("torchc_t", P, [P]),
+            ("torchc_dot", ctypes.c_double, [P, P]),
         ]
         for nm, res, arg in sig:
             fn = getattr(L, nm)
@@ -316,6 +332,15 @@ def side_actual():
                  [0.9525741268224334, 0.01798620996209156]], "2,2")
     c.put(out, "bce_with_logits", L.torchc_bce_with_logits(x, sig_t))
     out["dtype_x"] = {"vals": [0.0], "shape": [], "text": L.torchc_dtype(x).decode()}
+    # ---- v12 ----
+    c.put(out, "select1_0", L.torchc_select(x, 1, 0))
+    c.put(out, "select0_1", L.torchc_select(x, 0, 1))
+    c.put(out, "narrow0", L.torchc_narrow(x, 0, 0, 1))
+    c.put(out, "narrow1", L.torchc_narrow(x, 1, 1, 1))
+    c.put(out, "repeat", L.torchc_repeat(x, b"2,1"))
+    c.put(out, "expand", L.torchc_expand(L.torchc_narrow(x, 0, 0, 1), b"3,2"))
+    c.put(out, "t", L.torchc_t(x))
+    out["dot"] = {"vals": [L.torchc_dot(L.torchc_squeeze(vec, 0), L.torchc_squeeze(vec, 0))], "shape": []}
 
     # 优化器：单步结果
     w = c.t([[1.0, 2.0]], "1,2")

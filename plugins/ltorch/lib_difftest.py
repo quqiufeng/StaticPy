@@ -523,6 +523,17 @@ def main():
     print("m11_nstate=" + str(len(mh11.state_dict())))
     print("m11_keys=" + join8(mh11.state_names()))
     print("m11_wqnumel=" + str(mh11.param("in_proj_weight.q").numel()))
+    # ================= v12：索引 / 形状面（select / narrow / repeat / expand / t / dot）===
+    print("t12_select1=" + xm11.select(1, 2).values())
+    print("t12_select0=" + xm11.select(0, 1).values())
+    print("t12_narrow0=" + xm11.narrow(0, 1, 2).values())
+    print("t12_narrow1=" + xm11.narrow(1, 1, 2).values())
+    print("t12_repeat=" + xm11.repeat([2, 1]).values())
+    n12: Tensor = xm11.narrow(0, 0, 1)
+    print("t12_expand=" + n12.expand([2, 4]).values())
+    print("t12_t=" + xm11.t().values())
+    v12: Tensor = tensor_from_csv({V12}, "4")
+    print("t12_dot=" + str(v12.dot(v12)))
     mh11.zero_grad()
     ly11: Tensor = mh11.forward(xm11).mean()
     ly11.backward()
@@ -701,6 +712,7 @@ def main():
         "LN10WB": csv(ln10_wb), "LN10BB": csv(ln10_bb),
         # v11
         "XM11": csv(xm11_v), "SXM11": "3,4",
+        "V12": csv([0.5, -1.5, 2.25, 3.0]),
         "WQ11": csv(flat(wq11)), "WK11": csv(flat(wk11)), "WV11": csv(flat(wv11)),
         "BQ11": csv(flat(bq11)), "BK11": csv(flat(bk11)), "BV11": csv(flat(bv11)),
         "WO11": csv(flat(wo11)), "BO11": csv(flat(bo11)),
@@ -1014,6 +1026,16 @@ def main():
     ref["t10_norm3"] = [float(torch.norm(_x10, 3.0))]
     _mk10 = torch.tensor(mk10_v, dtype=torch.float64).reshape(3, 4) > 0.5
     ref["t10_masked"] = flat(_x10.masked_fill(_mk10, -1000.0))
+    _xm11 = T(xm11_v, (3, 4))
+    ref["t12_select1"] = flat(_xm11.select(1, 2))
+    ref["t12_select0"] = flat(_xm11.select(0, 1))
+    ref["t12_narrow0"] = flat(_xm11.narrow(0, 1, 2))
+    ref["t12_narrow1"] = flat(_xm11.narrow(1, 1, 2))
+    ref["t12_repeat"] = flat(_xm11.repeat(2, 1))
+    ref["t12_expand"] = flat(_xm11.narrow(0, 0, 1).expand(2, 4))
+    ref["t12_t"] = flat(_xm11.t())
+    _v12 = T([0.5, -1.5, 2.25, 3.0], (4,))
+    ref["t12_dot"] = [float(torch.dot(_v12, _v12))]
     ref["n10_gelu"] = flat(torch.nn.GELU()(_x10))
     ref["n10_gelu_ap"] = flat(torch.nn.GELU(approximate="tanh")(_x10))
     ref["n10_leaky"] = flat(torch.nn.LeakyReLU(0.13)(_x10))

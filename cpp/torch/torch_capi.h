@@ -168,6 +168,14 @@ torchc_tensor torchc_layer_norm(torchc_tensor x, torchc_tensor w, torchc_tensor 
 torchc_tensor torchc_nll_loss(torchc_tensor logits, const char *target_csv);
 torchc_tensor torchc_bce_with_logits(torchc_tensor pred, torchc_tensor target);
 
+/* ---- v12：索引 / 形状面（张量取列、展批、点积）---- */
+torchc_tensor torchc_select(torchc_tensor a, long dim, long idx);
+torchc_tensor torchc_narrow(torchc_tensor a, long dim, long start, long len);
+torchc_tensor torchc_repeat(torchc_tensor a, const char *reps_csv);
+torchc_tensor torchc_expand(torchc_tensor a, const char *shape_csv);
+torchc_tensor torchc_t(torchc_tensor a);
+double torchc_dot(torchc_tensor a, torchc_tensor b);
+
 #ifdef __cplusplus
 }
 #endif

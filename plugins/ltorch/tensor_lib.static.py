@@ -137,6 +137,14 @@ extern fn torchc_leaky_relu(a: ptr, slope: double) -> ptr from "torchc"
 extern fn torchc_masked_fill(a: ptr, mask: ptr, value: double) -> ptr from "torchc"
 extern fn torchc_cumsum(a: ptr, dim: int) -> ptr from "torchc"
 extern fn torchc_norm_p(a: ptr, p: double) -> double from "torchc"
+
+# ---- v12：索引 / 形状面 ----
+extern fn torchc_select(a: ptr, dim: int, idx: int) -> ptr from "torchc"
+extern fn torchc_narrow(a: ptr, dim: int, start: int, len: int) -> ptr from "torchc"
+extern fn torchc_repeat(a: ptr, reps_csv: str) -> ptr from "torchc"
+extern fn torchc_expand(a: ptr, shape_csv: str) -> ptr from "torchc"
+extern fn torchc_t(a: ptr) -> ptr from "torchc"
+extern fn torchc_dot(a: ptr, b: ptr) -> double from "torchc"
 extern fn torchc_layer_norm(x: ptr, w: ptr, b: ptr, nnorm: int, eps: double) -> ptr from "torchc"
 extern fn torchc_nll_loss(logits: ptr, target: str) -> ptr from "torchc"
 extern fn torchc_bce_with_logits(pred: ptr, target: ptr) -> ptr from "torchc"
@@ -449,6 +457,31 @@ class Tensor:
 
     def index_select(self, idx: list) -> Tensor:
         return Tensor(torchc_index_select(self.h, _csv_int(idx)))
+
+    # ---- v12：索引 / 形状面（对标 torch.select / narrow / repeat / expand / t / dot）----
+    def select(self, dim: int, idx: int) -> Tensor:
+        """取第 dim 维的第 idx 个；维数少 1（对标 x[:, i] / x[i]）。"""
+        return Tensor(torchc_select(self.h, dim, idx))
+
+    def narrow(self, dim: int, start: int, length: int) -> Tensor:
+        """第 dim 维取 [start, start+length)。"""
+        return Tensor(torchc_narrow(self.h, dim, start, length))
+
+    def repeat(self, reps: list) -> Tensor:
+        """逐维重复 reps 次（对标 torch.Tensor.repeat）。"""
+        return Tensor(torchc_repeat(self.h, _csv_int(reps)))
+
+    def expand(self, shape: list) -> Tensor:
+        """广播到 shape（不改数据；维度 1 → N 只能 expand，不能直接 reshape）。"""
+        return Tensor(torchc_expand(self.h, _csv_int(shape)))
+
+    def t(self) -> Tensor:
+        """2 维转置（对标 torch.Tensor.t）。"""
+        return Tensor(torchc_t(self.h))
+
+    def dot(self, other: Tensor) -> float:
+        """1 维点积（标量返回）。"""
+        return torchc_dot(self.h, other.h)
 
     def save(self, path: str) -> int:
         return torchc_save(self.h, path)
