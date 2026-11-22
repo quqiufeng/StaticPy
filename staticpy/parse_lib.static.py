@@ -74,16 +74,16 @@ def tget(toks, p, k: int):
     return tk
 
 def tty(toks, p) -> str:
-    return tok_type(tget(toks, p, 0))
+    return vec_ref(tget(toks, p, 0), 0)
 
 def tv(toks, p) -> str:
-    return tok_value(tget(toks, p, 0))
+    return vec_ref(tget(toks, p, 0), 1)
 
 def tty_at(toks, p, k: int) -> str:
-    return tok_type(tget(toks, p, k))
+    return vec_ref(tget(toks, p, k), 0)
 
 def tv_at(toks, p, k: int) -> str:
-    return tok_value(tget(toks, p, k))
+    return vec_ref(tget(toks, p, k), 1)
 
 def tadv(p) -> int:
     int_array_set(p, 0, int_array_ref(p, 0) + 1)
@@ -105,7 +105,7 @@ def perr(toks, p, msg: str) -> int:
 
 def want_op(toks, p, s: str) -> int:
     tk = tget(toks, p, 0)
-    if tok_type(tk) == "OP" and tok_value(tk) == s:
+    if vec_ref(tk, 0) == "OP" and vec_ref(tk, 1) == s:
         tadv(p)
         return 0
     perr(toks, p, "expected '" + s + "'")
@@ -113,7 +113,7 @@ def want_op(toks, p, s: str) -> int:
 
 def want_kw(toks, p, s: str) -> int:
     tk = tget(toks, p, 0)
-    if tok_type(tk) == "KEYWORD" and tok_value(tk) == s:
+    if vec_ref(tk, 0) == "KEYWORD" and vec_ref(tk, 1) == s:
         tadv(p)
         return 0
     perr(toks, p, "expected keyword '" + s + "'")
@@ -121,19 +121,19 @@ def want_kw(toks, p, s: str) -> int:
 
 def is_op(toks, p, s: str) -> bool:
     tk = tget(toks, p, 0)
-    return tok_type(tk) == "OP" and tok_value(tk) == s
+    return vec_ref(tk, 0) == "OP" and vec_ref(tk, 1) == s
 
 def is_kw(toks, p, s: str) -> bool:
     tk = tget(toks, p, 0)
-    return tok_type(tk) == "KEYWORD" and tok_value(tk) == s
+    return vec_ref(tk, 0) == "KEYWORD" and vec_ref(tk, 1) == s
 
 def is_op_at(toks, p, k: int, s: str) -> bool:
     tk = tget(toks, p, k)
-    return tok_type(tk) == "OP" and tok_value(tk) == s
+    return vec_ref(tk, 0) == "OP" and vec_ref(tk, 1) == s
 
 def is_kw_at(toks, p, k: int, s: str) -> bool:
     tk = tget(toks, p, k)
-    return tok_type(tk) == "KEYWORD" and tok_value(tk) == s
+    return vec_ref(tk, 0) == "KEYWORD" and vec_ref(tk, 1) == s
 
 def skip_newlines(toks, p) -> int:
     while tty(toks, p) == "NEWLINE":
@@ -216,8 +216,9 @@ def parse_lambda_params(toks, p):
             tadv(p)
             tadv(p)
             continue
-        if tty(toks, p) == "NAME":
-            nm = tv(toks, p)
+        tk = tget(toks, p, 0)
+        if tok_type(tk) == "NAME":
+            nm: str = tok_value(tk)
             tadv(p)
             if is_op(toks, p, "="):
                 tadv(p)
@@ -299,9 +300,10 @@ def parse_not(toks, p):
 
 # 比较运算符：返回操作数名字，非比较返回 ""
 def cmp_op_at(toks, p) -> str:
-    t = tty(toks, p)
+    tk = tget(toks, p, 0)
+    t: str = vec_ref(tk, 0)
+    v: str = vec_ref(tk, 1)
     if t == "OP":
-        v = tv(toks, p)
         if v == "==":
             return "Eq"
         if v == "!=":
@@ -430,8 +432,9 @@ def parse_term(toks, p):
     return parse_binop_left(toks, p, 5)
 
 def parse_factor(toks, p):
-    if tty(toks, p) == "OP":
-        v = tv(toks, p)
+    tk = tget(toks, p, 0)
+    if vec_ref(tk, 0) == "OP":
+        v: str = vec_ref(tk, 1)
         if v == "+" or v == "-" or v == "~":
             tadv(p)
             nm = "UAdd"
@@ -594,8 +597,9 @@ def parse_sub_one(toks, p):
     return lower
 
 def parse_atom(toks, p):
-    t = tty(toks, p)
-    v = tv(toks, p)
+    tk = tget(toks, p, 0)
+    t: str = vec_ref(tk, 0)
+    v: str = vec_ref(tk, 1)
     if t == "NUMBER":
         tadv(p)
         return mk_num(v)
