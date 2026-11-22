@@ -94,6 +94,9 @@
     "tan",
     "tanh",
     "tok_at",
+    "tok_is",
+    "tok_type_at",
+    "tok_val_at",
     "tuple_ref"
   ],
   "runtime": [

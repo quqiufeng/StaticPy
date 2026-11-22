@@ -48,6 +48,9 @@ def scheme_name(name):
         # (py_float_repr v) → 「variable py_float_repr is not bound」（自举翻译器踩过）
         "py_float_repr": "py-float-repr",
         "tok_at": "tok-at",
+        "tok_type_at": "tok-type-at",
+        "tok_val_at": "tok-val-at",
+        "tok_is": "tok-is?",
     }
     return RUNTIME_MAP.get(name, name)
 
@@ -815,6 +818,7 @@ PRELUDE_FUNCTIONS = {
     "str_split", "str_join", "str_trim", "str_lower", "str_upper",
     "str_replace", "str_contains", "str_starts_with", "str_ends_with",
     "read_text_file", "str_length", "str_slice", "str_code_at", "tok_at",
+    "tok_type_at", "tok_val_at", "tok_is",
     "os_list_dir", "os_getenv", "os_getcwd", "os_file_size",
     "os_file_exists", "os_move_file", "os_delete_file",
     "os_mkdir", "os_rmdir", "os_shell", "os_cwd",

@@ -65,16 +65,16 @@ def tget(toks, p, k: int):
     return tok_at(toks, p, k, LINE_P)
 
 def tty(toks, p) -> str:
-    return vec_ref(tget(toks, p, 0), 0)
+    return tok_type_at(toks, p, 0, LINE_P)
 
 def tv(toks, p) -> str:
-    return vec_ref(tget(toks, p, 0), 1)
+    return tok_val_at(toks, p, 0, LINE_P)
 
 def tty_at(toks, p, k: int) -> str:
-    return vec_ref(tget(toks, p, k), 0)
+    return tok_type_at(toks, p, k, LINE_P)
 
 def tv_at(toks, p, k: int) -> str:
-    return vec_ref(tget(toks, p, k), 1)
+    return tok_val_at(toks, p, k, LINE_P)
 
 def tadv(p) -> int:
     int_array_set(p, 0, int_array_ref(p, 0) + 1)
@@ -111,20 +111,16 @@ def want_kw(toks, p, s: str) -> int:
     return 0
 
 def is_op(toks, p, s: str) -> bool:
-    tk = tget(toks, p, 0)
-    return vec_ref(tk, 0) == "OP" and vec_ref(tk, 1) == s
+    return tok_is(toks, p, 0, "OP", s, LINE_P)
 
 def is_kw(toks, p, s: str) -> bool:
-    tk = tget(toks, p, 0)
-    return vec_ref(tk, 0) == "KEYWORD" and vec_ref(tk, 1) == s
+    return tok_is(toks, p, 0, "KEYWORD", s, LINE_P)
 
 def is_op_at(toks, p, k: int, s: str) -> bool:
-    tk = tget(toks, p, k)
-    return vec_ref(tk, 0) == "OP" and vec_ref(tk, 1) == s
+    return tok_is(toks, p, k, "OP", s, LINE_P)
 
 def is_kw_at(toks, p, k: int, s: str) -> bool:
-    tk = tget(toks, p, k)
-    return vec_ref(tk, 0) == "KEYWORD" and vec_ref(tk, 1) == s
+    return tok_is(toks, p, k, "KEYWORD", s, LINE_P)
 
 def skip_newlines(toks, p) -> int:
     while tty(toks, p) == "NEWLINE":

@@ -1985,6 +1985,30 @@ toks 恒为 token vector（tokenize 结尾已摊平）；k=0 时顺带刷新行�
     (if (= k 0) (foreign-set! 'integer-32 slot 0 (vector-ref tk 2)))
     tk))
 
+(define (tok-type-at toks p k slot)
+  "第 pos+k 个 token 的类型串（k=0 刷新行号槽；一次调用取代 tget+vec-ref）"
+  (let* ((i (+ (foreign-ref 'integer-32 p 0) k))
+         (n (vector-length toks))
+         (tk (vector-ref toks (cond ((< i 0) 0) ((< i n) i) (else (- n 1))))))
+    (if (= k 0) (foreign-set! 'integer-32 slot 0 (vector-ref tk 2)))
+    (vector-ref tk 0)))
+
+(define (tok-val-at toks p k slot)
+  "第 pos+k 个 token 的值串（k=0 刷新行号槽）"
+  (let* ((i (+ (foreign-ref 'integer-32 p 0) k))
+         (n (vector-length toks))
+         (tk (vector-ref toks (cond ((< i 0) 0) ((< i n) i) (else (- n 1))))))
+    (if (= k 0) (foreign-set! 'integer-32 slot 0 (vector-ref tk 2)))
+    (vector-ref tk 1)))
+
+(define (tok-is? toks p k ty val slot)
+  "第 pos+k 个 token 是否 (类型 ty 且 值 val)：is_op/is_kw 族的合成快路"
+  (let* ((i (+ (foreign-ref 'integer-32 p 0) k))
+         (n (vector-length toks))
+         (tk (vector-ref toks (cond ((< i 0) 0) ((< i n) i) (else (- n 1))))))
+    (if (= k 0) (foreign-set! 'integer-32 slot 0 (vector-ref tk 2)))
+    (if (string=? (vector-ref tk 0) ty) (equal? (vector-ref tk 1) val) #f)))
+
 ;; ====== Option / Result 类型 ======
 
 (define (Ok v) (vector 'ok v))
