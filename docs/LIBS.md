@@ -307,6 +307,10 @@ STATICPY_PLUGINS=core,ltorch bash staticpy/static_build.sh plugins/ltorch/demo.s
 LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/ltdemo   # 不打 rpath 的实现需要这句；本仓 .so 已内嵌 rpath
 STATICPY_PLUGINS=core,ltorch bash staticpy/static_build.sh plugins/ltorch/train_demo.static.py train_demo
 LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/train_demo   # 线性回归 + MLP 训练收敛（约 100 步到 1e-10）
+
+# 写自己的训练程序：库（Tensor/nn/optim）+ 你的程序 concat 成一个 ELF，跑时裸 ./xxx 即可
+#（脚本会把 libtorch_capi.so 拷到产物旁，产物 RUNPATH 含 $ORIGIN，不必再设 LD_LIBRARY_PATH）
+bash plugins/ltorch/build_app.sh my_train.static.py my_train && ./my_train
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
 python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：102/102（v2 30 + v3 56 + v4 13 + v5 LSTM 3）
 python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 95 条全验证、显式缺口 0（合计 5.4%）

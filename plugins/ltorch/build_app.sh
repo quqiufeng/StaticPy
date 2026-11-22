@@ -13,4 +13,9 @@ CACHE="${STATICPY_CACHE:-$HOME/iso_gen/staticpy-cache}"; mkdir -p "$CACHE"
 BUNDLE="$CACHE/$(basename "$OUT").ltorch.bundle.static.py"
 "$CONCAT" "$BUNDLE" "$HERE/tensor_lib.static.py" "$USER"
 ( cd "$ROOT" && bash staticpy/static_build.sh "$BUNDLE" "$OUT" "$HERE/lib_ffi.scm" )
-echo "built: $OUT  (run: LD_LIBRARY_PATH=$ROOT/cpp/torch/build ./$OUT)"
+# 产物 ELF 的 RUNPATH 含 $ORIGIN：把 capi 放到可执行文件旁，裸跑即可
+OUTDIR="$(cd "$(dirname "$OUT")" && pwd)"
+if [ "$OUTDIR" != "$ROOT/cpp/torch/build" ]; then
+  cp -f "$ROOT/cpp/torch/build/libtorch_capi.so" "$OUTDIR/" 2>/dev/null || true
+fi
+echo "built: $OUT  (run: ./$OUT ；libtorch_capi.so 已放到产物旁，libtorch 本体需在 /opt/libtorch/lib，或用 LD_LIBRARY_PATH 指过去)"
