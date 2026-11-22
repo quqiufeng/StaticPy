@@ -274,6 +274,30 @@ torchc_tensor torchc_mul_scalar(torchc_tensor a, double v) {
   TORCHC_GUARD_END("mul_scalar")
 }
 
+torchc_tensor torchc_sub_scalar(torchc_tensor a, double v) {
+  clear_error();
+  TORCHC_NEED(a, "sub_scalar")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::sub(*unwrap(a), v));
+  TORCHC_GUARD_END("sub_scalar")
+}
+
+torchc_tensor torchc_div_scalar(torchc_tensor a, double v) {
+  clear_error();
+  TORCHC_NEED(a, "div_scalar")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::div(*unwrap(a), v));
+  TORCHC_GUARD_END("div_scalar")
+}
+
+torchc_tensor torchc_neg(torchc_tensor a) {
+  clear_error();
+  TORCHC_NEED(a, "neg")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::neg(*unwrap(a)));
+  TORCHC_GUARD_END("neg")
+}
+
 torchc_tensor torchc_relu(torchc_tensor a) {
   clear_error();
   TORCHC_NEED(a, "relu")
@@ -516,6 +540,13 @@ void torchc_free(torchc_tensor a) {
   if (a == nullptr) return;
   g_live.erase(a);
   delete unwrap(a);
+}
+
+long torchc_free_int(torchc_tensor a) {
+  if (a == nullptr) return 0;
+  g_live.erase(a);
+  delete unwrap(a);
+  return 1;
 }
 
 }  // extern "C"

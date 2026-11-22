@@ -35,6 +35,9 @@ torchc_tensor torchc_div(torchc_tensor a, torchc_tensor b);
 torchc_tensor torchc_matmul(torchc_tensor a, torchc_tensor b);
 torchc_tensor torchc_add_scalar(torchc_tensor a, double v);
 torchc_tensor torchc_mul_scalar(torchc_tensor a, double v);
+torchc_tensor torchc_sub_scalar(torchc_tensor a, double v);
+torchc_tensor torchc_div_scalar(torchc_tensor a, double v);
+torchc_tensor torchc_neg(torchc_tensor a);
 
 /* ---- 激活 / 归约 ---- */
 torchc_tensor torchc_relu(torchc_tensor a);
@@ -69,6 +72,7 @@ long torchc_sgd_step(torchc_tensor w, torchc_tensor g, double lr); /* 原地 w -
 /* ---- 生命周期 ---- */
 long torchc_is_tensor(torchc_tensor a);  /* 1=是存活句柄，0=普通整数/空 */
 void torchc_free(torchc_tensor a);
+long torchc_free_int(torchc_tensor a);   /* 同 torchc_free，返回 1（FFI 契约：无 void 返回） */
 
 #ifdef __cplusplus
 }

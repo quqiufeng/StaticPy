@@ -45,7 +45,7 @@
 | S-LISTIADD | `lst += 其他` 是**原地 extend**（不是把右侧当单元素塞进去，也不是每次整体拷贝） | list_iadd |
 | S-DICT | dict 字面量/读写/键存在/`get`/迭代给 keys/删除 | dict_ops, dict_sub |
 | S-ITER | `for` 迭代协议：range/str（给 1 字符 str）/list/dict（给 keys）/表达式结果/嵌套 | iter_seq, for_iter_seq |
-| S-CLASS | class → record：单继承、多基内联、类属性默认值、`@classmethod`/`@staticmethod`、方法当值 | class_inherit, class_multi, class_defaults, class_methods, class_methodval |
+| S-CLASS | class → record：单继承、多基内联、类属性默认值、`@classmethod`/`@staticmethod`、方法当值、`__init__` 局部变量走函数体同款 let 绑定 | class_inherit, class_multi, class_defaults, class_methods, class_methodval, class_init_locals |
 | S-LAMBDA | lambda / 一等函数：函数值赋值、传参、回调 | lambda_fn |
 | S-RECUR | 递归（含深递归不炸栈的边界） | recursion |
 | S-BUILTIN | 内建函数子集：`len range int float str bool abs min max sum sorted print` | py_builtins |

@@ -2518,6 +2518,36 @@ def translate_method(node, cls, kind, source_file=""):
     return translate_function(node, source_file, method_class=cls, method_kind=kind)
 
 
+def init_body_text(node, source_file=""):
+    """__init__ 体 -> 表达式文本（局部变量 let 绑定 + 行号注释，同函数体）
+
+    旧实现一条条 translate_stmt：`k = 2.5` / `k: float = 2.5` 只发一个裸名，
+    局部变量绑定列表被丢掉 → 后面引用 k 就是未绑定变量。
+    这里复用 translate_block（字段写入走 try_field_set 的 `self.x = v` 分支）。
+    """
+    exprs = translate_block(node.body)
+    annotated = []
+    for idx, st in enumerate(node.body):
+        ann = debug_annotation(st, source_file)
+        if ann:
+            annotated.append(ann)
+        if idx < len(exprs):
+            annotated.append(exprs[idx])
+    if len(annotated) == 1:
+        body = f"  {annotated[0]}"
+    elif annotated:
+        body = "  (begin\n    " + "\n    ".join(annotated) + "\n  )"
+    else:
+        body = "  (void)"
+    lv = collect_assigned_names(node.body) - {a.arg for a in node.args.args}
+    if lv:
+        binds = " ".join(f"({mangle_name(v)} #f)" for v in sorted(lv))
+        body = f"  (let ({binds})\n{body}\n  )"
+    if has_return(node.body):
+        body = f"  (call/cc (lambda (__return__)\n{body}\n  ))"
+    return body
+
+
 def translate_class_methods(node, source_file=""):
     """翻译带方法的 class：record-type + 构造函数 + 方法函数"""
     global CURRENT_CLASS
@@ -2542,19 +2572,7 @@ def translate_class_methods(node, source_file=""):
     if init is not None:
         saved = CURRENT_CLASS
         CURRENT_CLASS = name
-        body_lines = []
-        for st in init.body:
-            f = _self_assign_target(st)
-            if f is not None and (st.value is not None):
-                owner = name if f in rfields else (_field_owner(name, f) or "")
-                if f in info["ctor_fields"] and owner:
-                    body_lines.append(f"  ({owner}-{f}-set! self {translate_expr(st.value)})")
-                else:
-                    TRANS_ERRORS.append(
-                        f"{source_file}:{getattr(st, 'lineno', 0)} class {name}.__init__: "
-                        f"字段 {f} 未声明（在 __init__ 中先赋值即可自动登记）")
-            else:
-                body_lines.append("  " + translate_stmt(st))
+        body_lines = [init_body_text(init, source_file)]
         for f, v, ln in defaults:
             owner = name if f in rfields else (_field_owner(name, f) or name)
             body_lines.append(f"  ({owner}-{f}-set! self {translate_expr(v)})")
@@ -3582,6 +3600,11 @@ def expr_is_bool(node):
     return False
 
 
+STR_METHODS = frozenset((
+    "split", "join", "strip", "lstrip", "rstrip", "replace", "upper", "lower",
+    "splitlines", "format", "startswith", "endswith", "zfill", "center"))
+
+
 def expr_is_tensor(node, tvars=None):
     """启发式：表达式是否为（或产生）张量。用于二元运算的类型路由。
 
@@ -3594,6 +3617,10 @@ def expr_is_tensor(node, tvars=None):
         return False
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Attribute):
+            # 与 str/list 撞名的方法（.split 等）：接收者本身不是张量就当字符串处理，
+            # 否则 `parts = csv.split(",")` 会被判成张量，`parts[i]` 走成 index_select
+            if node.func.attr in STR_METHODS and not expr_is_tensor(node.func.value, tvars):
+                return False
             if node.func.attr in TENSOR_METHODS:
                 return True
             return expr_is_tensor(node.func.value, tvars) and node.func.attr not in TENSOR_SCALAR_ATTRS
@@ -4520,7 +4547,9 @@ def translate_expr(node):
 
             # 张量方法调用：<tensor>.method(args, **kwargs) → (torch-tensor-<method> <tensor> 位置参数)
             # 用于把 transformers 风格代码（x.to(dtype), x.pow(2).mean(-1, keepdim=True)）忠实翻译。
-            if not is_module_alias(obj):
+            # 用户类实例优先：`class Tensor` 里的 self.h 走类方法分派，
+            # 不能被"名字像张量"的启发式抢走（否则 class Tensor: a.matmul(b) → torch-tensor-matmul）
+            if not is_module_alias(obj) and resolve_expr_class(func.value) is None:
                 t = translate_tensor_method(value, attr, node)
                 if t:
                     return t

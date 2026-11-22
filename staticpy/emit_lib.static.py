@@ -1383,6 +1383,23 @@ def is_str_receiver(n) -> int:
         return 1
     if infer_expr_type(n) == "str":
         return 1
+    # 调用结果：模块函数按 SIGS 返回标注，方法按成员定义的 returns
+    # （`self.values().split(",")` 之前落到 `((recv)-split)` 兜底，实参全丢）
+    if t == "Call":
+        fn = dict_get(n, "func")
+        if nt(fn) == "Name":
+            rt = dict_get(SIGS, dict_get(fn, "id"))
+            if rt == "str":
+                return 1
+            return 0
+        if nt(fn) == "Attribute":
+            owner = resolve_expr_class(dict_get(fn, "value"))
+            if owner != "":
+                hit = member_hit(owner, dict_get(fn, "attr"))
+                if hit is not None:
+                    if ann_str(dict_get(dict_get(hit, "node"), "returns")) == "str":
+                        return 1
+        return 0
     return 0
 
 def translate_call(n) -> str:
@@ -3504,7 +3521,36 @@ def collect_classes(body) -> int:
         i = i + 1
     return 0
 
-def emit_class_init(nm: str, info) -> str:
+def init_body_text(init, src: str) -> str:
+    """__init__ 体 -> 表达式文本（局部变量走 let 绑定，同函数体那一套）
+
+    不能一条条喂 translate_block：那样收集不到局部变量（`k = 2.5` /
+    `k: float = 2.5`），赋值只落一个裸名，后面引用就是未绑定变量。
+    字段写入由 block_assign 的 `self.x = v` 分支照旧发 `<Owner>-x-set! self v`。
+    """
+    # 注意：不要 param_push / collect_function_types —— 种子的 init_body_text
+    # 直接喂 translate_block，形参不进类型环境，`acc * seed` 就发普通 `*`。
+    # 这里多推一层类型会发 `fl*`，与种子 IR 不一致（check_translate 抓的正是这个）。
+    tenv_push()
+    src_set(src)
+    body = dict_get(init, "body")
+    txt: str = body_text(annotate_block(body))
+    lv = locals_of(init)
+    if py_list_length(lv) > 0:
+        bs: str = ""
+        i: int = 0
+        while i < py_list_length(lv):
+            if i > 0:
+                bs = bs + " "
+            bs = bs + "(" + mangle_name(py_list_ref(lv, i)) + " #f)"
+            i = i + 1
+        txt = "  (let (" + bs + ")\n" + txt + "\n  )"
+    if has_return(body):
+        txt = "  (call/cc (lambda (__return__)\n" + txt + "\n  ))"
+    tenv_pop()
+    return txt
+
+def emit_class_init(nm: str, info, src: str) -> str:
     """__init__ -> static_<Cls>___init__(self, …)：就地填字段并返回 self
 
     没有 __init__ 但有类属性默认值 / 父类可复用构造时合成一个
@@ -3517,25 +3563,7 @@ def emit_class_init(nm: str, info) -> str:
     params: str = "self"
     if init is not None:
         params = params_of(init)
-        ib = dict_get(init, "body")
-        i: int = 0
-        while i < py_list_length(ib):
-            st = py_list_ref(ib, i)
-            f = self_assign_field(st)
-            if f != "" and nt(dict_get(st, "value")) != "":
-                owner: str = nm
-                if py_list_has(rfields, f) == 0:
-                    owner = class_field_owner(nm, f)
-                if owner == "":
-                    lines = py_list_append(lines, "  (void)")
-                else:
-                    lines = py_list_append(
-                        lines, "  (" + owner + "-" + f + "-set! self " + translate_expr(dict_get(st, "value")) + ")")
-            else:
-                tr = translate_block(py_list_append(py_list(), st), 1)
-                if py_list_length(tr) > 0:
-                    lines = py_list_append(lines, "  " + py_list_ref(tr, 0))
-            i = i + 1
+        lines = py_list_append(lines, init_body_text(init, src))
     else:
         base = dict_get(info, "base")
         if class_known(base) == 1 and dict_get(dict_get(CLASSES, base), "init") is not None:
@@ -3704,7 +3732,7 @@ def emit_class(n, src: str) -> str:
         out = out + "\n(define-record-type " + nm + " (fields)" + parent + ")"
     init = dict_get(info, "init")
     if init is not None or dict_get(info, "synth_init") == 1:
-        out = out + "\n" + emit_class_init(nm, info)
+        out = out + "\n" + emit_class_init(nm, info, src)
         if dict_get(info, "trivial") == 0:
             out = out + "\n" + emit_class_ctor(nm, info)
     # 方法输出顺序同种子：实例方法 → @classmethod → @staticmethod（只本类定义的）
@@ -3892,6 +3920,11 @@ def resolve_expr_class(expr) -> str:
             fid = dict_get(fn, "id")
             if class_known(fid) == 1:
                 return fid
+            # 模块函数返回标注是类：`mk().g(1)` / `zeros(s).requires_grad_(1)`
+            # 要按类方法翻译，不能退化成 `((mk)-g)`（同种子 infer_expr_type 那条）
+            rtn = dict_get(SIGS, fid)
+            if rtn is not None and class_known(rtn) == 1:
+                return rtn
             return ""
         if nt(fn) == "Attribute":
             owner = resolve_expr_class(dict_get(fn, "value"))
