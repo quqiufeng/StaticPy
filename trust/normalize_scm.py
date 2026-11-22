@@ -13,6 +13,11 @@ import sys
 
 
 def tokens(text):
+    """返回 token 列表。
+
+    刻意不用生成器：本文件同时是判据的参考实现，也要求能被 StaticPy 前端解析。
+    """
+    out = []
     i, n = 0, len(text)
     while i < n:
         c = text[i]
@@ -34,22 +39,22 @@ def tokens(text):
                     j += 1
                     break
                 j += 1
-            yield "".join(buf)
+            out.append("".join(buf))
             i = j
             continue
         if c == "#" and i + 1 < n and text[i + 1] == "\\":   # 字符字面量 #\x
             j = i + 2
             while j < n and not text[j].isspace():
                 j += 1
-            yield text[i:j]
+            out.append(text[i:j])
             i = j
             continue
         if c in "()[]":
-            yield "(" if c in "([" else ")"
+            out.append("(" if c in "([" else ")")
             i += 1
             continue
         if c == "'":                      # quote
-            yield "'"
+            out.append("'")
             i += 1
             continue
         j = i
@@ -57,8 +62,10 @@ def tokens(text):
             j += 1
         if j == i:                        # 兜底，防死循环
             j = i + 1
-        yield text[i:j]
+        out.append(text[i:j])
         i = j
+
+    return out
 
 
 def norm(text):

@@ -59,6 +59,11 @@ if _reg_out=$($PY tools/check_registry.py 2>&1); then echo "  ok（$(tail -1 <<<
   echo "  登记漂移：$PY tools/check_registry.py -v"; fail=1
 fi
 
+echo ">>> [0g/4] FFI 契约（extern fn 声明，docs/FFI.md 六条规则）"
+if _ffi_out=$($PY tools/check_ffi.py 2>&1); then echo "  ok（$(tail -1 <<<"$_ffi_out")）"; else
+  echo "  声明违约：$PY tools/check_ffi.py -v"; grep '^  ERR' <<<"$_ffi_out" | head -5; fail=1
+fi
+
 echo ">>> [1/4] 构建 C 库 + 前端（imgproc）"
 bash imgproc/build.sh >/dev/null 2>&1 && echo "  ok" || { echo "  失败"; fail=1; }
 

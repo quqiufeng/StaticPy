@@ -5,7 +5,8 @@
 
 > **其余文档**：[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)（流水线/环境）、
 > [docs/LANGUAGE.md](./docs/LANGUAGE.md)（子集/类型/FFI 约定）、[docs/PLUGINS.md](./docs/PLUGINS.md)（插件）、
-> [docs/LIBS.md](./docs/LIBS.md)（已集成库）、[docs/MIGRATION.md](./docs/MIGRATION.md)（方法论）、
+> [docs/FFI.md](./docs/FFI.md)（`extern fn` 契约，机器校验）、[docs/LIBS.md](./docs/LIBS.md)（已集成库）、
+> [docs/MIGRATION.md](./docs/MIGRATION.md)（方法论）、[docs/PERF.md](./docs/PERF.md)（基准数字）、
 > [docs/SELFHOST.md](./docs/SELFHOST.md)（自举）、[docs/DEPLOY.md](./docs/DEPLOY.md)（部署）。
 
 > 本项目的定位：**Python 语法 → Scheme IR → AOT 机器码 + 运行时挂 C 库**。
@@ -92,6 +93,7 @@ $PY <lib>/difftest.py -v                     # ③ 差分测试（逐像素）
 
 ## 4. 工程约定（务必遵守）
 
+- **FFI 契约机器校验**：`python3 tools/check_ffi.py`（六条规则，见 [docs/FFI.md](./docs/FFI.md)），`selfcheck.sh [0g/4]` 已接。
 - **FFI 类型**：只支持 `str / int / float / ptr`；**没有 `void` 返回**——返回 void 的
   C 函数一律改成返回 `int`。多值参数（点列/LUT/调色板/坐标）用 **CSV 字符串**传。
 - **`extern fn` 声明**：写在 `.py` 顶部；`foreign-procedure` 由翻译器生成；库用
