@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **200/200** |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **202/202** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -324,6 +324,11 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   `LayerNorm` 的 `w/b` 按 torch 口径初始化（ones/zeros）+ `state_names()` 给 `weight/bias`。
   **坑**：`F.gelu`/`F.leaky_relu` 在 torch 里是函数、不是 Tensor 方法，`capi_difftest` 侧照抄函数形态；
   `norm_p` 是 `at::norm(p)` 的 p-范数（不是 `linalg.vector_norm`），p=1/2/3 都对得上。
+- **v14（CSV 读数）**：`load_csv(path) -> Tensor`（C 侧 `torchc_load_csv`，`ifstream` + `strtod`
+  逐格解析 → `(行, 列)` float64 张量）。表头、非数值行、列数与前一行不一致的行**静默跳过**
+  （真实数据缺列/注释行很常见，报错反而不好用）；单元格首尾空白会去掉（Excel 导出的 `"1, 2"`）。
+  没数值行才报错。数据集进模型的路径：`load_csv` → `select(1, -1)` 取标签列 → `tolist()`
+  喂 `CrossEntropyLoss`（target 要 list），特征列用 `narrow(1, 0, nfeat)` 切。
 - **v13（梯度范数 / 裁剪）**：自由函数 `grad_norm(params)` / `clip_grad_norm(params, max_norm)`
   （对标 `torch.nn.utils.clip_grad_norm_`），**纯 StaticPy 组合**、不加 C 符号：
   逐参数 `p.grad().norm_p(2.0)` 累平方 → `sqrt_float` → 超阈值时 `g.mul_scalar(scale)` 再
@@ -416,7 +421,7 @@ bash plugins/ltorch/build_app.sh plugins/ltorch/train_attn.static.py train_attn 
 # 现成模板 4（真 nn.MultiheadAttention：逐样本前向 + cat 拼批 + 残差 + LN + CE + 存盘续训）：
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_mha.static.py train_mha && ./dist/train_mha
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
-python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：200/200（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6 + v10 Transformer/分类 25 + v11 自注意力 9 + v12 索引/形状 8 + v13 梯度裁剪 8）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：202/202（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6 + v10 Transformer/分类 25 + v11 自注意力 9 + v12 索引/形状 8 + v13 梯度裁剪 8 + v14 CSV 读数 2）
 python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 132 条全验证、显式缺口 0（合计 7.5%）
 python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：59/59（容差 1e-10）
 ```

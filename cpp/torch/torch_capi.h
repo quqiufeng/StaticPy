@@ -148,6 +148,7 @@ long torchc_copy_into(torchc_tensor dst, torchc_tensor src);
 /* ---- 存取（state_dict 落盘）---- */
 long torchc_save(torchc_tensor a, const char *path);
 torchc_tensor torchc_load(const char *path);
+torchc_tensor torchc_load_csv(const char *path);
 
 /* ---- 生命周期 ---- */
 long torchc_is_tensor(torchc_tensor a);  /* 1=是存活句柄，0=普通整数/空 */

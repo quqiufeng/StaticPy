@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -999,6 +1000,47 @@ torchc_tensor torchc_load(const char *path) {
     torch::load(t, std::string(path));
     return wrap(t);
   TORCHC_GUARD_END("load")
+}
+
+// v14：读数值 CSV → (行, 列) float64 张量。表头/非数值行/列数不符的行跳过。
+torchc_tensor torchc_load_csv(const char *path) {
+  clear_error();
+  if (path == nullptr) { set_error("load_csv: 空路径"); return nullptr; }
+  TORCHC_GUARD_BEGIN
+    std::ifstream in(path);
+    if (!in) { set_error(std::string("load_csv: 打不开 ") + path); return nullptr; }
+    std::vector<double> data;
+    long rows = 0;
+    long cols = -1;
+    std::string line;
+    while (std::getline(in, line)) {
+      if (line.empty()) continue;
+      std::vector<double> row;
+      std::stringstream ss(line);
+      std::string cell;
+      bool numeric = true;
+      while (std::getline(ss, cell, ',')) {
+        // 去掉首尾空白（Excel 导出的 "1, 2" 很常见）
+        size_t b = cell.find_first_not_of(" \t\r");
+        size_t e = cell.find_last_not_of(" \t\r");
+        if (b == std::string::npos) { numeric = false; break; }
+        std::string tok = cell.substr(b, e - b + 1);
+        char *endp = nullptr;
+        double v = std::strtod(tok.c_str(), &endp);
+        if (endp == tok.c_str() || *endp != '\0') { numeric = false; break; }
+        row.push_back(v);
+      }
+      if (!numeric || row.empty()) continue;          // 表头等非数值行跳过
+      if (cols < 0) cols = static_cast<long>(row.size());
+      if (static_cast<long>(row.size()) != cols) continue;  // 列数不一致的行跳过
+      data.insert(data.end(), row.begin(), row.end());
+      ++rows;
+    }
+    if (rows == 0 || cols <= 0) { set_error("load_csv: 文件里没有数值行"); return nullptr; }
+    auto t = at::from_blob(data.data(), {rows, cols},
+                           at::TensorOptions().dtype(at::kDouble)).clone();
+    return wrap(t);
+  TORCHC_GUARD_END("load_csv")
 }
 
 torchc_tensor torchc_flatten(torchc_tensor a, long start_dim) {

@@ -551,6 +551,11 @@ def main():
     print("g13_gb_after=" + b13.grad_values())
     print("g13_clip2=" + str(clip_grad_norm([w13, b13], 100.0)))
     print("g13_gw_idem=" + w13.grad_values())
+    # ================= v14：CSV 读数 =================
+    d14: Tensor = load_csv("/home/quqiufeng/iso_gen/lt/csv14/d.csv")
+    sh14: str = d14.shape()
+    print("t14_shape=" + sh14)
+    print("t14_vals=" + d14.values())
     mh11.zero_grad()
     ly11: Tensor = mh11.forward(xm11).mean()
     ly11.backward()
@@ -741,6 +746,12 @@ def main():
         "BQ11": csv(flat(bq11)), "BK11": csv(flat(bk11)), "BV11": csv(flat(bv11)),
         "WO11": csv(flat(wo11)), "BO11": csv(flat(bo11)),
     }
+    # v14 的 CSV 必须在跑 ELF **之前**落盘（驱动进程写，ref 进程只对齐数字）
+    _csvdir = os.path.join(WORK, "csv14")
+    os.makedirs(_csvdir, exist_ok=True)
+    with open(os.path.join(_csvdir, "d.csv"), "w") as _f:
+        _f.write("x1,x2,y\n1.0, 2.0 ,0\n-0.5,3.5,1\n#comment\n4.0,5.0\n6.0,-7.5,2\n")
+
     ours = run_elf(pairs, verbose)
 
     # ---------------- 参考值（torch float64） ----------------
@@ -1075,6 +1086,16 @@ def main():
     ref["g13_gb_after"] = flat(_b13.grad)
     ref["g13_clip2"] = [float(torch.nn.utils.clip_grad_norm_([_w13, _b13], 100.0))]
     ref["g13_gw_idem"] = flat(_w13.grad)
+
+    # v14：CSV 读数（表头/注释/缺列行都要跳过）
+    csvdir = os.path.join(WORK, "csv14")
+    os.makedirs(csvdir, exist_ok=True)
+    with open(os.path.join(csvdir, "d.csv"), "w") as f:
+        f.write("x1,x2,y\n1.0, 2.0 ,0\n-0.5,3.5,1\n#comment\n4.0,5.0\n6.0,-7.5,2\n")
+    _t14 = torch.tensor([[1.0, 2.0, 0.0], [-0.5, 3.5, 1.0], [6.0, -7.5, 2.0]],
+                        dtype=torch.float64)
+    ref["t14_shape"] = [float(_t14.shape[0]), float(_t14.shape[1])]
+    ref["t14_vals"] = flat(_t14)
     ref["n10_gelu"] = flat(torch.nn.GELU()(_x10))
     ref["n10_gelu_ap"] = flat(torch.nn.GELU(approximate="tanh")(_x10))
     ref["n10_leaky"] = flat(torch.nn.LeakyReLU(0.13)(_x10))

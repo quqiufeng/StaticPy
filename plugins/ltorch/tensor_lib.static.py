@@ -127,6 +127,7 @@ extern fn torchc_is_grad_enabled() -> int from "torchc"
 
 extern fn torchc_save(a: ptr, path: str) -> int from "torchc"
 extern fn torchc_load(path: str) -> ptr from "torchc"
+extern fn torchc_load_csv(path: str) -> ptr from "torchc"
 
 # ---- v10：Transformer / 分类链路 ----
 extern fn torchc_clamp(a: ptr, lo: double, hi: double) -> ptr from "torchc"
@@ -1895,6 +1896,17 @@ def is_grad_enabled() -> int:
 
 def load_tensor(path: str) -> Tensor:
     return Tensor(torchc_load(path))
+
+
+def load_csv(path: str) -> Tensor:
+    """读数值 CSV → (行, 列) 的 float64 张量（v14）。
+
+    只认纯数值：表头行、非数值行、列数与前一行不一致的行**静默跳过**
+    （取舍：真实数据里缺列/注释行很常见，报错反而不好用；真正的形状错误
+    会在后面的 matmul 处炸出来）。逗号分隔，单元格首尾空白会去掉。
+    单列/单行文件也能读（得到 (rows,1) / (1,cols)），别指望它猜成 1 维。
+    """
+    return Tensor(torchc_load_csv(path))
 
 
 # ============================== v3：lr_scheduler ==============================
