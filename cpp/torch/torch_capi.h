@@ -154,6 +154,20 @@ long torchc_is_tensor(torchc_tensor a);  /* 1=是存活句柄，0=普通整数/�
 void torchc_free(torchc_tensor a);
 long torchc_free_int(torchc_tensor a);   /* 同 torchc_free，返回 1（FFI 契约：无 void 返回） */
 
+/* ---- v10：Transformer / 分类链路 ---- */
+torchc_tensor torchc_clamp(torchc_tensor a, double lo, double hi);
+torchc_tensor torchc_log_softmax(torchc_tensor a, long dim);
+torchc_tensor torchc_gelu(torchc_tensor a);
+torchc_tensor torchc_gelu_approx(torchc_tensor a);
+torchc_tensor torchc_leaky_relu(torchc_tensor a, double slope);
+torchc_tensor torchc_masked_fill(torchc_tensor a, torchc_tensor mask, double value);
+torchc_tensor torchc_cumsum(torchc_tensor a, long dim);
+double torchc_norm_p(torchc_tensor a, double p);
+torchc_tensor torchc_layer_norm(torchc_tensor x, torchc_tensor w, torchc_tensor b,
+                                long nnorm, double eps);
+torchc_tensor torchc_nll_loss(torchc_tensor logits, const char *target_csv);
+torchc_tensor torchc_bce_with_logits(torchc_tensor pred, torchc_tensor target);
+
 #ifdef __cplusplus
 }
 #endif

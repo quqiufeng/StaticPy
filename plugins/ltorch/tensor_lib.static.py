@@ -128,6 +128,19 @@ extern fn torchc_is_grad_enabled() -> int from "torchc"
 extern fn torchc_save(a: ptr, path: str) -> int from "torchc"
 extern fn torchc_load(path: str) -> ptr from "torchc"
 
+# ---- v10：Transformer / 分类链路 ----
+extern fn torchc_clamp(a: ptr, lo: double, hi: double) -> ptr from "torchc"
+extern fn torchc_log_softmax(a: ptr, dim: int) -> ptr from "torchc"
+extern fn torchc_gelu(a: ptr) -> ptr from "torchc"
+extern fn torchc_gelu_approx(a: ptr) -> ptr from "torchc"
+extern fn torchc_leaky_relu(a: ptr, slope: double) -> ptr from "torchc"
+extern fn torchc_masked_fill(a: ptr, mask: ptr, value: double) -> ptr from "torchc"
+extern fn torchc_cumsum(a: ptr, dim: int) -> ptr from "torchc"
+extern fn torchc_norm_p(a: ptr, p: double) -> double from "torchc"
+extern fn torchc_layer_norm(x: ptr, w: ptr, b: ptr, nnorm: int, eps: double) -> ptr from "torchc"
+extern fn torchc_nll_loss(logits: ptr, target: str) -> ptr from "torchc"
+extern fn torchc_bce_with_logits(pred: ptr, target: ptr) -> ptr from "torchc"
+
 
 # ============================== 元信息 ==============================
 
@@ -262,6 +275,41 @@ class Tensor:
 
     def sum_dim(self, dim: int) -> Tensor:
         return Tensor(torchc_sum_dim(self.h, dim))
+
+    # ---- v10：元素级 / 归一化 ----
+
+    def clamp(self, lo: float, hi: float) -> Tensor:
+        return Tensor(torchc_clamp(self.h, lo, hi))
+
+    def clamp_min(self, lo: float) -> Tensor:
+        return Tensor(torchc_clamp(self.h, lo, 1.7976931348623157e308))
+
+    def clamp_max(self, hi: float) -> Tensor:
+        return Tensor(torchc_clamp(self.h, -1.7976931348623157e308, hi))
+
+    def log_softmax(self, dim: int) -> Tensor:
+        return Tensor(torchc_log_softmax(self.h, dim))
+
+    def gelu(self) -> Tensor:
+        """F.gelu 默认分支（erf 精确版）。"""
+        return Tensor(torchc_gelu(self.h))
+
+    def gelu_approx(self) -> Tensor:
+        """F.gelu(approximate="tanh")。"""
+        return Tensor(torchc_gelu_approx(self.h))
+
+    def leaky_relu(self, slope: float) -> Tensor:
+        return Tensor(torchc_leaky_relu(self.h, slope))
+
+    def masked_fill(self, mask: Tensor, value: float) -> Tensor:
+        return Tensor(torchc_masked_fill(self.h, mask.h, value))
+
+    def cumsum(self, dim: int) -> Tensor:
+        return Tensor(torchc_cumsum(self.h, dim))
+
+    def norm_p(self, p: float) -> float:
+        """F.norm / torch.norm 的 p 范数（展平，标量返回）。"""
+        return torchc_norm_p(self.h, p)
 
     # ---------- 形状 ----------
     def reshape(self, shape: list) -> Tensor:
@@ -873,6 +921,170 @@ class CrossEntropyLoss:
         return Tensor(torchc_cross_entropy(logits.h, target.values()))
 
 
+# ============================== v10：Transformer / 分类链路 ==============================
+
+class GELU(Module):
+    """对标 nn.GELU()：默认 erf 精确版；approx=1 走 tanh 近似（approximate="tanh"）。"""
+
+    approx: int
+
+    def __init__(self):
+        super().__init__()
+        self.tag = "gelu"
+        self.approx = 0
+
+    def forward(self, x: Tensor) -> Tensor:
+        if self.approx == 1:
+            return x.gelu_approx()
+        return x.gelu()
+
+
+class LeakyReLU(Module):
+    """对标 nn.LeakyReLU(negative_slope=0.01)。"""
+
+    slope: float
+
+    def __init__(self, slope: float = 0.01):
+        super().__init__()
+        self.tag = "leaky_relu"
+        self.slope = slope
+
+    def forward(self, x: Tensor) -> Tensor:
+        return x.leaky_relu(self.slope)
+
+
+class Softmax(Module):
+    """对标 nn.Softmax(dim)：默认最后一维。"""
+
+    dim: int
+
+    def __init__(self, dim: int = -1):
+        super().__init__()
+        self.tag = "softmax"
+        self.dim = dim
+
+    def forward(self, x: Tensor) -> Tensor:
+        d: int = self.dim
+        if d < 0:
+            d = x.ndim() + d
+        return x.softmax(d)
+
+
+class LogSoftmax(Module):
+    """对标 nn.LogSoftmax(dim)。"""
+
+    dim: int
+
+    def __init__(self, dim: int = -1):
+        super().__init__()
+        self.tag = "log_softmax"
+        self.dim = dim
+
+    def forward(self, x: Tensor) -> Tensor:
+        d: int = self.dim
+        if d < 0:
+            d = x.ndim() + d
+        return x.log_softmax(d)
+
+
+class LayerNorm(Module):
+    """对标 nn.LayerNorm(normalized_shape, eps, elementwise_affine=True)。
+
+    只支持「归一化最后 1 维」（Transformer 的 d_model 场景）；w/b 各 (n,)，
+    构造时照 torch 初始化：weight=1、bias=0。
+    """
+
+    n: int
+    eps: float
+    w: Tensor
+    b: Tensor
+
+    def __init__(self, n: int, eps: float = 1e-5):
+        super().__init__()
+        self.tag = "layernorm"
+        self.n = n
+        self.eps = eps
+        self.w = ones([n]).requires_grad_(1)
+        self.b = zeros([n]).requires_grad_(1)
+
+    def load(self, w_csv: str, b_csv: str) -> None:
+        """灌 weight / bias（各 (n,) 一条 CSV，形状由 self.n 决定）。"""
+        nstr: str = _csv_int([self.n])
+        self.w = tensor_from_csv(w_csv, nstr).requires_grad_(1)
+        self.b = tensor_from_csv(b_csv, nstr).requires_grad_(1)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return Tensor(torchc_layer_norm(x.h, self.w.h, self.b.h, 1, self.eps))
+
+    def parameters(self) -> list:
+        out: list = []
+        out.append(self.w)
+        out.append(self.b)
+        return out
+
+    def zero_grad(self) -> None:
+        self.w.zero_grad()
+        self.b.zero_grad()
+
+    def param_at(self, i: int) -> Tensor:
+        ps: list = self.parameters()
+        return ps[i]
+
+    def state_names(self) -> list:
+        out: list = []
+        out.append("weight")
+        out.append("bias")
+        return out
+
+    def state_list(self) -> list:
+        out: list = []
+        out.append(self.w)
+        out.append(self.b)
+        return out
+
+    def state_dict(self) -> dict:
+        return names_index(self.state_names())
+
+    def param(self, name: str) -> Tensor:
+        ps: list = self.state_list()
+        d: dict = self.state_dict()
+        idx: int = int(d[name])
+        return ps[idx]
+
+    def save(self, path: str) -> int:
+        return save_params(self.state_list(), path)
+
+    def load_ckpt(self, path: str) -> int:
+        return load_params(self.state_list(), path)
+
+
+class NLLLoss:
+    """对标 nn.NLLLoss()：吃 log-prob，均值归约；target 是类别下标列表。"""
+
+    tag: str
+
+    def __init__(self):
+        self.tag = "nll_loss"
+
+    def forward(self, logp: Tensor, target: list) -> Tensor:
+        return Tensor(torchc_nll_loss(logp.h, _csv_int(target)))
+
+    def forward_t(self, logp: Tensor, target: Tensor) -> Tensor:
+        return Tensor(torchc_nll_loss(logp.h, target.values()))
+
+
+class BCEWithLogitsLoss:
+    """对标 nn.BCEWithLogitsLoss()：sigmoid + BCE，均值归约（数值稳定走 ATen）。"""
+
+    tag: str
+
+    def __init__(self):
+        self.tag = "bce_with_logits"
+
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
+        return Tensor(torchc_bce_with_logits(pred.h, target.h))
+
+
 class Embedding(Module):
     """对标 nn.Embedding(num, dim)：forward(下标列表) = weight[index_select(0)]。"""
 
@@ -925,10 +1137,15 @@ class Sequential(Module):
     avgs: list
     bns: list
     drops: list
+    lrels: list
+    softs: list
+    logsofts: list
+    lns: list
     relu_m: ReLU
     sig_m: Sigmoid
     tanh_m: Tanh
     flat_m: Flatten
+    gelu_m: GELU
 
     def __init__(self):
         super().__init__()
@@ -941,10 +1158,15 @@ class Sequential(Module):
         self.avgs = []
         self.bns = []
         self.drops = []
+        self.lrels = []
+        self.softs = []
+        self.logsofts = []
+        self.lns = []
         self.relu_m = ReLU()
         self.sig_m = Sigmoid()
         self.tanh_m = Tanh()
         self.flat_m = Flatten()
+        self.gelu_m = GELU()
 
     def push(self, kind: str, idx: int) -> None:
         self.kinds.append(kind)
@@ -986,6 +1208,27 @@ class Sequential(Module):
     def add_flatten(self) -> None:
         self.push("flatten", 0)
 
+    # ---- v10 ----
+
+    def add_gelu(self) -> None:
+        self.push("gelu", 0)
+
+    def add_leaky(self, m: LeakyReLU) -> None:
+        self.lrels.append(m)
+        self.push("leaky", len(self.lrels) - 1)
+
+    def add_softmax(self, m: Softmax) -> None:
+        self.softs.append(m)
+        self.push("softmax", len(self.softs) - 1)
+
+    def add_logsoftmax(self, m: LogSoftmax) -> None:
+        self.logsofts.append(m)
+        self.push("logsoftmax", len(self.logsofts) - 1)
+
+    def add_layernorm(self, m: LayerNorm) -> None:
+        self.lns.append(m)
+        self.push("layernorm", len(self.lns) - 1)
+
     def param_at(self, i: int) -> Tensor:
         """按序号取参数并标注回 Tensor：`ps[0].sum()` 不行（list 元素是 any）。"""
         ps: list = self.parameters()
@@ -1017,6 +1260,13 @@ class Sequential(Module):
                 while q < len(ns):
                     out.append(pre + "." + ns[q])
                     q += 1
+            if k == "layernorm":
+                ln: LayerNorm = self.lns[j]
+                lns: list = ln.state_names()
+                q = 0
+                while q < len(lns):
+                    out.append(pre + "." + lns[q])
+                    q += 1
             i += 1
         return out
 
@@ -1047,6 +1297,13 @@ class Sequential(Module):
                 q = 0
                 while q < len(qs):
                     out.append(qs[q])
+                    q += 1
+            if k == "layernorm":
+                ln: LayerNorm = self.lns[j]
+                ls: list = ln.state_list()
+                q = 0
+                while q < len(ls):
+                    out.append(ls[q])
                     q += 1
             i += 1
         return out
@@ -1105,6 +1362,20 @@ class Sequential(Module):
                 y = self.tanh_m.forward(y)
             if k == "flatten":
                 y = self.flat_m.forward(y)
+            if k == "gelu":
+                y = self.gelu_m.forward(y)
+            if k == "leaky":
+                lr: LeakyReLU = self.lrels[j]
+                y = lr.forward(y)
+            if k == "softmax":
+                sm: Softmax = self.softs[j]
+                y = sm.forward(y)
+            if k == "logsoftmax":
+                ls2: LogSoftmax = self.logsofts[j]
+                y = ls2.forward(y)
+            if k == "layernorm":
+                ln2: LayerNorm = self.lns[j]
+                y = ln2.forward(y)
             i += 1
         return y
 
@@ -1135,6 +1406,15 @@ class Sequential(Module):
             j = 0
             while j < len(qs):
                 out.append(qs[j])
+                j += 1
+            i += 1
+        i = 0
+        while i < len(self.lns):
+            ln: LayerNorm = self.lns[i]
+            ls: list = ln.parameters()
+            j = 0
+            while j < len(ls):
+                out.append(ls[j])
                 j += 1
             i += 1
         return out

@@ -1068,4 +1068,111 @@ torchc_tensor torchc_lstm(torchc_tensor x, torchc_tensor wih, torchc_tensor whh,
   TORCHC_GUARD_END("lstm")
 }
 
+/* ================= v10：Transformer / 分类链路必备面 ================= */
+
+torchc_tensor torchc_clamp(torchc_tensor a, double lo, double hi) {
+  clear_error(); TORCHC_NEED(a, "clamp")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::clamp(*unwrap(a), lo, hi));
+  TORCHC_GUARD_END("clamp")
+}
+
+torchc_tensor torchc_log_softmax(torchc_tensor a, long dim) {
+  clear_error(); TORCHC_NEED(a, "log_softmax")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::log_softmax(*unwrap(a), static_cast<int64_t>(dim)));
+  TORCHC_GUARD_END("log_softmax")
+}
+
+/* torch.nn.functional.gelu 默认 approximate='none'：x*0.5*(1+erf(x/sqrt(2))) */
+torchc_tensor torchc_gelu(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "gelu")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::gelu(*unwrap(a)));
+  TORCHC_GUARD_END("gelu")
+}
+
+/* approximate="tanh"：0.5*x*(1+tanh(sqrt(2/pi)*(x+0.044715x^3))) */
+torchc_tensor torchc_gelu_approx(torchc_tensor a) {
+  clear_error(); TORCHC_NEED(a, "gelu_approx")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::gelu(*unwrap(a), "tanh"));
+  TORCHC_GUARD_END("gelu_approx")
+}
+
+torchc_tensor torchc_leaky_relu(torchc_tensor a, double slope) {
+  clear_error(); TORCHC_NEED(a, "leaky_relu")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::leaky_relu(*unwrap(a), slope));
+  TORCHC_GUARD_END("leaky_relu")
+}
+
+/* mask 为同形状 0/1 张量，内部 to(kBool)（与 torch 的 .bool() 同一规则） */
+torchc_tensor torchc_masked_fill(torchc_tensor a, torchc_tensor mask, double value) {
+  clear_error(); TORCHC_NEED(a, "masked_fill"); TORCHC_NEED(mask, "masked_fill")
+  TORCHC_GUARD_BEGIN
+    return wrap(unwrap(a)->masked_fill(unwrap(mask)->to(at::kBool), value));
+  TORCHC_GUARD_END("masked_fill")
+}
+
+torchc_tensor torchc_cumsum(torchc_tensor a, long dim) {
+  clear_error(); TORCHC_NEED(a, "cumsum")
+  TORCHC_GUARD_BEGIN
+    return wrap(at::cumsum(*unwrap(a), static_cast<int64_t>(dim)));
+  TORCHC_GUARD_END("cumsum")
+}
+
+double torchc_norm_p(torchc_tensor a, double p) {
+  clear_error(); TORCHC_NEED_LONG(a, "norm_p")
+  TORCHC_GUARD_BEGIN
+    return at::norm(*unwrap(a), p).item<double>();
+  TORCHC_GUARD_END_DOUBLE("norm_p")
+}
+
+/* layer_norm：normalized_shape = x 末尾 nnorm 维；w/b 可为 NULL（对应 elementwise_affine=False）*/
+torchc_tensor torchc_layer_norm(torchc_tensor x, torchc_tensor w, torchc_tensor b,
+                                long nnorm, double eps) {
+  clear_error(); TORCHC_NEED(x, "layer_norm")
+  TORCHC_GUARD_BEGIN
+    auto t = *unwrap(x);
+    int64_t nd = static_cast<int64_t>(t.dim());
+    if (nnorm <= 0 || nnorm > nd) {
+      set_error("layer_norm: nnorm 超出秩（" + std::to_string(nnorm) + " vs " + std::to_string(nd) + "）");
+      return nullptr;
+    }
+    std::vector<int64_t> nshape;
+    for (int64_t i = nd - nnorm; i < nd; ++i) nshape.push_back(t.size(i));
+    c10::optional<at::Tensor> ww, bb;
+    if (w != nullptr) ww = *unwrap(w);
+    if (b != nullptr) bb = *unwrap(b);
+    return wrap(at::layer_norm(t, nshape, ww, bb, eps));
+  TORCHC_GUARD_END("layer_norm")
+}
+
+/* nll_loss(mean) = -log_softmax(x,1).gather(1,target).mean() */
+torchc_tensor torchc_nll_loss(torchc_tensor logits, const char *target_csv) {
+  clear_error(); TORCHC_NEED(logits, "nll_loss")
+  TORCHC_GUARD_BEGIN
+    std::vector<double> vals;
+    if (!parse_values(target_csv, vals)) return nullptr;
+    std::vector<int64_t> idx;
+    idx.reserve(vals.size());
+    for (double v : vals) idx.push_back(static_cast<int64_t>(v));
+    auto l = unwrap(logits)->to(at::kDouble);
+    auto tgt = at::from_blob(idx.data(), {static_cast<int64_t>(idx.size())},
+                             at::TensorOptions().dtype(at::kLong)).clone();
+    return wrap(at::nll_loss(at::log_softmax(l, 1), tgt, {}, at::Reduction::Mean));
+  TORCHC_GUARD_END("nll_loss")
+}
+
+torchc_tensor torchc_bce_with_logits(torchc_tensor pred, torchc_tensor target) {
+  clear_error(); TORCHC_NEED(pred, "bce_with_logits")
+  if (target == nullptr) { set_error("bce_with_logits: 空目标句柄"); return nullptr; }
+  TORCHC_GUARD_BEGIN
+    return wrap(at::binary_cross_entropy_with_logits(
+        unwrap(pred)->to(at::kDouble), unwrap(target)->to(at::kDouble),
+        {}, {}, at::Reduction::Mean));
+  TORCHC_GUARD_END("bce_with_logits")
+}
+
 }  // extern "C"

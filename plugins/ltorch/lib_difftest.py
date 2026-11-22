@@ -452,6 +452,63 @@ def main():
     print("cnn9_convw=" + str(sq9.param_by("0.weight").numel()))
     print("cnn9_linw=" + str(sq9.param_by("4.weight").numel()))
 
+    # ================= v10：Transformer / 分类必需面 =================
+    # （a）Tensor 方法层：chunk 与 F.* 逐值比
+    x10: Tensor = tensor_from_csv({X10}, {SX10})
+    print("t10_clamp=" + x10.clamp(-0.75, 1.25).values())
+    print("t10_logsoftmax=" + x10.log_softmax(1).values())
+    print("t10_gelu=" + x10.gelu().values())
+    print("t10_gelu_ap=" + x10.gelu_approx().values())
+    print("t10_leaky=" + x10.leaky_relu(0.13).values())
+    print("t10_cumsum0=" + x10.cumsum(0).values())
+    print("t10_cumsum1=" + x10.cumsum(1).values())
+    print("t10_norm1=" + str(x10.norm_p(1.0)))
+    print("t10_norm2=" + str(x10.norm_p(2.0)))
+    print("t10_norm3=" + str(x10.norm_p(3.0)))
+    mk10: Tensor = tensor_from_csv({MK10}, {SMK10})
+    print("t10_masked=" + x10.masked_fill(mk10, -1000.0).values())
+    # （b）nn 类单层前向
+    ge10: GELU = GELU()
+    print("n10_gelu=" + ge10.forward(x10).values())
+    ga10: GELU = GELU()
+    ga10.approx = 1
+    print("n10_gelu_ap=" + ga10.forward(x10).values())
+    lr10: LeakyReLU = LeakyReLU(0.13)
+    print("n10_leaky=" + lr10.forward(x10).values())
+    sm10: Softmax = Softmax(-1)
+    print("n10_softmax=" + sm10.forward(x10).values())
+    ls10: LogSoftmax = LogSoftmax(1)
+    print("n10_logsoft=" + ls10.forward(x10).values())
+    ln10: LayerNorm = LayerNorm(4, 1e-05)
+    ln10.load({LN10W}, {LN10B})
+    print("n10_ln=" + ln10.forward(x10).values())
+    print("n10_ln_nparams=" + str(len(ln10.parameters())))
+    # （c）损失
+    nl10: NLLLoss = NLLLoss()
+    lgt10: Tensor = tensor_from_csv({LG}, {SLG})
+    print("n10_nll=" + str(nl10.forward(lgt10, {TG}).item()))
+    bc10: BCEWithLogitsLoss = BCEWithLogitsLoss()
+    bp10: Tensor = tensor_from_csv({BP10}, {SBP10})
+    bt10: Tensor = tensor_from_csv({BT10}, {SBT10})
+    print("n10_bce=" + str(bc10.forward(bp10, bt10).item()))
+    # （d）Sequential 里的 Linear→LayerNorm→GELU→Linear（键面照 torch 编号，前向逐值）
+    l10a: Linear = Linear(4, 3, 0)
+    l10a.load({W10A}, {S10A}, {B10A}, {SB10A})
+    l10b: Linear = Linear(3, 2, 0)
+    l10b.load({W10B}, {S10B}, {B10B}, {SB10B})
+    ln10b: LayerNorm = LayerNorm(3, 1e-05)
+    ln10b.load({LN10WB}, {LN10BB})
+    sq10: Sequential = Sequential()
+    sq10.add_linear(l10a)
+    sq10.add_layernorm(ln10b)
+    sq10.add_gelu()
+    sq10.add_linear(l10b)
+    print("sq10_keys=" + join8(sq10.state_names()))
+    print("sq10_nkeys=" + str(len(sq10.state_dict())))
+    print("sq10_nparams=" + str(len(sq10.parameters())))
+    print("sq10_y=" + sq10.forward(x10).values())
+    print("sq10_lnw=" + str(sq10.param_by("1.weight").numel()))
+
     print("ok")
 
 
@@ -560,6 +617,20 @@ def main():
     lb_hh = torch.randn(4 * lH, generator=g2, dtype=torch.float64) * 0.2
     lx = torch.randn(lS, lB, lI, generator=g2, dtype=torch.float64)
 
+    # ---- v10：Transformer / 分类必需面（3x4 输入，mask/权重全灌进去）----
+    x10_v = [0.5, -1.5, 2.0, 3.5, -0.25, 0.75, -2.5, 1.0, 4.0, -3.0, 0.5, 0.25]
+    mk10_v = [0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0]
+    ln10_w = [1.2, 0.8, -1.1, 0.6]
+    ln10_b = [0.1, -0.2, 0.05, 0.0]
+    bp10_v = [2.0, -1.5, 0.25]
+    bt10_v = [1.0, 0.0, 1.0]
+    w10a = torch.randn(3, 4, generator=g2, dtype=torch.float64) * 0.5
+    b10a = [0.1, -0.05, 0.2]
+    w10b = torch.randn(2, 3, generator=g2, dtype=torch.float64) * 0.5
+    b10b = [0.05, -0.1]
+    ln10_wb = [1.1, 0.9, 1.3]
+    ln10_bb = [0.0, 0.1, -0.05]
+
     spath = os.path.join(WORK, "saved_param.bin")
     if os.path.exists(spath):
         os.remove(spath)
@@ -590,6 +661,13 @@ def main():
         "X8": csv(xbt_v), "SX8": "4,3",
         # v9
         "W9": csv(flat(w9)), "S9": "3,8", "B9": csv(b9), "SB9": "1,3",
+        # v10
+        "X10": csv(x10_v), "SX10": "3,4", "MK10": csv(mk10_v), "SMK10": "3,4",
+        "LN10W": csv(ln10_w), "LN10B": csv(ln10_b),
+        "BP10": csv(bp10_v), "SBP10": "3,1", "BT10": csv(bt10_v), "SBT10": "3,1",
+        "W10A": csv(flat(w10a)), "S10A": "3,4", "B10A": csv(b10a), "SB10A": "1,3",
+        "W10B": csv(flat(w10b)), "S10B": "2,3", "B10B": csv(b10b), "SB10B": "1,2",
+        "LN10WB": csv(ln10_wb), "LN10BB": csv(ln10_bb),
     }
     ours = run_elf(pairs, verbose)
 
@@ -885,6 +963,56 @@ def main():
     ref["cnn9_y"] = flat(_m9(T(xp, (1, 1, 4, 4))))
     ref["cnn9_convw"] = [float(_c9.weight.numel())]
     ref["cnn9_linw"] = [float(_l9.weight.numel())]
+
+    # ---------------- v10：Transformer / 分类必需面 ----------------
+    _x10 = T(x10_v, (3, 4))
+    ref["t10_clamp"] = flat(torch.clamp(_x10, -0.75, 1.25))
+    ref["t10_logsoftmax"] = flat(F.log_softmax(_x10, dim=1))
+    ref["t10_gelu"] = flat(F.gelu(_x10))
+    ref["t10_gelu_ap"] = flat(F.gelu(_x10, approximate="tanh"))
+    ref["t10_leaky"] = flat(F.leaky_relu(_x10, 0.13))
+    ref["t10_cumsum0"] = flat(torch.cumsum(_x10, 0))
+    ref["t10_cumsum1"] = flat(torch.cumsum(_x10, 1))
+    ref["t10_norm1"] = [float(torch.norm(_x10, 1.0))]
+    ref["t10_norm2"] = [float(torch.norm(_x10, 2.0))]
+    ref["t10_norm3"] = [float(torch.norm(_x10, 3.0))]
+    _mk10 = torch.tensor(mk10_v, dtype=torch.float64).reshape(3, 4) > 0.5
+    ref["t10_masked"] = flat(_x10.masked_fill(_mk10, -1000.0))
+    ref["n10_gelu"] = flat(torch.nn.GELU()(_x10))
+    ref["n10_gelu_ap"] = flat(torch.nn.GELU(approximate="tanh")(_x10))
+    ref["n10_leaky"] = flat(torch.nn.LeakyReLU(0.13)(_x10))
+    ref["n10_softmax"] = flat(torch.nn.Softmax(dim=-1)(_x10))
+    ref["n10_logsoft"] = flat(torch.nn.LogSoftmax(dim=1)(_x10))
+    _ln10 = torch.nn.LayerNorm(4, 1e-05, dtype=torch.float64)
+    with torch.no_grad():
+        _ln10.weight.copy_(T(ln10_w, (4,)))
+        _ln10.bias.copy_(T(ln10_b, (4,)))
+    ref["n10_ln"] = flat(_ln10(_x10))
+    ref["n10_ln_nparams"] = [2.0]
+    _nl10 = torch.nn.NLLLoss()
+    ref["n10_nll"] = [float(_nl10(torch.log_softmax(T(lg, (3, 3)), dim=1),
+                                 torch.tensor(ce_t)))]
+    ref["n10_bce"] = [float(torch.nn.BCEWithLogitsLoss()(T(bp10_v, (3, 1)),
+                                                         T(bt10_v, (3, 1))))]
+    _l10a = torch.nn.Linear(4, 3, dtype=torch.float64)
+    with torch.no_grad():
+        _l10a.weight.copy_(w10a)
+        _l10a.bias.copy_(T(b10a, (3,)))
+    _l10b = torch.nn.Linear(3, 2, dtype=torch.float64)
+    with torch.no_grad():
+        _l10b.weight.copy_(w10b)
+        _l10b.bias.copy_(T(b10b, (2,)))
+    _ln10b = torch.nn.LayerNorm(3, 1e-05, dtype=torch.float64)
+    with torch.no_grad():
+        _ln10b.weight.copy_(T(ln10_wb, (3,)))
+        _ln10b.bias.copy_(T(ln10_bb, (3,)))
+    _sq10 = torch.nn.Sequential(_l10a, _ln10b, torch.nn.GELU(), _l10b)
+    _k10 = list(_sq10.state_dict().keys())
+    ref["sq10_keys"] = ",".join(_k10)
+    ref["sq10_nkeys"] = [float(len(_k10))]
+    ref["sq10_nparams"] = [float(len(_k10))]
+    ref["sq10_y"] = flat(_sq10(_x10))
+    ref["sq10_lnw"] = [float(_ln10b.weight.numel())]
 
     # ---------------- 比对 ----------------
     bad = 0

@@ -109,6 +109,21 @@ def side_expect():
     put("bn_running_var", bn2_va)
     put("cross_entropy", torch.nn.functional.cross_entropy(logits, tgt))
     put("l1_loss", torch.nn.functional.l1_loss(x, y))
+    # ---- v10：Transformer / 分类链路 ----
+    put("clamp", x.clamp(-1.0, 1.5))
+    put("log_softmax", logits.log_softmax(1))
+    put("gelu", torch.nn.functional.gelu(x))
+    put("gelu_approx", torch.nn.functional.gelu(x, approximate="tanh"))
+    put("leaky_relu", torch.nn.functional.leaky_relu(x, 0.1))
+    put("masked_fill", x.masked_fill(x < 1.0, -9.0))
+    put("cumsum1", x.cumsum(1))
+    out["norm_p2"] = {"vals": [float(x.norm(2.0))], "shape": []}
+    ln_x = tn([[1.0, 2.0, 3.0], [4.0, -1.0, 0.5]])
+    put("layer_norm", torch.nn.functional.layer_norm(
+        ln_x, (3,), tn([1.5, 0.5, -1.0]), tn([0.1, -0.2, 0.3]), 1e-5))
+    put("nll_loss", torch.nn.functional.nll_loss(logits.log_softmax(1), tgt))
+    put("bce_with_logits", torch.nn.functional.binary_cross_entropy_with_logits(
+        x, x.sigmoid()))
     out["dtype_x"] = {"vals": [0.0], "shape": [], "text": "torch.float64"}
     return out
 
@@ -158,6 +173,17 @@ class Cap:
                                             ctypes.c_double, ctypes.c_long]),
             ("torchc_cross_entropy", P, [P, ctypes.c_char_p]),
             ("torchc_l1_loss", P, [P, P]),
+            ("torchc_clamp", P, [P, ctypes.c_double, ctypes.c_double]),
+            ("torchc_log_softmax", P, [P, ctypes.c_long]),
+            ("torchc_gelu", P, [P]),
+            ("torchc_gelu_approx", P, [P]),
+            ("torchc_leaky_relu", P, [P, ctypes.c_double]),
+            ("torchc_masked_fill", P, [P, P, ctypes.c_double]),
+            ("torchc_cumsum", P, [P, ctypes.c_long]),
+            ("torchc_norm_p", ctypes.c_double, [P, ctypes.c_double]),
+            ("torchc_layer_norm", P, [P, P, P, ctypes.c_long, ctypes.c_double]),
+            ("torchc_nll_loss", P, [P, ctypes.c_char_p]),
+            ("torchc_bce_with_logits", P, [P, P]),
             ("torchc_dropout", P, [P, ctypes.c_double, ctypes.c_long, ctypes.c_long]),
             ("torchc_sgd_step_momentum", ctypes.c_long,
              [P, P, P, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_long]),
@@ -271,6 +297,24 @@ def side_actual():
     c.put(out, "bn_running_var", bn2_va)
     c.put(out, "cross_entropy", L.torchc_cross_entropy(logits, b"0,2,1"))
     c.put(out, "l1_loss", L.torchc_l1_loss(x, y))
+    # ---- v10 ----
+    c.put(out, "clamp", L.torchc_clamp(x, -1.0, 1.5))
+    c.put(out, "log_softmax", L.torchc_log_softmax(logits, 1))
+    c.put(out, "gelu", L.torchc_gelu(x))
+    c.put(out, "gelu_approx", L.torchc_gelu_approx(x))
+    c.put(out, "leaky_relu", L.torchc_leaky_relu(x, 0.1))
+    mask = c.t([[0.0, 1.0], [0.0, 1.0]], "2,2")
+    c.put(out, "masked_fill", L.torchc_masked_fill(x, mask, -9.0))
+    c.put(out, "cumsum1", L.torchc_cumsum(x, 1))
+    out["norm_p2"] = {"vals": [L.torchc_norm_p(x, 2.0)], "shape": []}
+    ln_x = c.t([[1.0, 2.0, 3.0], [4.0, -1.0, 0.5]], "2,3")
+    ln_w = c.t([1.5, 0.5, -1.0], "3")
+    ln_b = c.t([0.1, -0.2, 0.3], "3")
+    c.put(out, "layer_norm", L.torchc_layer_norm(ln_x, ln_w, ln_b, 1, 1e-5))
+    c.put(out, "nll_loss", L.torchc_nll_loss(logits, b"0,2,1"))
+    sig_t = c.t([[0.7310585786300049, 0.11920292202211755],
+                 [0.9525741268224334, 0.01798620996209156]], "2,2")
+    c.put(out, "bce_with_logits", L.torchc_bce_with_logits(x, sig_t))
     out["dtype_x"] = {"vals": [0.0], "shape": [], "text": L.torchc_dtype(x).decode()}
 
     # 优化器：单步结果

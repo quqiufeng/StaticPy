@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **150/150** |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **175/175** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -315,6 +315,15 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   与 `torch.nn.Sequential` 逐键一致，前向也逐值一致（v9 6 项）。
   **坑**：`parameters()` 的次序是「Linear → Conv → BN」（历史包袱），和 `state_dict` 的键序**不同**，
   所以按下标取参数请用 `param_by("0.weight")`，别拿 `param_at(0)` 猜（它给的是第一个 Linear）。
+- **v10（Transformer / 分类必需面）**：`Tensor` 补齐 `clamp / log_softmax / gelu / gelu_approx /
+  leaky_relu / masked_fill / cumsum / norm_p`（`gelu_approx` = tanh 近似，对标 `approximate='tanh'`），
+  `nn` 新增 `GELU` / `LeakyReLU` / `Softmax` / `LogSoftmax` / `LayerNorm` / `NLLLoss` / `BCEWithLogitsLoss`，
+  全部落 ATen（`at::clamp` 双界、`at::log_softmax`、`at::gelu`+`GeluMode::Tanh`、`at::nll_loss`、
+  `at::binary_cross_entropy_with_logits` 传 `{}` pos_weight + `at::Reduction::Mean`），逐位对拍 25 项。
+  `Sequential` 派发表再扩 `softs / logsofts / lns / lrels`（`add_softmax/add_logsoftmax/add_layer_norm/add_leaky_relu`），
+  `LayerNorm` 的 `w/b` 按 torch 口径初始化（ones/zeros）+ `state_names()` 给 `weight/bias`。
+  **坑**：`F.gelu`/`F.leaky_relu` 在 torch 里是函数、不是 Tensor 方法，`capi_difftest` 侧照抄函数形态；
+  `norm_p` 是 `at::norm(p)` 的 p-范数（不是 `linalg.vector_norm`），p=1/2/3 都对得上。
 - **`BatchNorm1d` 训练态**：`torchc_batch_norm_train(x, running_mean, running_var, gamma, beta,
   eps, momentum, training)` —— 落 `at::batch_norm`，训练时用 batch 统计归一化并**原地更新**
   running mean/var（`(1-m)*running + m*batch`，方差无偏），与 `F.batch_norm(..., training=True)`
@@ -331,6 +340,16 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   数据是 8×8 单通道、**三类按「亮在哪半张」区分且样本均衡**（类别不均衡时模型会退化成猜多数类，
   看起来 accuracy 很高其实没学到东西——模板里那个 `acc_wiped` 检查就是防这个）。
   实跑：`acc0 0.31 → acc1 1.0`，把 `0.weight` 清零后 `acc_wiped 0.33`（= 随机猜），`load_ckpt` 后回到 1.0。
+- **Transformer 类训练模板** `plugins/ltorch/train_attn.static.py`：
+  `Embedding → LayerNorm → QKV(Linear) → scaled dot-product + causal mask → softmax → 残差 →
+  LayerNorm → FFN(GELU) → 残差 → mean-pool → Linear → CrossEntropyLoss`，AdamW + 120 步。
+  实跑：`loss 1.65 → 2.5e-4`、`acc 0.125 → 1.0`；`save 21` / 清零后 `acc_wiped 0.33` / `load 21` → `1.0`。
+  **坑（都踩过）**：
+  1) 建模型的类里挂 `self.head` 这类子层，`__init__` 里的循环不能做需要类型标注的运算（挪到普通方法）；
+  2) 因果掩码用 `tensor_from_csv` 灌（ATen 侧没有 `triu`），拼 CSV 时分隔符只能**加一次**
+      ——`if i > 0: out += ","` 与 `if j > 0: out += ","` 并列会写出双逗号，元素数对不上；
+  3) `ps[i].zero_grad()` 这种**下标直调方法**会丢静态类型（段错误），必须 `t: Tensor = ps[i]` 再 `t.zero_grad()`；
+  4) `save_params` 不建目录，先 `os_mkdir("<dir>")`，否则 `save=0`、`load=0` 静默不报错。
 - **踩过的坑（写训练代码会撞到）**：默认实参不写齐会段错误（`Adam(ps, lr=…)` 必须给全默认值）；
   `CrossEntropyLoss` 收 `list` target，Tensor target 走 `forward_t`；`Sequential` 用**显式派发表**
   （静态语言无动态分派）；`__init__` 体内不建类型环境，需要局部类型标注的循环挪到普通方法。
@@ -351,10 +370,12 @@ bash plugins/ltorch/build_app.sh my_train.static.py my_train && ./my_train
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_template.static.py train_template && ./dist/train_template
 # 现成模板 2（CNN：Conv2d + MaxPool2d + Flatten + SGD + 均衡三类 + 存盘续训）：
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_cnn.static.py train_cnn && ./dist/train_cnn
+# 现成模板 3（Transformer：Embedding + LayerNorm + 因果自注意力 + GELU FFN + AdamW + 存盘续训）：
+bash plugins/ltorch/build_app.sh plugins/ltorch/train_attn.static.py train_attn && ./dist/train_attn
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
-python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：150/150（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6）
-python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 106 条全验证、显式缺口 0（合计 6.0%）
-python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：40/40（容差 1e-10）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：175/175（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6 + v10 Transformer/分类 25）
+python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 124 条全验证、显式缺口 0（合计 7.0%）
+python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：51/51（容差 1e-10）
 ```
 
 - **两侧必须分进程**：pip 的 torch 与 `/opt/libtorch` 的 `c10` 符号互不兼容，
