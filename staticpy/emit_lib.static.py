@@ -4004,7 +4004,6 @@ def emit_perfmap(names) -> str:
     head = head + "\n                (fprintf port \"~x ~x ~a~n\" start size (cdr cur))"
     head = head + "\n                (loop rest start)))))"
     head = head + "\n    (close-port port)))"
-    head = head + "\n(static__perfmap-emit)"
     return head
 
 def emit_module(tree, src: str, lib_mode: int) -> str:
@@ -4056,12 +4055,18 @@ def emit_module(tree, src: str, lib_mode: int) -> str:
             out = py_list_append(out, "\n" + top_level_reject(
                 s, "unsupported top-level " + t))
         i = i + 1
+    if pm == "1":
+        # 发布两次：`(static_main)` 之前先发一次，让 **live 采样**（trace oncpu）也看得见名字；
+        # 跑完再发一次覆盖，把「首调后重编译/内联」导致的地址漂移与大函数码长修正过来。
+        # 旧实现只在最后发，map 要到进程退出前才落盘，边采边符号化的 profiler 全程只见 [anon]；
+        # 实测（1550 个顶层的纯 Chez 产物）早期发布 1550/1550 条已指向可执行段，
+        # 与晚期发布地址一致率 99.6%（漂移的都是"自报时还没跑过"的那几个）。
+        out = py_list_append(out, emit_perfmap(fnames))
+        out = py_list_append(out, "\n(static__perfmap-emit)")
     if lib_mode == 1:
         out = py_list_append(out, "\n\n;; Library mode: no (static_main) entry point")
     else:
         out = py_list_append(out, "\n\n;; Entry point\n(static_main)")
     if pm == "1":
-        # 自报必须放在 (static_main) 之后：函数被真正执行/装载前，其首字指向堆而非代码段，
-        # 早写会让绝大多数条目落进 rw-p（perfprobe 是跑完再统一归因，晚写不影响采样）。
-        out = py_list_append(out, emit_perfmap(fnames))
+        out = py_list_append(out, "\n(static__perfmap-emit)")
     return str_join(out, "")

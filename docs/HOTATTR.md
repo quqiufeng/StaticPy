@@ -101,6 +101,10 @@ STATICPY_PERFMAP=1 ./dist/translator app.static.py > ~/iso_gen/app.code.scm
 bash staticpy/static_build_comfycli.sh ~/iso_gen/app.code.scm app   # 构建期门禁
 ```
 
+注意开关**只在自举链路**（`staticpy/emit_lib.static.py`）里：`static_build_comfycli.sh`
+默认调的是 CPython 种子 `static_translate.py`，它没有 `STATICPY_PERFMAP` 开关。
+所以 perfmap 产物必须走上面这条「先生成 IR、再当 `.scm` 编」的两步。
+
 原理只有一条：Chez 的 `(environment-symbols (interaction-environment))` 在 AOT 产物里
 **能枚举到全部顶层命名空间**（程序自己的 + 内联的 prelude），`top-level-value` 对未绑定名
 抛普通条件（`guard` 兜得住），`(object->reference-address p)` 掩掉低 3 位就是 code entry。
@@ -111,9 +115,17 @@ bash staticpy/static_build_comfycli.sh ~/iso_gen/app.code.scm app   # 构建期�
 
 ```scheme
 (load "chez-perfmap.scm")
+(chez-perfmap-publish!)     ; ① 起手先发一次：live 采样（边采边符号化）才看得见名字
 ...  (main) ...
-(chez-perfmap-publish!)     ; 必须放在最后：函数跑过一轮，首字才指向代码段
+(chez-perfmap-publish!)     ; ② 跑完再发一次覆盖：修正首调重编译造成的地址漂移
 ```
+
+**为什么要发两次**：map 是 `perf` 的 JIT 接口，边采样边符号化的 profiler（`trace oncpu --sym`）
+在采样那一刻就要读表。只在末尾发，等于整个运行期都读不到 → 全程 `[anon]`。
+早发的风险是「过程对象首字还没指向代码段」，实测（1550 个顶层的纯 Chez 产物）
+**1550/1550 条已落在可执行段**，与晚期发布地址一致率 99.6%（漂移的只有"自报时还没跑过"的那几个），
+所以早发是安全的；末尾那一次只是把尺寸/漂移修准。StaticPy 产物实测：t≈50ms 表就落盘，
+`trace oncpu --sym` 直接给出 `static_spin` / `remainder` / `py-mod`（修复前全是 `[anon]`）。
 
 固有上限：只有**顶层过程**有名，lambda/内联展开的代码仍是 `[anon]`（translator 实测
 `[jit]` 25.3% / `[anon]` 45.8%）；行级归因仍走 `STATICPY_PROFILE=source` + `dist/sprof`。
