@@ -7,6 +7,7 @@
 > [docs/LANGUAGE.md](./docs/LANGUAGE.md)（子集/类型/FFI 约定）、[docs/PLUGINS.md](./docs/PLUGINS.md)（插件）、
 > [docs/FFI.md](./docs/FFI.md)（`extern fn` 契约，机器校验）、[docs/LIBS.md](./docs/LIBS.md)（已集成库）、
 > [docs/MIGRATION.md](./docs/MIGRATION.md)（方法论）、[docs/PERF.md](./docs/PERF.md)（基准数字）、
+> [docs/SPEC.md](./docs/SPEC.md)（语义条目 ⇄ 用例索引，机器校验）、
 > [docs/SELFHOST.md](./docs/SELFHOST.md)（自举）、[docs/DEPLOY.md](./docs/DEPLOY.md)（部署）。
 
 > 本项目的定位：**Python 语法 → Scheme IR → AOT 机器码 + 运行时挂 C 库**。

@@ -75,9 +75,9 @@ extern fn img_open(path: str) -> ptr from "imgproc"
 | `"%d-%s" % (a, b)` | `py-str-percent` | CPython 的 %-格式化：右侧**只有 tuple 展开**（`"%s" % [1,2]` → `[1, 2]`）；转换符 `%s %r %d %i %x %X %o %f %F %e %E %g %G %c %%`，标志 `- + 空格 0 #`、宽度、精度；`%(name)s` 取字典键（缺键/右侧非字典→运行期 error）；未知转换符（`%z`）**运行期 error**（不静默算错） |
 
 整数与浮点混算时翻译器插 `exact->inexact`（`(fl* 1.5 4)` 会报 `4 is not a flonum`）。
-每条规则都有对应用例：`tests/semantics/{int_arith,float_arith,aug_assign,cmp_chain,`
-`ternary_flow,truthy_flow,bitops,round_builtin,str_format,str_format_spec,str_percent_misc,`
-`fstring_spec,py_builtins,slice_step}.static.py`，跑 `python3 staticpy/semantics_diff.py`。
+每条规则都在 [SPEC.md](./SPEC.md) 里有编号条目（S-INT / S-STRPCT / S-TRUTHY …），
+条目 ⇄ 用例是**机器校验的双向索引**：`python3 tools/check_spec.py`（`selfcheck.sh [0h/4]`）。
+判定语义对不对只有一条命令：`python3 staticpy/semantics_diff.py`（CPython 输出 vs ELF 逐行比）。
 
 ### class（记录类型 + 静态分派）
 

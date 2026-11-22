@@ -64,6 +64,11 @@ if _ffi_out=$($PY tools/check_ffi.py 2>&1); then echo "  ok（$(tail -1 <<<"$_ff
   echo "  声明违约：$PY tools/check_ffi.py -v"; grep '^  ERR' <<<"$_ffi_out" | head -5; fail=1
 fi
 
+echo ">>> [0h/4] SPEC 条目 ⇄ 用例索引（docs/SPEC.md 双向一致）"
+if _spec_out=$($PY tools/check_spec.py 2>&1); then echo "  ok（$(tail -1 <<<"$_spec_out")）"; else
+  echo "  索引漂移：$PY tools/check_spec.py"; grep '^  - ' <<<"$_spec_out" | head -5; fail=1
+fi
+
 echo ">>> [1/4] 构建 C 库 + 前端（imgproc）"
 bash imgproc/build.sh >/dev/null 2>&1 && echo "  ok" || { echo "  失败"; fail=1; }
 
