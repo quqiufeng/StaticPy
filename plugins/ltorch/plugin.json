@@ -1,0 +1,107 @@
+{
+  "name": "ltorch",
+  "version": "0.1.0",
+  "kind": "ffi",
+  "order": 150,
+  "requires": [
+    "core"
+  ],
+  "libs": {
+    "torchc": "libtorch_capi.so"
+  },
+  "description": "libTorch（PyTorch C++ 前端）最小绑定：ATen 真张量 + autograd，算子不重写、直接走 libtorch 内核",
+  "modules": {
+    "ltorch": {
+      "version": "ltorch-version",
+      "available": "ltorch-available",
+      "last_error": "ltorch-last-error",
+      "tensor": "ltorch-tensor",
+      "zeros": "ltorch-zeros",
+      "ones": "ltorch-ones",
+      "full": "ltorch-full",
+      "randn": "ltorch-randn",
+      "arange": "ltorch-arange",
+      "add": "ltorch-add",
+      "sub": "ltorch-sub",
+      "mul": "ltorch-mul",
+      "div": "ltorch-div",
+      "matmul": "ltorch-matmul",
+      "add_scalar": "ltorch-add-scalar",
+      "mul_scalar": "ltorch-mul-scalar",
+      "relu": "ltorch-relu",
+      "sigmoid": "ltorch-sigmoid",
+      "tanh": "ltorch-tanh",
+      "softmax": "ltorch-softmax",
+      "sum": "ltorch-sum",
+      "mean": "ltorch-mean",
+      "sum_dim": "ltorch-sum-dim",
+      "reshape": "ltorch-reshape",
+      "transpose": "ltorch-transpose",
+      "clone": "ltorch-clone",
+      "detach": "ltorch-detach",
+      "numel": "ltorch-numel",
+      "ndim": "ltorch-ndim",
+      "shape": "ltorch-shape",
+      "to_list": "ltorch-to-list",
+      "item": "ltorch-item",
+      "set_requires_grad": "ltorch-set-requires-grad",
+      "requires_grad": "ltorch-requires-grad",
+      "backward": "ltorch-backward",
+      "grad": "ltorch-grad",
+      "zero_grad": "ltorch-zero-grad",
+      "free": "ltorch-free"
+    }
+  },
+  "return_types": {
+    "ltorch-version": "str",
+    "ltorch-available": "bool",
+    "ltorch-last-error": "str",
+    "ltorch-tensor": "int",
+    "ltorch-zeros": "int",
+    "ltorch-ones": "int",
+    "ltorch-full": "int",
+    "ltorch-randn": "int",
+    "ltorch-arange": "int",
+    "ltorch-add": "int",
+    "ltorch-sub": "int",
+    "ltorch-mul": "int",
+    "ltorch-div": "int",
+    "ltorch-matmul": "int",
+    "ltorch-add-scalar": "int",
+    "ltorch-mul-scalar": "int",
+    "ltorch-relu": "int",
+    "ltorch-sigmoid": "int",
+    "ltorch-tanh": "int",
+    "ltorch-softmax": "int",
+    "ltorch-sum": "int",
+    "ltorch-mean": "int",
+    "ltorch-sum-dim": "int",
+    "ltorch-reshape": "int",
+    "ltorch-transpose": "int",
+    "ltorch-clone": "int",
+    "ltorch-detach": "int",
+    "ltorch-numel": "int",
+    "ltorch-ndim": "int",
+    "ltorch-shape": "str",
+    "ltorch-to-list": "list[float]",
+    "ltorch-item": "float",
+    "ltorch-set-requires-grad": "int",
+    "ltorch-requires-grad": "bool",
+    "ltorch-backward": "int",
+    "ltorch-grad": "int",
+    "ltorch-zero-grad": "int",
+    "ltorch-free": "int"
+  },
+  "runtime": [
+    "runtime.scm"
+  ],
+  "build": {
+    "cmd": "bash cpp/torch/build.sh",
+    "outputs": [
+      "cpp/torch/build/libtorch_capi.so"
+    ]
+  },
+  "env": {
+    "LD_LIBRARY_PATH": "/opt/libtorch/lib"
+  }
+}

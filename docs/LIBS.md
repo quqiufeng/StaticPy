@@ -19,6 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd | 差分 **18/18** + ELF |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -261,8 +262,38 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
 
 ---
 
+## ltorch（直吊 libTorch：ATen + autograd）
+
+`cpp/torch/` → `libtorch_capi.so`（真 `at::Tensor`，不重写算子）；插件 `plugins/ltorch/`。
+
+- **不重造算子**：绑定层只做「句柄 ⇄ 张量」翻译，数学全部落在 ATen/autograd 里，
+  所以 matmul/softmax/backward 的数值与 PyTorch **逐位相同**（差分 max|Δ|=0）。
+- **数据怎么过 FFI**：FFI 只有 `str/int/float/ptr`，故
+  - 张量 = **integer-64 句柄**（不是 `void*`：StaticPy 侧统一按 int 走，`ltorch.free` 归还）；
+  - 值/形状 = **CSV 字符串**（`"1.0,2.0,3.0,4.0"` + `"2,2"`），读回同样 CSV。
+- **C ABI**（`torch_capi.h`）：`from_csv/to_csv/shape_csv/numel/ndim`、`zeros/ones/full/randn/arange`、
+  `add/sub/mul/div/matmul`、`add_scalar/mul_scalar`、`relu/sigmoid/tanh/softmax(dim)`、
+  `sum/mean/sum_dim`、`reshape/transpose/clone/detach`、`set_requires_grad/requires_grad/backward/grad/zero_grad`、
+  `item/version/last_error/free`。失败一律置 `last_error` 并返回 `0`（不抛异常越 ABI 边界）。
+- **版本**：本机 `/opt/libtorch` = **2.1.2**；Python 的 `torch` 可能是别的版本，
+  差分只比**确定性算子**，`randn` 只比形状（随机流跨版本不保证一致）。
+
+```bash
+bash cpp/torch/build.sh                          # → cpp/torch/build/libtorch_capi.so（带 rpath）
+STATICPY_PLUGINS=core,ltorch bash staticpy/static_build.sh plugins/ltorch/demo.static.py ltdemo
+LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/ltdemo   # 不打 rpath 的实现需要这句；本仓 .so 已内嵌 rpath
+python3 plugins/ltorch/difftest.py --elf          # 差分 19/19（含 ELF 端到端）
+```
+
+- **两侧必须分进程**：pip 的 torch 与 `/opt/libtorch` 的 `c10` 符号互不兼容，
+  同一进程里先 dlopen 我们这侧再 `import torch` 会炸（`libshm.so: undefined symbol`）；
+  `difftest.py` 因此起两个子进程各算一遍、只比 JSON。
+- 插件开关是 `plugins/ltorch/plugin.json` 的 `libs.torchc`；不启用插件时零依赖、零运行时开销。
+
+---
+
 ## 能力边界（明确不做）
 
-- **训练**：不做（这层只管推理与算法）。
+- **训练调度**：不做（`ltorch` 只提供 `at::Tensor` 与 autograd 求导，优化器/训练循环留给用户程序；这层不管推理与算法之外的东西）。
 - **重型扩散/视频生成**：走 `sd.cpp` + `comfycli`（`/opt/static_comfyui/anim.sh`，零 torch），不塞进本仓。
 - **Python 运行时**：产物不依赖；Python/Pillow/numpy 只用于测量与导模型。
