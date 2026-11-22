@@ -601,7 +601,7 @@
         ((py-glist? r) (py-glist-reverse! r))
         (else py-none)))
 (define (py-m-append r v)
-  (if (py-array? r) (py-array-append-h r v) (py-list-append r v)))
+  (py-list-append r v))
 
 (define (py-m-extend r o)
   (cond ((py-array? r) (py-array-method-h 'extend r (list o)))
@@ -2057,14 +2057,19 @@ append/insert 首次触发升级为可增长 py-glist）"
   "把 list 值（vector / py-glist）转成可增长 py-glist（vector 只拷贝一次）"
   (cond ((py-glist? x) x)
         ((vector? x) (vector->glist-buf x))
-        ((py-array? x) (vector->glist-buf (as_list x)))
         (else (py-glist-new))))
 
 (define (py-list-append lst val)
   "在通用列表末尾追加元素（py-glist 原地摊还 O(1)，vector 首次升级拷贝）"
-  (cond ((py-array? lst) (py-array-append-h lst val))
-        ((py-glist? lst) (py-glist-push! lst val))
+  (cond ((py-glist? lst) (py-glist-push! lst val))
         (else (py-glist-push! (to-glist lst) val))))
+
+(define (py-list-iadd a b)
+  "a += b（list）：Python 的 __iadd__ 是原地 extend。a 已是 py-glist 就原地长；
+否则先升级再 extend —— 避免 py-list-concat 每次迭代都整体拷贝（acc += [x] 的 O(n^2)）"
+  (let ((g (to-glist a)))
+    (py-glist-extend! g b)
+    g))
 
 (define (py-list-concat a b)
   "列表拼接（对应 python list + list），返回新列表"
@@ -2072,9 +2077,7 @@ append/insert 首次触发升级为可增长 py-glist）"
       (let ((g (py-glist-copy (to-glist a))))
         (py-glist-extend! g b)
         g)
-      (if (or (py-array? a) (py-array? b))
-          (py-array-concat-h a b)
-          (list->vector (append (py-items a) (py-items b))))))
+      (list->vector (append (py-items a) (py-items b)))))
 
 (define (py-list-ref lst i)
   "读取通用列表第 i 个元素（负下标按 Python 规则折算，越界 → None）"
@@ -2097,10 +2100,9 @@ append/insert 首次触发升级为可增长 py-glist）"
   "通用列表长度"
   (if (vector? lst)
       (vector-length lst)
-      (cond ((py-array? lst) (py-array-len-h lst))
-            ((py-glist? lst) (py-glist-n lst))
+      (cond ((py-glist? lst) (py-glist-n lst))
             ((list? lst) (length lst))
-            (else (vector-length lst)))))
+            (else (py-len lst)))))
 
 (define (list->py-list lst)
   "把 Scheme list 转为通用列表"
@@ -2108,9 +2110,11 @@ append/insert 首次触发升级为可增长 py-glist）"
 
 ;; ====== list() / dict() 构造器（plugins/pyarray 载入后覆盖成 C 版） ======
 (define (new_list . args)
-  "list()：vector 表示（append 首次触发升级为 py-glist，之后摊还 O(1)）；
-np 插件可覆盖成 PyArray 版"
-  (list->vector args))
+  "list() / list(x)：一律直接给可增长 py-glist（append/insert/pop 摊还 O(1)）。
+   曾对 list(x) 发 (as_list x) 造不可变 vector，随后的 insert/pop 静默失效（返回 None）。"
+  (cond ((null? args) (py-glist-new))
+        ((null? (cdr args)) (to-glist (as_list (car args))))
+        (else (vector->glist-buf (list->vector args)))))
 
 (define (new_dict . kvs)
   "dict()：未挂 PyArray 时退化为保序 hashtable"

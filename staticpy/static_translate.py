@@ -37,6 +37,7 @@ def scheme_name(name):
         "py_list": "py-list",
         "py_list_append": "py-list-append",
         "py_list_concat": "py-list-concat",
+        "py_list_iadd": "py-list-iadd",
         "py_list_ref": "py-list-ref",
         "py_list_length": "py-list-length",
         "list_to_py_list": "list->py-list",
@@ -304,6 +305,10 @@ FUNC_NODES = {}
 # 查找顺序：先 BUILTIN_FN_RETURN_TYPES，再 MODULE_FN_RETURN_TYPES
 BUILTIN_FN_RETURN_TYPES = {
     "len": Type("int"),
+    "list": Type("list", [Type("Any")]),
+    "sorted": Type("list", [Type("Any")]),
+    "reversed": Type("list", [Type("Any")]),
+    "dict": Type("dict"),
     "int": Type("int"),
     "float": Type("float"),
     "bool": Type("bool"),
@@ -833,7 +838,7 @@ PRELUDE_FUNCTIONS = {
     "sleep", "clock",
     "argv", "exit_program", "exit",
     "pi", "e",
-    "py_list", "py_list_append", "py_list_concat", "py_list_ref", "py_list_length", "list_to_py_list", "list_append_str",
+    "py_list", "py_list_append", "py_list_concat", "py_list_iadd", "py_list_ref", "py_list_length", "list_to_py_list", "list_append_str",
     "py_iter_to_list", "py_list_slice", "py_unpack", "py_float_repr",
 } | MATH_FUNCTIONS
 
@@ -1153,6 +1158,10 @@ def infer_expr_type(node):
                 return name.lower()
             if name in ("int", "len"):
                 return "int"
+            if name in ("list", "sorted", "reversed"):
+                return "list"
+            if name == "dict":
+                return "dict"
             if name == "float":
                 return "float"
             if name == "bool":
@@ -1430,6 +1439,11 @@ def translate_aug_assign(node):
     """翻译 AugAssign (i += 1, s *= 2, self.x += 1 等)"""
     target = mangle_name(node.target.id) if isinstance(node.target, ast.Name) else None
     if target:
+        _lt = infer_expr_type(node.target) or ""
+        _rt = infer_expr_type(node.value) or ""
+        if type(node.op).__name__ == "Add" and (str(_lt).startswith("list") or str(_rt).startswith("list")):
+            # lst += other：Python 原地 extend；走 concat 每次整体拷贝（acc += [x] O(n^2)）
+            return f"(set! {target} (py-list-iadd {target} {translate_expr(node.value)}))"
         return f"(set! {target} {translate_binop(type(node.op).__name__, node.target, node.value)})"
     # self.x += v → (Cls-x-set! self (op (Cls-x self) v))
     if isinstance(node.target, ast.Attribute):
@@ -4094,7 +4108,7 @@ def translate_expr(node):
                 return '""'
             if name == "list":
                 if args:
-                    return f"(as_list {args[0]})"
+                    return f"(new_list {args[0]})"
                 return "(new_list)"
             if name == "dict":
                 if args:

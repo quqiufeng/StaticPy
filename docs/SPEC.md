@@ -41,6 +41,8 @@
 | S-FSTR | f-string：插值、`!r`/`!a` 转换、格式说明符、嵌套引号；不支持的转换响亮失败 | fstring_repr, fstring_spec, fstring_conv_a |
 | S-SLICE | 切片含步长与负下标、负步长、tuple 切片 | slice_step, tuple_slice |
 | S-LIST | list 构造/追加/索引赋值/成员/长度/嵌套 | list_ops |
+| S-LISTCTOR | `list(x)` 结果必须是**可增长**的表（`insert`/`pop` 生效，不可发不可变 vector） | list_ctor |
+| S-LISTIADD | `lst += 其他` 是**原地 extend**（不是把右侧当单元素塞进去，也不是每次整体拷贝） | list_iadd |
 | S-DICT | dict 字面量/读写/键存在/`get`/迭代给 keys/删除 | dict_ops, dict_sub |
 | S-ITER | `for` 迭代协议：range/str（给 1 字符 str）/list/dict（给 keys）/表达式结果/嵌套 | iter_seq, for_iter_seq |
 | S-CLASS | class → record：单继承、多基内联、类属性默认值、`@classmethod`/`@staticmethod`、方法当值 | class_inherit, class_multi, class_defaults, class_methods, class_methodval |

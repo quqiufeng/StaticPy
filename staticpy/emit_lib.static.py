@@ -57,7 +57,7 @@ PRELUDE_NAMES = (
     "log log10 log2 make_dict make_float_array make_int_array now_ts os_cwd "
     "os_delete_file os_file_exists os_file_size os_getcwd os_getenv os_list_dir os_mkdir os_move_file "
     "os_rmdir os_shell parse_json pi pow py_iter_to_list py_list py_list_append "
-    "py_list_concat py_list_length py_list_ref py_list_slice py_unpack random_choice random_float random_int "
+    "py_list_concat py_list_iadd py_list_length py_list_ref py_list_slice py_unpack random_choice random_float random_int "
     "random_range random_seed random_uniform re_match re_search round sin sinh "
     "read_text_file sleep sqrt str_code_at tok_at tok_type_at tok_val_at tok_is str_contains str_ends_with str_join str_length str_lower str_replace "
     "str_slice str_split str_starts_with str_trim str_upper string_of_int string_to_float string_to_int "
@@ -72,6 +72,8 @@ def scheme_name(nm: str) -> str:
         return "py-list-append"
     if nm == "py_list_concat":
         return "py-list-concat"
+    if nm == "py_list_iadd":
+        return "py-list-iadd"
     if nm == "py_list_ref":
         return "py-list-ref"
     if nm == "py_list_length":
@@ -333,6 +335,10 @@ def builtin_ret(name: str) -> str:
         return ""
     if name == "int" or name == "len":
         return "int"
+    if name == "list" or name == "sorted" or name == "reversed":
+        return "list"
+    if name == "dict":
+        return "dict"
     if name == "float":
         return "float"
     if name == "bool":
@@ -1478,7 +1484,7 @@ def translate_call(n) -> str:
     if nm == "list":
         if py_list_length(dict_get(n, "args")) == 0:
             return "(new_list)"
-        return f"(as_list {a})"
+        return f"(new_list {a})"
     if nm == "dict":
         if py_list_length(dict_get(n, "args")) == 0:
             return "(new_dict)"
@@ -1622,6 +1628,10 @@ def block_aug_assign(exprs, s):
     op: str = nt(dict_get(s, "op"))
     if nt(tg) == "Name":
         nm = mangle_name(dict_get(tg, "id"))
+        if op == "Add" and (str_starts_with(infer_expr_type(tg), "list")
+                            or str_starts_with(infer_expr_type(v), "list")):
+            # lst += other：Python 是原地 extend；走 concat 每次整体拷贝（acc += [x] O(n^2)）
+            return py_list_append(exprs, f"(set! {nm} (py-list-iadd {nm} {translate_expr(v)}))")
         return py_list_append(exprs, f"(set! {nm} {translate_binop(op, tg, v)})")
     if nt(tg) == "Attribute":
         obj = dict_get(tg, "value")

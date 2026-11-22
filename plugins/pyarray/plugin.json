@@ -3,22 +3,34 @@
   "version": "1.0.0",
   "kind": "runtime",
   "order": 40,
-  "requires": ["core"],
+  "requires": [
+    "core"
+  ],
   "libs": {
     "pyarr": "libpyarr.so"
   },
-  "description": "PyArray：list（可增长向量）+ dict（C 哈希，保插入序）",
+  "description": "PyArray：dict 的 C 哈希后端（保插入序）；list 统一走 core 的 py-glist",
   "return_types": {
-    "new_list": "list",
     "new_dict": "dict",
-    "as_list": "list",
     "as_dict": "dict"
   },
   "prelude_functions": [
-    "py-get", "py-get-default", "py-set!", "py-del!",
-    "new_list", "new_dict", "as_list", "as_dict",
-    "py-listv?", "py-map?", "pl-ref", "pl-append!", "pl-pop", "pl-sort!",
-    "pm-get", "pm-set!", "pm-del!", "pm-keys", "pm-values", "pm-items", "pm-len"
+    "py-get",
+    "py-get-default",
+    "py-set!",
+    "py-del!",
+    "new_dict",
+    "as_dict",
+    "py-map?",
+    "pm-get",
+    "pm-set!",
+    "pm-del!",
+    "pm-keys",
+    "pm-values",
+    "pm-items",
+    "pm-len"
   ],
-  "runtime": ["runtime.scm"]
+  "runtime": [
+    "runtime.scm"
+  ]
 }

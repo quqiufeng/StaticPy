@@ -22,3 +22,15 @@ def main():
     print(d[1][0], len(d))
     e = [x * 2 for x in range(4)]
     print(e)
+    f = list()
+    f.append(2)
+    f.append(1)
+    f.sort()
+    print(f, len(f), f == [1, 2], f == [])
+    g = list([4, 5])
+    g.insert(0, 3)
+    print(g, g.pop(0), g)
+    h = list()
+    h.extend("ab")
+    h += ["c"]
+    print(h, h.count("a"))

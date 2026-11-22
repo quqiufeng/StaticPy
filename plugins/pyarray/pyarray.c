@@ -385,36 +385,6 @@ int64_t pa_stats(int64_t id, int64_t which) {
  * 按 keys[i]（double）升序排列 vals[i]；keys 相同保持原序（Python sort 稳定）。
  * 供 Scheme 侧把数值键抽成双精度数组后一次性排完，避免 N 次 Scheme 回调。
  */
-static void merge_run(double *keys, int64_t *vals, int64_t lo, int64_t mid,
-                      int64_t hi, double *tk, int64_t *tv) {
-    int64_t i = lo, j = mid, w = lo;
-    while (i < mid && j < hi) {
-        if (keys[j] < keys[i]) { tk[w] = keys[j]; tv[w] = vals[j]; j++; }
-        else                   { tk[w] = keys[i]; tv[w] = vals[i]; i++; }
-        w++;
-    }
-    while (i < mid) { tk[w] = keys[i]; tv[w] = vals[i]; i++; w++; }
-    while (j < hi)  { tk[w] = keys[j]; tv[w] = vals[j]; j++; w++; }
-    for (int64_t k = lo; k < hi; k++) { keys[k] = tk[k]; vals[k] = tv[k]; }
-}
-
-int64_t pa_sort_vals(int64_t *keys_buf, int64_t *vals, int64_t n) {
-    if (!keys_buf || !vals || n < 2) return 0;
-    double *keys = (double *)keys_buf;         /* Scheme 侧传 double 缓冲，此处复用 */
-    double *tk = (double *)malloc((size_t)n * sizeof(double));
-    int64_t *tv = (int64_t *)malloc((size_t)n * sizeof(int64_t));
-    if (!tk || !tv) { free(tk); free(tv); return 0; }
-    for (int64_t w = 1; w < n; w <<= 1)
-        for (int64_t lo = 0; lo < n; lo += w << 1) {
-            int64_t mid = lo + w, hi = lo + (w << 1);
-            if (mid > n) mid = n;
-            if (hi > n) hi = n;
-            if (mid < hi) merge_run(keys, vals, lo, mid, hi, tk, tv);
-        }
-    free(tk); free(tv);
-    return n;
-}
-
 /* 纯数值数组的原地稳定排序（list.sort() 的快路径：元素就是数字） */
 int64_t pa_sort_doubles(int64_t *keys_buf, int64_t n) {
     if (!keys_buf || n < 2) return 0;
