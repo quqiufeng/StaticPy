@@ -3962,12 +3962,58 @@ def top_level_reject(s, why) -> str:
     return "(error 'top-level \"" + why + "\")" + ann_of(s)
 
 
+# ========== perfmap 自报（构建期 STATICPY_PERFMAP=1）==========
+# Chez AOT 的机器码落在 rwxp 匿名段，ELF .text 里没有符号，perf 只能记成 [anon]。
+# 这里把每个顶层函数的 code entry 写进 /tmp/perf-<pid>.map，采样就能归因到函数名。
+# 默认不产出（保持 IR 逐字节不变），只有构建期设了 STATICPY_PERFMAP=1 才加。
+def emit_perfmap(names) -> str:
+    pairs: str = ""
+    i: int = 0
+    while i < py_list_length(names):
+        if i > 0:
+            pairs = pairs + " "
+        pairs = pairs + '(cons "' + py_list_ref(names, i) + '" static_' + py_list_ref(names, i) + ")"
+        i = i + 1
+    # prelude 函数是热点大头（py_list_*/py-get/str_* 等），名字不带 static_ 前缀
+    pl = list_to_py_list(str_split(PRELUDE_NAMES, " "))
+    j: int = 0
+    while j < py_list_length(pl):
+        pn = py_list_ref(pl, j)
+        if str_length(pn) > 0:
+            pairs = pairs + " " + '(cons "' + pn + '" (if (top-level-bound? (quote ' + pn + ')) (top-level-value (quote ' + pn + ')) #f))' 
+        j = j + 1
+    head: str = "\n\n;; perfmap self-report: code entry -> /tmp/perf-<pid>.map"
+    head = head + "\n(define (static__perfmap-emit)"
+    head = head + "\n  (define (ref p) (bitwise-and (object->reference-address p) (bitwise-not 7)))"
+    head = head + "\n  (define (w0 p) (foreign-ref 'uptr (ref p) 0))"
+    head = head + "\n  (define port (open-output-file (string-append \"/tmp/perf-\""
+    head = head + " (number->string (get-process-id)) \".map\") 'replace))"
+    head = head + "\n  (define (dump get tag)"
+    head = head + "\n    (let loop ((l (sort (lambda (a b) (< (get (cdr a)) (get (cdr b))))"
+    head = head + "\n                        (filter (lambda (e) (procedure? (cdr e)))"
+    head = head + "\n                                (list " + pairs + ")))))"
+    head = head + "\n      (unless (null? l)"
+    head = head + "\n        (let* ((cur (car l)) (rest (cdr l))"
+    head = head + "\n               (start (get (cdr cur)))"
+    head = head + "\n               (nxt (if (null? rest) (+ start #x800) (get (cdr (car rest)))))"
+    head = head + "\n               (gap (- nxt start))"
+    head = head + "\n               (size (if (or (< gap #x20) (> gap #x2000)) #x100 gap)))"
+    head = head + "\n          (fprintf port \"~x ~x ~a~a~n\" start size (car cur) tag))"
+    head = head + "\n        (loop (cdr l)))))"
+    head = head + "\n  (dump w0 \"\")"
+    head = head + "\n  (close-port port))"
+    head = head + "\n(static__perfmap-emit)"
+    return head
+
 def emit_module(tree, src: str, lib_mode: int) -> str:
     """模块级输出：先收集片段、最后一次 str_join。
     逐个 `out = out + x` 会反复拷贝已有前缀，是 O(n^2)：
     1790 个顶层语句 / 2MB 输出实测多花数秒、多分配上 GB。"""
     src_set(src)
     out = py_list()
+    fnames = py_list()
+    FNAMES_SEEN = make_dict()
+    pm: str = os_getenv("STATICPY_PERFMAP")
     head: str = ";; Source: " + src + "\n\n;; StaticPy functions"
     ffi: str = emit_extern_ffi()
     if ffi != "":
@@ -3982,6 +4028,10 @@ def emit_module(tree, src: str, lib_mode: int) -> str:
         s = py_list_ref(body, i)
         t = nt(s)
         if t == "FunctionDef":
+            # 同名只报一次（concat 出来的大输入会重复定义，map 里重复无害但浪费启动时间）
+            if dict_get(FNAMES_SEEN, dict_get(s, "name")) is None:
+                dict_set(FNAMES_SEEN, dict_get(s, "name"), 1)
+                fnames = py_list_append(fnames, dict_get(s, "name"))
             out = py_list_append(out, "\n" + translate_function(s, src))
         elif t == "ClassDef":
             out = py_list_append(out, "\n" + emit_class(s, src))
@@ -4008,4 +4058,8 @@ def emit_module(tree, src: str, lib_mode: int) -> str:
         out = py_list_append(out, "\n\n;; Library mode: no (static_main) entry point")
     else:
         out = py_list_append(out, "\n\n;; Entry point\n(static_main)")
+    if pm == "1":
+        # 自报必须放在 (static_main) 之后：函数被真正执行/装载前，其首字指向堆而非代码段，
+        # 早写会让绝大多数条目落进 rw-p（perfprobe 是跑完再统一归因，晚写不影响采样）。
+        out = py_list_append(out, emit_perfmap(fnames))
     return str_join(out, "")
