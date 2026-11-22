@@ -21,9 +21,9 @@ echo ">>> [2/2] mirror_gif (StaticPy)"
 CACHE="${STATICPY_CACHE:-$HOME/iso_gen/staticpy-cache}"
 mkdir -p "$CACHE/imgproc"
 # 自举工具：concat（StaticPy）
-( cd "$ROOT" && bash staticpy/static_build_comfycli.sh imgproc/concat.static.py concat >/dev/null )
-( cd "$ROOT" && bash staticpy/static_build_comfycli.sh imgproc/mirror_gif.static.py imgproc/mirror_gif imgproc/imgproc_ffi.scm \
-      && bash staticpy/static_build_comfycli.sh imgproc/pilcli.static.py imgproc/pilcli imgproc/imgproc_ffi.scm \
+( cd "$ROOT" && bash staticpy/static_build.sh imgproc/concat.static.py concat >/dev/null )
+( cd "$ROOT" && bash staticpy/static_build.sh imgproc/mirror_gif.static.py imgproc/mirror_gif imgproc/imgproc_ffi.scm \
+      && bash staticpy/static_build.sh imgproc/pilcli.static.py imgproc/pilcli imgproc/imgproc_ffi.scm \
       && "$ROOT/dist/concat" "$CACHE/pil.bundle.static.py" imgproc/pil_lib.static.py imgproc/pil_cli.static.py \
-      && bash staticpy/static_build_comfycli.sh "$CACHE/pil.bundle.static.py" imgproc/pil imgproc/imgproc_ffi.scm )
+      && bash staticpy/static_build.sh "$CACHE/pil.bundle.static.py" imgproc/pil imgproc/imgproc_ffi.scm )
 echo "=== build done ==="

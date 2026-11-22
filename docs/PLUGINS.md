@@ -210,7 +210,7 @@ staticpy build app.static.py --emit-ss out.ss   # 保留拼装产物
 
 ## 6. 兼容性
 
-老的 `staticpy/static_build_comfycli.sh <src> <out> [ffi.scm]` 仍然可用：
+老的 `staticpy/static_build.sh <src> <out> [ffi.scm]` 仍然可用：
 它等价于「一次性拼上 **legacy 全集**」的内置插件集，行为与拆分前一致
 （已用 `imgproc/difftest.py` 100/100 回归）。
 

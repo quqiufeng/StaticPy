@@ -6,11 +6,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
 USER="$1"; OUT="$2"
 CONCAT="$ROOT/dist/concat"
 if [ ! -x "$CONCAT" ]; then
-  ( cd "$ROOT" && bash staticpy/static_build_comfycli.sh imgproc/concat.static.py concat >/dev/null )
+  ( cd "$ROOT" && bash staticpy/static_build.sh imgproc/concat.static.py concat >/dev/null )
 fi
 CACHE="${STATICPY_CACHE:-$HOME/iso_gen/staticpy-cache}"
 mkdir -p "$CACHE"
 BUNDLE="$CACHE/$(basename "$OUT").bundle.static.py"
 "$CONCAT" "$BUNDLE" "$HERE/pil_lib.static.py" "$USER"
-( cd "$ROOT" && bash staticpy/static_build_comfycli.sh "$BUNDLE" "$OUT" "$HERE/imgproc_ffi.scm" )
+( cd "$ROOT" && bash staticpy/static_build.sh "$BUNDLE" "$OUT" "$HERE/imgproc_ffi.scm" )
 echo "built: $OUT  (run: LD_LIBRARY_PATH=$ROOT/cpp/imgproc/build ./$OUT ...)"

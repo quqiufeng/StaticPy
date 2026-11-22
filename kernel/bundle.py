@@ -13,7 +13,7 @@ STATICPY_DIR = os.path.join(os.path.dirname(HERE), "staticpy")
 
 
 def _runtime_roots():
-    """与 static_build_comfycli.sh 一致：prelude + stdlib 必须先于插件/程序。
+    """与 static_build.sh 一致：prelude + stdlib 必须先于插件/程序。
 
     旧 .sh 链路用 `cat static_prelude.scm` 打头；kernel 链路此前漏了这一步，
     结果 isinstance→ir-tag?、make_dict 等在 ELF 里未绑定。

@@ -37,7 +37,7 @@ ssh host 'tar xf pil.tar.gz && ./pil/pil convert in.png out.png L'
 | 命令 | 产物 |
 |---|---|
 | `staticpy build app.static.py -o app` | `./app`（ELF）+ `./app.so`（AOT 产物），路径按 `-o` 给的相对 cwd |
-| `bash staticpy/static_build_comfycli.sh src out [ffi]` | 裸名 → `dist/out`（兼容入口，`STATICPY_OUTDIR` 可覆盖） |
+| `bash staticpy/static_build.sh src out [ffi]` | 裸名 → `dist/out`（兼容入口，`STATICPY_OUTDIR` 可覆盖） |
 | `bash imgproc/build.sh` | `cpp/imgproc/build/libimgproc.so` + `imgproc/{pil,concat}` + `dist/mirror_gif` |
 | `bash imgproc/build_app.sh USER.static.py OUT` | 用 `pil_lib` 构建的用户程序 |
 | `bash imgproc/package.sh APP NAME` | 自包含部署包 `dist/NAME{,.tar.gz}` |

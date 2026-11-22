@@ -26,7 +26,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CASES = os.path.join(ROOT, "tests", "semantics")
-BUILD = os.path.join(ROOT, "staticpy", "static_build_comfycli.sh")
+BUILD = os.path.join(ROOT, "staticpy", "static_build.sh")
 OUTDIR = os.path.join(ROOT, "dist", "semantics")
 
 

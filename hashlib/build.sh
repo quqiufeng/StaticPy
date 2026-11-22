@@ -3,4 +3,4 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
 bash "$ROOT/cpp/hashlib/build.sh"
-( cd "$ROOT" && bash staticpy/static_build_comfycli.sh hashlib/hash.static.py hashlib/hash hashlib/hashlib_ffi.scm )
+( cd "$ROOT" && bash staticpy/static_build.sh hashlib/hash.static.py hashlib/hash hashlib/hashlib_ffi.scm )

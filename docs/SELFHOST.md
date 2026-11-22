@@ -94,7 +94,7 @@ python3 staticpy/semantics_diff.py
 # 5 一键端到端：单一真源/插件钩子/词法/语义/imgproc 构建+差分+覆盖/hashlib/zlib/自举比对
 bash selfcheck.sh
 # 6 重建环 3：staticc.py → ELF，再用 staticc.sp 验自持
-bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc
+bash staticpy/static_build.sh selfhost/staticc.py staticc
 ```
 
 任何一环红了就等于没有完成——**判据只认"IR 一致 + 差分全绿"，不认"我觉得改对了"**。
@@ -123,7 +123,7 @@ OCaml 编译器 → ReScheme 编译器 → static_translate.py（种子，冻结
 ```bash
 # 环 2：staticc.py 在 CPython 下 与 编成 ELF 后，编同一份输入，输出必须一致
 python3 selfhost/run_staticc_py.py selfhost/tests/test_staticc_input.sp ~/iso_gen/a.scm
-bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc
+bash staticpy/static_build.sh selfhost/staticc.py staticc
 ./dist/staticc selfhost/tests/test_staticc_input.sp ~/iso_gen/b.scm
 diff ~/iso_gen/a.scm ~/iso_gen/b.scm     # 一致 → 环 2 成立
 
@@ -163,7 +163,7 @@ stage3  g2 → E2；E2 编 staticc.sp → g3.scm
 | `trust/ddc.sh` | **异源双编译（DDC）**：`staticc.py`（Python 语法）vs `staticc.sp`（S-表达式）对同一源出 IR 是否一致 | `bash trust/ddc.sh` |
 | `trust/manifest.py` | 信任链清单：被信文件的哈希/行数；`--verify` 检测悄悄漂移 | `python3 trust/manifest.py --verify` |
 | `trust/normalize_scm.py` | IR 的 token 级规范化（E5/E6 的判据实现）——**判据自己也有 StaticPy 版**，见下行 | `python3 trust/normalize_scm.py --eq A B` |
-| `trust/normalize_scm.static.py` | 同一判据的 StaticPy 实现，编出 `dist/normscm`；`trust/norm.sh` 优先用它，于是**校验不再要求目标机有 CPython**。两份实现由 `selfcheck.sh [0e]` 逐字节比对，不一致即判据失效 | `bash staticpy/static_build_comfycli.sh trust/normalize_scm.static.py normscm` |
+| `trust/normalize_scm.static.py` | 同一判据的 StaticPy 实现，编出 `dist/normscm`；`trust/norm.sh` 优先用它，于是**校验不再要求目标机有 CPython**。两份实现由 `selfcheck.sh [0e]` 逐字节比对，不一致即判据失效 | `bash staticpy/static_build.sh trust/normalize_scm.static.py normscm` |
 
 **为什么必须有 DDC**：本仓过去只有「同源不同执行方式」的自比（`staticc.py` 用 CPython 跑
 vs 编成 ELF 跑）—— 同源自比挡不住 Thompson 攻击，因为两份产物来自同一份代码。
@@ -195,12 +195,12 @@ staticpy build ~/iso_gen/t.static.py -o dist/translator   # → dist/translator{
 
 # ② 之后：翻译 + AOT + 链接，全无 python3
 ./dist/translator app.static.py > ~/iso_gen/app.code.scm
-STATICPY_OUTDIR=$PWD/dist bash staticpy/static_build_comfycli.sh ~/iso_gen/app.code.scm app
+STATICPY_OUTDIR=$PWD/dist bash staticpy/static_build.sh ~/iso_gen/app.code.scm app
 ./dist/app
 
 # ③ 自举不动点：翻译器编自己 → 新 ELF 再编自己，两份 IR 逐字节相同
 ./dist/translator ~/iso_gen/t.static.py > ~/iso_gen/t.code.scm
-STATICPY_OUTDIR=$PWD/dist bash staticpy/static_build_comfycli.sh ~/iso_gen/t.code.scm translator_self
+STATICPY_OUTDIR=$PWD/dist bash staticpy/static_build.sh ~/iso_gen/t.code.scm translator_self
 diff <(./dist/translator_self ~/iso_gen/t.static.py) <(./dist/translator ~/iso_gen/t.static.py)   # 必须空
 ```
 

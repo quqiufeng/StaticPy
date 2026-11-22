@@ -139,7 +139,7 @@ def paths():
 
 
 def cache_dir():
-    # 与 static_build_comfycli.sh 保持一致：默认 ~/iso_gen/staticpy-cache（不写 /tmp）
+    # 与 static_build.sh 保持一致：默认 ~/iso_gen/staticpy-cache（不写 /tmp）
     d = os.environ.get("STATICPY_CACHE") or os.path.join(
         os.path.expanduser("~"), "iso_gen", "staticpy-cache")
     os.makedirs(d, exist_ok=True)

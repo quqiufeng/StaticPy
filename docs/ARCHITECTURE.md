@@ -1,6 +1,6 @@
 # ARCHITECTURE —— 从 `.static.py` 到独立 ELF
 
-> 一条流水线、两个入口（`kernel/` 新入口，`staticpy/static_build_comfycli.sh` 兼容入口），
+> 一条流水线、两个入口（`kernel/` 新入口，`staticpy/static_build.sh` 兼容入口），
 > 产物只是一个**独立 ELF + 它显式挂的 `.so`**。
 
 ## 1. 流水线
@@ -42,8 +42,8 @@ staticpy run   app.static.py -- a b     # 构建并立刻运行
 staticpy plugins                        # 列出插件与依赖
 
 # 兼容入口：等价于「一次性拼上 legacy 全集」的内置插件集
-bash staticpy/static_build_comfycli.sh app.static.py app [extra_ffi.scm]
-bash staticpy/static_build.sh ...                # 别名（转发，单一真源）
+bash staticpy/static_build.sh app.static.py app [extra_ffi.scm]
+bash staticpy/static_build_comfycli.sh ...       # 历史名，仅转发到上面那个（单一真源）
 ```
 
 `kernel` 是唯一权威实现（`kernel/cli.py` 解析参数、`kernel/plugin.py` 发现与拓扑排序、

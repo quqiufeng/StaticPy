@@ -105,7 +105,7 @@ cmd_build_nopy() {
   local scr=${TMPDIR:-$HOME/iso_gen}/staticpy_$(basename "$out").code.scm
   mkdir -p "$(dirname "$scr")"
   "$TRANS" "$file" "${flags[@]+"${flags[@]}"}" > "$scr" || exit 1
-  STATICPY_OUTDIR=$KERNEL_OUT bash "$ROOT/staticpy/static_build_comfycli.sh" "$scr" "$out"
+  STATICPY_OUTDIR=$KERNEL_OUT bash "$ROOT/staticpy/static_build.sh" "$scr" "$out"
 }
 
 # build：优先 kernel（python3）；没有 python3 走无 CPython 通道

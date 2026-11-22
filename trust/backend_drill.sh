@@ -21,7 +21,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 PY="${PYTHON:-python3}"
 WORK="${WORK:-$HOME/iso_gen/drill}"
-BUILD="bash staticpy/static_build_comfycli.sh"
+BUILD="bash staticpy/static_build.sh"
 REAL_SCHEME="${CHEZ_SCHEME:-/opt/ChezScheme/ta6le/bin/ta6le/scheme}"
 mkdir -p "$WORK/bin" "$WORK/cache"
 

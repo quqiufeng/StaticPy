@@ -4,5 +4,5 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
 
 bash "$ROOT/cpp/whisper/build.sh"
-( cd "$ROOT" && bash staticpy/static_build_comfycli.sh \
+( cd "$ROOT" && bash staticpy/static_build.sh \
     whisper/whisper.static.py whisper/whisper whisper/whisper_ffi.scm )

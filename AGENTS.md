@@ -205,12 +205,12 @@ StaticPy 不是"只能靠宿主"的：它**能自举**。上游 `/opt/ReScheme` 
 ## 8. 关键命令速查
 
 ```bash
-# 编译工具链目标（Python → Scheme → ELF）；static_build.sh 是同一实现的转发别名
-bash staticpy/static_build_comfycli.sh input.static.py out_name [ffi.scm]
+# 编译工具链目标（Python → Scheme → ELF）；名里的 comfycli 是历史遗留，与依赖无关
+bash staticpy/static_build.sh input.static.py out_name [ffi.scm]
 
 # 无 CPython 通道：自举翻译器 ELF 出 IR，再走 .scm 输入通道（见 docs/SELFHOST.md §7.5）
 ./dist/translator input.static.py > ~/iso_gen/out.code.scm
-bash staticpy/static_build_comfycli.sh ~/iso_gen/out.code.scm out_name
+bash staticpy/static_build.sh ~/iso_gen/out.code.scm out_name
 
 # 库文件（无 main）：加 --lib（或 STATICPY_LIB=1），不生成 (static_main)
 python3 staticpy/static_translate.py --lib imgproc/pil_lib.static.py > lib.ss   # 种子（仅作对照基准）
@@ -222,7 +222,7 @@ bash staticpy/check_translate.sh imgproc/pil_lib.static.py
 python3 staticpy/semantics_diff.py
 # 裸名产物落 dist/；带前缀的名字沿用原路径；缓存默认 ~/iso_gen/staticpy-cache
 STATICPY_CACHE=~/iso_gen/staticpy-cache  STATICPY_OUTDIR=dist
-bash staticpy/static_build_comfycli.sh --clean   # 清缓存
+bash staticpy/static_build.sh --clean   # 清缓存
 
 # 编译优化级别：默认 optimize-level 3（STATICPY_OPT_LEVEL=0/1/2 可回退）
 # 自举翻译器实测 1.79s → 1.49s（-17%），IR 与 opt2 逐字节一致；
@@ -238,11 +238,11 @@ LD_LIBRARY_PATH=$PWD/cpp/imgproc/build ./imgproc/pil <op> IN OUT [args...]
 bash imgproc/build_app.sh my_app.static.py my_app
 
 # Scheme 层热点（计数归因，零地址；详见 docs/SPROF.md）
-STATICPY_PROFILE=source bash staticpy/static_build_comfycli.sh app.static.py app
+STATICPY_PROFILE=source bash staticpy/static_build.sh app.static.py app
 ./dist/app && ./dist/sprof --top=15          # 次数爆炸的 py 行 = 该改的 IR
 # PGO 闭环：采 block 画像 → 回灌重编（代码须逐字一致）
-STATICPY_PROFILE=block bash staticpy/static_build_comfycli.sh app.static.py app && ./dist/app
-STATICPY_PROFILE=block STATICPY_PGO=1 bash staticpy/static_build_comfycli.sh app.static.py app
+STATICPY_PROFILE=block bash staticpy/static_build.sh app.static.py app && ./dist/app
+STATICPY_PROFILE=block STATICPY_PGO=1 bash staticpy/static_build.sh app.static.py app
 
 # 验证
 PY=python3

@@ -16,7 +16,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 PY="${PYTHON:-python3}"
 WORK="${WORK:-$HOME/iso_gen/spboot}"
-BUILD="bash staticpy/static_build_comfycli.sh"
+BUILD="bash staticpy/static_build.sh"
 TRUSTROOT="selfhost/staticc.sp"
 SEEDSRC="selfhost/staticc.py"
 mkdir -p "$WORK"

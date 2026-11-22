@@ -38,7 +38,7 @@ fi
 echo ">>> [0e/4] IR 规范化判据（StaticPy 自举版 vs CPython 版，逐字节）"
 # 判据本身也要防漂移：两份实现（trust/normalize_scm.py / .static.py）必须逐字节一致，
 # 否则 trust/fixpoint.sh、trust/ddc.sh 用哪份就得哪份结论。
-if bash staticpy/static_build_comfycli.sh trust/normalize_scm.static.py normscm >/dev/null 2>&1; then
+if bash staticpy/static_build.sh trust/normalize_scm.static.py normscm >/dev/null 2>&1; then
   . "$ROOT/trust/norm.sh"
   _norm_bad=0
   for _f in trust/normalize_scm.py trust/manifest.py selfhost/staticc.py \
@@ -72,7 +72,7 @@ fi
 
 echo ">>> [4/4] 自举比对（环 2：staticc.py CPython vs 自举 ELF）"
 if ( cd selfhost && $PY run_staticc_py.py tests/test_staticc_input.sp "$W/sc_a.scm" >/dev/null 2>&1 ) \
-   && bash staticpy/static_build_comfycli.sh selfhost/staticc.py staticc >/dev/null 2>&1 \
+   && bash staticpy/static_build.sh selfhost/staticc.py staticc >/dev/null 2>&1 \
    && ./dist/staticc selfhost/tests/test_staticc_input.sp "$W/sc_b.scm" >/dev/null 2>&1 \
    && $NORM --eq "$W/sc_a.scm" "$W/sc_b.scm" >/dev/null 2>&1; then
   echo "  ok（IR token 级一致）"

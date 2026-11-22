@@ -38,7 +38,7 @@ cd "$ROOT"
 PY="${PYTHON:-python3}"
 WORK="${WORK:-$HOME/iso_gen/trust/ddc}"
 . "$ROOT/trust/norm.sh"   # NORM=IR 规范化判据（优先 StaticPy 自举 ELF）
-BUILD="bash staticpy/static_build_comfycli.sh"
+BUILD="bash staticpy/static_build.sh"
 mkdir -p "$WORK"
 
 # ---------- C2 解析：源码现建（默认）或外部二进制（显式） ----------

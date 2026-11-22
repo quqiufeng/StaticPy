@@ -9,7 +9,7 @@ Chez 自带这条路（`compile-profile`）：编译期在每个表达式插计�
 
 ```bash
 # ① 剖析构建（计数版产物，慢 2~5 倍，只用来采样）
-STATICPY_PROFILE=source bash staticpy/static_build_comfycli.sh app.static.py app
+STATICPY_PROFILE=source bash staticpy/static_build.sh app.static.py app
 
 # ② 跑一次，计数自动落盘到 ~/iso_gen/prof/app.prof
 ./dist/app
@@ -56,11 +56,11 @@ Chez 原生流程是 dump → load → 重编，StaticPy 接成两个开关：
 
 ```bash
 # 第一轮：采画像（~ /iso_gen/prof/app.pd）
-STATICPY_PROFILE=block bash staticpy/static_build_comfycli.sh app.static.py app
+STATICPY_PROFILE=block bash staticpy/static_build.sh app.static.py app
 ./dist/app
 
 # 第二轮：带着画像重编（编译驱动里会先 (profile-load-data ...)）
-STATICPY_PROFILE=block STATICPY_PGO=1 bash staticpy/static_build_comfycli.sh app.static.py app
+STATICPY_PROFILE=block STATICPY_PGO=1 bash staticpy/static_build.sh app.static.py app
 ```
 
 约束（Chez 的硬要求）：**被重编的代码必须逐字一致**——源文件、插件、
@@ -134,7 +134,7 @@ LD_LIBRARY_PATH=cpp/imgproc/build ./dist/pilprof resize ~/iso_gen/bench.jpg out.
 
 ```bash
 # 带计数的构建（产物名分开，避免覆盖交付版）
-STATICPY_PROFILE=source bash staticpy/static_build_comfycli.sh \
+STATICPY_PROFILE=source bash staticpy/static_build.sh \
     ~/iso_gen/staticpy-cache/pil.bundle.static.py imgproc/pilprof imgproc/imgproc_ffi.scm
 LD_LIBRARY_PATH=cpp/imgproc/build ./imgproc/pilprof deform mid.png out.png half
 ./dist/sprof ~/iso_gen/prof/pilprof.prof --top=15

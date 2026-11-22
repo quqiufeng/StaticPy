@@ -230,7 +230,7 @@ def report(prof_path: str, ss_override: str, limit: int, fn_only: bool) -> None:
     txt: str = read_text(prof_path)
     if str_length(txt) == 0:
         print("sprof: 读不到 prof 文件: " + prof_path)
-        print("  先做一次剖析构建: STATICPY_PROFILE=source bash staticpy/static_build_comfycli.sh <x.static.py> <out>")
+        print("  先做一次剖析构建: STATICPY_PROFILE=source bash staticpy/static_build.sh <x.static.py> <out>")
         return
     lines: list = split_nl(txt)
     ss_path: str = ss_override

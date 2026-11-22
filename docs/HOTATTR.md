@@ -87,7 +87,7 @@ bytes → 49 83 6e 68 01 0f 84 …     （dec/je：fixnum 递减与分支）
 ## 构建
 
 ```bash
-bash staticpy/static_build_comfycli.sh tools/hotattr.static.py hotattr
+bash staticpy/static_build.sh tools/hotattr.static.py hotattr
 ./dist/hotattr                     # 打 usage
 ```
 
@@ -98,10 +98,10 @@ bash staticpy/static_build_comfycli.sh tools/hotattr.static.py hotattr
 
 ```bash
 STATICPY_PERFMAP=1 ./dist/translator app.static.py > ~/iso_gen/app.code.scm
-bash staticpy/static_build_comfycli.sh ~/iso_gen/app.code.scm app   # 构建期门禁
+bash staticpy/static_build.sh ~/iso_gen/app.code.scm app   # 构建期门禁
 ```
 
-注意开关**只在自举链路**（`staticpy/emit_lib.static.py`）里：`static_build_comfycli.sh`
+注意开关**只在自举链路**（`staticpy/emit_lib.static.py`）里：`static_build.sh`
 默认调的是 CPython 种子 `static_translate.py`，它没有 `STATICPY_PERFMAP` 开关。
 所以 perfmap 产物必须走上面这条「先生成 IR、再当 `.scm` 编」的两步。
 

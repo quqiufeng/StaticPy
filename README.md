@@ -35,7 +35,7 @@ concat 后编成的 ELF 翻译器，出 IR 就直接喂给兼容入口的 `.scm`
 
 ```bash
 ./dist/translator app.static.py > ~/iso_gen/app.code.scm
-bash staticpy/static_build_comfycli.sh ~/iso_gen/app.code.scm app    # 无 CPython
+bash staticpy/static_build.sh ~/iso_gen/app.code.scm app    # 无 CPython
 ./app
 ```
 
@@ -90,8 +90,8 @@ staticpy/          # 语言工具链
 ├── static_translate.py    # 引导种子：冻结的参考翻译器（验收基准，见 docs/SELFHOST.md）
 ├── *.static.py            # 自举翻译器本体（tokenize/parse/emit），日常改语言改这里
 ├── static_prelude.scm     # 运行时值类型；static_stdlib.scm 标准库
-├── static_build_comfycli.sh  # 构建入口（translate + Chez AOT + 独立 ELF）
-└── static_build.sh        # 兼容别名（转发到上面那个，单一真源）
+├── static_build.sh        # 构建入口（translate + Chez AOT + 独立 ELF，单一真源）
+└── static_build_comfycli.sh  # 历史名（上游带出来的），仅转发到 static_build.sh
 
 kernel/            # 插件化内核：发现插件 → 拓扑排序 → 拼 bundle → 调 Chez
 plugins/           # 一切能力都是插件（core/libc/math/json/http/imgproc/torch/…）

@@ -6,7 +6,7 @@
 ```bash
 # 环 2：CPython 跑 staticc.py  vs  staticc.py 编成 ELF 再跑，两边产出一致
 python3 run_staticc_py.py tests/test_staticc_input.sp ~/iso_gen/a.scm
-bash ../staticpy/static_build_comfycli.sh selfhost/staticc.py staticc
+bash ../staticpy/static_build.sh selfhost/staticc.py staticc
 ../dist/staticc tests/test_staticc_input.sp ~/iso_gen/b.scm
 diff ~/iso_gen/a.scm ~/iso_gen/b.scm          # 一致 → 自举成立
 ```
