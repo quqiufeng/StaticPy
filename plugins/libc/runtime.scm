@@ -188,6 +188,7 @@
 (define (os-shell cmd) (libc-system cmd))
 (define (os_shell cmd) (os-shell cmd))
 (define (os_cwd) (os-getcwd))
+(define (os_getcwd) (os-getcwd))
 (define (os_list_dir path) (os-list-dir path))
 (define (os_getenv name) (os-getenv name))
 (define (os_file_size path) (os-file-size path))

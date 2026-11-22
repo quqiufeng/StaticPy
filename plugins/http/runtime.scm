@@ -71,6 +71,7 @@
 (define make_float_array (lambda (n) (make-float-array n)))
 (define float_array_set (lambda (ptr i val) (float-array-set ptr i val)))
 (define float_array_ref (lambda (ptr i) (float-array-ref ptr i)))
+(define float_array_free (lambda (ptr) (float-array-free ptr)))
 (define make_dict (lambda () (make-dict)))
 (define dict_get (lambda (d key) (dict-get d key)))
 (define dict_set (lambda (d key val) (dict-set! d key val)))
@@ -81,6 +82,7 @@
 (define file_write (lambda (fp s) (file-write fp s)))
 (define file_exists (lambda (path) (file-exists? path)))
 (define http_get_simple (lambda (url) (http-get-simple url)))
+(define http_get (lambda (url) (http-get url)))
 
 (define (print-float-array ptr n)
   (display "#float[")
