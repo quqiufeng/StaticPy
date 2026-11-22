@@ -1,7 +1,3 @@
-# parse: seed-only  —— 自举翻译器（环 2）没有"张量方法派发"（种子的 TENSOR_METHODS 分支）：
-# `q.matmul(k.transpose(0, 1))` 在自举链路上会落成 `(q-matmul (k-transpose 0 1))` 这种未知接收者兜底，
-# 与种子 IR 不一致（最小复现：~/iso_gen/rep/a.static.py）。真实用法是 build_app.sh 的种子链路
-# （plugins 只在种子链路生效），产物正确、训练结果见 docs/LIBS.md §ltorch。
 """StaticPy 训练模板 3：单头 self-attention 编码器块（LayerNorm + GELU），序列三分类。
 
 这条模板专打 v10 扩出来的那批算子：

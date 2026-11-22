@@ -14,7 +14,11 @@ BUNDLE="$CACHE/$(basename "$OUT").ltorch.bundle.static.py"
 "$CONCAT" "$BUNDLE" "$HERE/tensor_lib.static.py" "$USER"
 ( cd "$ROOT" && bash staticpy/static_build.sh "$BUNDLE" "$OUT" "$HERE/lib_ffi.scm" )
 # 产物 ELF 的 RUNPATH 含 $ORIGIN：把 capi 放到可执行文件旁，裸跑即可
-OUTDIR="$(cd "$(dirname "$OUT")" && pwd)"
+# 裸名（无路径前缀）的产物落 $STATICPY_OUTDIR（默认 dist/），dirname 会是 cwd —— 得按同一规则解析
+case "$OUT" in
+  */*) OUTDIR="$(cd "$(dirname "$OUT")" && pwd)" ;;
+  *)   OUTDIR="${STATICPY_OUTDIR:-$ROOT/dist}"; mkdir -p "$OUTDIR"; OUTDIR="$(cd "$OUTDIR" && pwd)" ;;
+esac
 if [ "$OUTDIR" != "$ROOT/cpp/torch/build" ]; then
   cp -f "$ROOT/cpp/torch/build/libtorch_capi.so" "$OUTDIR/" 2>/dev/null || true
 fi

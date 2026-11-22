@@ -252,6 +252,33 @@ if rt == "str":                # → (string=? rt "str")；name 不在 SIGS → 
 排查手法：在可疑函数入口打 `print` 标签（本项目临时文件放 `~/iso_gen/`），
 重编自举器 `~1.2s`，看输出尾部的最后一个标签就是崩点。
 
+## 7.7 环 2 补上「张量方法派发」（v10 起自举链路与种子同形）
+
+种子 `static_translate.py` 一直有 `TENSOR_METHODS` / `TENSOR_METHOD_KW` / `translate_tensor_method`
+这一层：`x.pow(2).mean(-1, keepdim=True)` 会被改写成 `(torch-tensor-pow x 2)` 这类显式调用，
+二元运算（`a * b`）、一元取负、`p[k]` 下标选择也各有路由。自举版 `emit_lib.static.py`
+**缺这一层**，于是 `q.matmul(k.transpose(0, 1))` 落到「未知接收者」兜底，产出
+`(q-matmul (k-transpose 0 1))` —— 与种子 IR 不一致，且运行期变量根本没绑定。
+
+修法是把种子那张表和派发逻辑按 StaticPy 子集重写一遍（约 260 行，`emit_lib.static.py`
+的「张量方法派发」段）：常量表（`TENSOR_METHODS` / `TENSOR_ATTR_SCALARS` / `TENSOR_STR_METHODS` /
+`TENSOR_MODULE_FNS` / `TENSOR_RETURN_NAMES`）+ `expr_is_tensor` 启发式 + `scan_tensor_vars`
+（函数入口扫一遍函数体，收集被赋值为张量的局部名，存进 `TENSOR_SCOPE`）+ `translate_tensor_method`
+（kw 按 `TENSOR_METHOD_KW` 表展开成位置参数，`dtype` 常量转码、bool 转 0/1）。
+
+三条接缝，缺一条就对不上种子：
+
+| 接缝 | 位置 | 作用 |
+|---|---|---|
+| 方法调用 | `translate_call`（Attribute 分支，**排在未知接收者兜底之前**） | `<recv>.<m>(…)` → `(torch-tensor-<m> recv …)` |
+| 二元/一元 | `translate_binop` / `translate_unary` | `Add/Sub/Mult/Div` → `torch-tensor-{add,sub,mul,div}`（带标量提升）、`USub` → `torch-tensor-neg` |
+| 下标 | `translate_subscript` | `x[i]`（非 Slice/Tuple）→ `torch-tensor-index-select` |
+| 作用域 | `function_def_skip` 入口 `tvar_scope_set(scan_tensor_vars(body))` | 局部张量名；`self.x` 这类类实例仍走用户类分派（`resolve_expr_class` 优先） |
+
+验收：`check_translate.sh plugins/ltorch/train_attn.static.py` 由 `SKIP` 变 `ok(规范化)`、
+全仓 88 个 `.static.py` 仍 `fail=1`（唯一例外是要插件语法的 `examples/syntax_plugin/demo.static.py`）、
+`trust/fixpoint.sh` 固定点成立（`dist/translator_self` 与 `dist/translator` 出自身 IR 逐字节相同）。
+
 ## 8. 文件
 
 | 文件 | 作用 |

@@ -649,6 +649,10 @@ def translate_subscript(n) -> str:
     value = translate_expr(dict_get(n, "value"))
     slc = dict_get(n, "slice")
     vt = infer_expr_type(dict_get(n, "value"))
+    # 张量下标：x[pos_ids] / x[i] -> 沿 dim0 index_select（同种子）
+    if nt(slc) != "Slice" and nt(slc) != "Tuple":
+        if expr_is_tensor(dict_get(n, "value")) == 1:
+            return "(torch-tensor-index-select " + value + " " + translate_expr(slc) + ")"
     if nt(slc) == "Slice":
         stp = dict_get(slc, "step")
         if stp is not None and nt(stp) != "":
@@ -858,6 +862,250 @@ def translate_comprehension(gens, elt: str, kind: str) -> str:
     if kind == "gen":
         return "(list->vector (reverse " + body + "))"
     return "(list->py-list (reverse " + body + "))"
+
+# ====== 张量方法派发（对齐种子 TENSOR_METHODS / translate_tensor_method）======
+# 参考实现写 x.pow(2).mean(-1, keepdim=True) 这类方法链，种子有这套派发，
+# 自举链路以前没有：`q.matmul(k.transpose(0, 1))` 会落到未知接收者兜底
+# (q-matmul (k-transpose 0 1))，IR 与种子不一致、运行时变量未绑定。
+TENSOR_METHODS = " to pow mean sum view reshape transpose permute unsqueeze squeeze split contiguous expand masked_fill gather index_select sqrt mul add sub div softmax argmax clone float detach max new_zeros repeat ne gt lt eq matmul reshape_as narrow neg cat "
+# 同名方法里返回标量/整数的（.numel()/.item()/…）不能当张量
+TENSOR_ATTR_SCALARS = " item numel ndim dim size tolist "
+# 与 str/list 撞名的方法：接收者不是张量时当字符串处理（同种子 expr_is_tensor 守卫）
+TENSOR_STR_METHODS = " split join strip lstrip rstrip replace upper lower splitlines format startswith endswith zfill center "
+# 模块函数里返回张量的（torch.rsqrt(...) 等，用于二元运算类型路由）
+TENSOR_MODULE_FNS = " rsqrt sqrt ones zeros empty tensor randn randint matmul add mul sub cat stack softmax relu sigmoid tanh clone reshape mean sum gather argmax exp log abs where masked_fill to expm1 log1p full arange "
+# 翻译后形态里产生张量的种子名（bare 名兜底，同 TENSOR_RETURN_NAMES）
+TENSOR_RETURN_NAMES = " torch-tensor torch-tensor-int64 torch-empty torch-zeros torch-ones torch-randn torch-arange torch-full torch-add torch-sub torch-mul torch-div torch-matmul torch-clone torch-detach torch-reshape torch-transpose torch-relu torch-sigmoid torch-tanh torch-softmax torch-linear torch-grad "
+# 当前函数作用域内已知的张量变量集（dict 作集合；函数入口 scan_tensor_vars 填充）
+TENSOR_SCOPE = make_dict()
+
+def tvar_scope():
+    v = dict_get(TENSOR_SCOPE, "v")
+    if v is None:
+        v = make_dict()
+        dict_set(TENSOR_SCOPE, "v", v)
+    return v
+
+def tvar_scope_set(d) -> int:
+    dict_set(TENSOR_SCOPE, "v", d)
+    return 0
+
+def tensor_dtype_code(n) -> int:
+    """torch.float32 / torch.bfloat16 等常量 -> dtype 码（同种子 TORCH_DTYPE_CONST）；非 dtype 返回 -1"""
+    if nt(n) != "Attribute":
+        return -1
+    rv = dict_get(n, "value")
+    if nt(rv) != "Name":
+        return -1
+    mk: str = mod_key(dict_get(rv, "id"))
+    if mk == "torch" or mk == "np":
+        at: str = dict_get(n, "attr")
+        if at == "float32":
+            return 0
+        if at == "float64":
+            return 1
+        if at == "int32":
+            return 2
+        if at == "int64":
+            return 3
+        if at == "float16" or at == "half":
+            return 5
+        if at == "bfloat16":
+            return 6
+    return -1
+
+def tensor_module_call(n) -> int:
+    """ast.Call 形如 torch.rsqrt(...) / 模块别名.fn(...) 且 fn 返回张量"""
+    if nt(n) != "Call":
+        return 0
+    f = dict_get(n, "func")
+    if nt(f) != "Attribute":
+        return 0
+    rv = dict_get(f, "value")
+    if nt(rv) != "Name":
+        return 0
+    if mod_key(dict_get(rv, "id")) == "":
+        return 0
+    if str_contains(TENSOR_MODULE_FNS, " " + dict_get(f, "attr") + " "):
+        return 1
+    return 0
+
+def expr_is_tensor(n) -> int:
+    """启发式：表达式是否为（或产生）张量（同种子 expr_is_tensor，tvars 走作用域）"""
+    return expr_is_tensor_t(n, tvar_scope())
+
+def expr_is_tensor_t(n, tvars) -> int:
+    if n is None:
+        return 0
+    t: str = nt(n)
+    if t == "Call":
+        fn = dict_get(n, "func")
+        if nt(fn) == "Attribute":
+            at: str = dict_get(fn, "attr")
+            recv = dict_get(fn, "value")
+            if str_contains(TENSOR_STR_METHODS, " " + at + " ") and expr_is_tensor_t(recv, tvars) == 0:
+                return 0
+            if str_contains(TENSOR_METHODS, " " + at + " "):
+                return 1
+            if expr_is_tensor_t(recv, tvars) == 1 and str_contains(TENSOR_ATTR_SCALARS, " " + at + " ") == 0:
+                return 1
+            return 0
+        if tensor_module_call(n) == 1:
+            return 1
+        if nt(fn) == "Name" and str_contains(TENSOR_RETURN_NAMES, " " + dict_get(fn, "id") + " "):
+            return 1
+        return 0
+    if t == "Name":
+        if dict_get(tvars, dict_get(n, "id")) is not None:
+            return 1
+        return 0
+    if t == "Attribute":
+        if dict_get(n, "attr") == "T":
+            return 1
+        rv = dict_get(n, "value")
+        if nt(rv) == "Name" and dict_get(tvars, dict_get(rv, "id")) is not None:
+            return 1
+        return 0
+    if t == "Subscript":
+        slc = dict_get(n, "slice")
+        if nt(slc) == "Tuple" or nt(slc) == "Slice":
+            # x[i, j] / 切片：结果仍是张量（同种子 return expr_is_tensor(node.value)）
+            return expr_is_tensor_t(dict_get(n, "value"), tvars)
+        return expr_is_tensor_t(dict_get(n, "value"), tvars)
+    if t == "BinOp":
+        if expr_is_tensor_t(dict_get(n, "left"), tvars) == 1:
+            return 1
+        return expr_is_tensor_t(dict_get(n, "right"), tvars)
+    return 0
+
+def scan_tensor_vars(stmts) -> "dict":
+    """扫描函数体，收集被赋值为张量表达式的变量名（返回 dict 当集合）"""
+    out = make_dict()
+    rec_tensor_assign(stmts, out)
+    return out
+
+def rec_tensor_assign(stmts, out) -> int:
+    i: int = 0
+    while i < py_list_length(stmts):
+        s = py_list_ref(stmts, i)
+        t: str = nt(s)
+        if t == "Assign":
+            tg = dict_get(s, "targets")
+            if py_list_length(tg) == 1 and nt(py_list_ref(tg, 0)) == "Name":
+                if expr_is_tensor_t(dict_get(s, "value"), out) == 1:
+                    dict_set(out, dict_get(py_list_ref(tg, 0), "id"), 1)
+        if t == "AnnAssign":
+            v = dict_get(s, "value")
+            if v is not None and nt(dict_get(s, "target")) == "Name":
+                if expr_is_tensor_t(v, out) == 1:
+                    dict_set(out, dict_get(dict_get(s, "target"), "id"), 1)
+        if t == "AugAssign":
+            if nt(dict_get(s, "target")) == "Name":
+                if expr_is_tensor_t(dict_get(s, "value"), out) == 1:
+                    dict_set(out, dict_get(dict_get(s, "target"), "id"), 1)
+        if t == "If":
+            rec_tensor_assign(dict_get(s, "body"), out)
+            rec_tensor_assign(dict_get(s, "orelse"), out)
+        if t == "For" or t == "While":
+            rec_tensor_assign(dict_get(s, "body"), out)
+        if t == "With":
+            items = dict_get(s, "items")
+            wi: int = 0
+            while wi < py_list_length(items):
+                rec_tensor_assign(dict_get(py_list_ref(items, wi), "body"), out)
+                wi = wi + 1
+        i = i + 1
+    return 0
+
+def tensor_kw_idx(at: str, kw: str) -> int:
+    """方法关键字参数 -> 最终位置参数下标（同种子 TENSOR_METHOD_KW）；未登记返回 -1"""
+    if at == "to":
+        if kw == "dtype":
+            return 0
+        if kw == "device":
+            return 1
+        return -1
+    if at == "mean" or at == "sum" or at == "max" or at == "argmax":
+        if kw == "dim":
+            return 0
+        if kw == "keepdim":
+            return 1
+        return -1
+    if at == "softmax":
+        if kw == "dim":
+            return 0
+        return -1
+    if at == "masked_fill":
+        if kw == "mask":
+            return 0
+        if kw == "value":
+            return 1
+        return -1
+    return -1
+
+def tensor_arg_text(v) -> str:
+    """单个实参文本：dtype 常量 -> 码；bool -> 0/1（FFI 位，不能 #t）"""
+    dc: int = tensor_dtype_code(v)
+    if dc >= 0:
+        return f"{dc}"
+    if nt(v) == "Constant" and dict_get(v, "_k") == "bool":
+        if dict_get(v, "value") == 0:
+            return "0"
+        return "1"
+    return translate_expr(v)
+
+def tensor_kw_text(at: str, n, idx: int) -> str:
+    """在 keywords 里找落到位置 idx 的那个 kwarg 的文本；没有返回空串"""
+    kws = dict_get(n, "keywords")
+    if ir_present(kws) == 0:
+        return ""
+    ki: int = 0
+    while ki < py_list_length(kws):
+        k = py_list_ref(kws, ki)
+        ka = dict_get(k, "arg")
+        if ka is not None and tensor_kw_idx(at, ka) == idx:
+            return tensor_arg_text(dict_get(k, "value"))
+        ki = ki + 1
+    return ""
+
+def translate_tensor_method(receiver: str, at: str, n) -> str:
+    """<receiver>.<at>(args, **kw) -> (torch-tensor-<at> receiver 位置参数)；不是张量方法返回空串"""
+    if not str_contains(TENSOR_METHODS, " " + at + " "):
+        return ""
+    pos = py_list()
+    args = dict_get(n, "args")
+    i: int = 0
+    while i < py_list_length(args):
+        pos = py_list_append(pos, tensor_arg_text(py_list_ref(args, i)))
+        i = i + 1
+    npos: int = py_list_length(pos)
+    # kwarg 按表展开到最终位置（先算需要的最大下标，再逐位取：pos 或 kwarg 或 #f）
+    maxidx: int = npos - 1
+    kws = dict_get(n, "keywords")
+    if ir_present(kws) != 0:
+        ki: int = 0
+        while ki < py_list_length(kws):
+            ka = dict_get(py_list_ref(kws, ki), "arg")
+            if ka is not None:
+                kx: int = tensor_kw_idx(at, ka)
+                if kx > maxidx:
+                    maxidx = kx
+            ki = ki + 1
+    merged = py_list()
+    j: int = 0
+    while j <= maxidx:
+        if j < npos:
+            merged = py_list_append(merged, py_list_ref(pos, j))
+        else:
+            kt: str = tensor_kw_text(at, n, j)
+            if kt == "":
+                kt = "#f"
+            merged = py_list_append(merged, kt)
+        j = j + 1
+    out: str = "(torch-tensor-" + at + " " + receiver
+    if py_list_length(merged) > 0:
+        out = out + " " + cls_join(merged, " ")
+    return out + ")"
 
 def tensor_attr_fn(at: str) -> str:
     """张量无参属性 -> 运行时查询（同旧版 TENSOR_ATTR_FN）"""
@@ -1075,6 +1323,17 @@ def translate_binop(op: str, ln, rn) -> str:
         if lt == "str":
             return f"(py-str-repeat {left} {right})"
         return f"(py-str-repeat {right} {left})"
+    # 张量二元运算：任一侧是张量表达式/变量 -> torch-tensor-<op>（带标量提升）
+    if op == "Add" or op == "Sub" or op == "Mult" or op == "Div":
+        if expr_is_tensor(ln) == 1 or expr_is_tensor(rn) == 1:
+            tname: str = "add"
+            if op == "Sub":
+                tname = "sub"
+            if op == "Mult":
+                tname = "mul"
+            if op == "Div":
+                tname = "div"
+            return "(torch-tensor-" + tname + " " + left + " " + right + ")"
     if op == "Add":
         return f"(+ {left} {right})"
     if op == "Sub":
@@ -1298,6 +1557,9 @@ def translate_unary(n) -> str:
             return "(not " + translate_expr(e) + ")"
         return "(not (py-truthy " + translate_expr(e) + "))"
     if op == "USub":
+        # 张量取负 -> torch-tensor-neg
+        if expr_is_tensor(e) == 1:
+            return "(torch-tensor-neg " + translate_expr(e) + ")"
         return f"(- {translate_expr(e)})"
     # 其余（Invert / UAdd …）与旧版一致：<OpName> 直译，不做语义改写
     return f"({op} {translate_expr(e)})"
@@ -1515,6 +1777,19 @@ def translate_call(n) -> str:
                 if a != "":
                     return f"({sm} {translate_expr(rv)} {a})"
                 return f"({sm} {translate_expr(rv)})"
+        # 张量方法调用：<tensor>.method(args, **kw) -> (torch-tensor-<method> <tensor> 位置参数)
+        # 用户类实例优先（同种子）：class Tensor 里的 self.h 走类方法分派，不能被
+        # "名字像张量"的启发式抢走；模块名（torch./nn.）也不走这条
+        tm_ok: int = 0
+        if nt(rv) == "Name":
+            if mod_key(dict_get(rv, "id")) == "":
+                tm_ok = 1
+        else:
+            tm_ok = 1
+        if tm_ok == 1 and resolve_expr_class(rv) == "":
+            tm: str = translate_tensor_method(translate_expr(rv), at, n)
+            if tm != "":
+                return tm
         # 未知对象的属性调用：content.splitlines() -> (content-splitlines)
         # 实参必须展开（与种子对齐）：以前丢实参，obj.m(1, 2) 变成 (obj-m)，
         # 运行时变量未绑定且实参里的副作用/求值静默消失
@@ -2145,6 +2420,8 @@ def function_def_skip(n, src: str, full: str, skip: int) -> str:
     param_push(param_names(n))
     src_set(src)
     collect_function_types(n, src)
+    saved_tvars = tvar_scope()
+    tvar_scope_set(scan_tensor_vars(dict_get(n, "body")))
     nm = dict_get(n, "name")
     dict_set(SIGS, nm, ann_str(dict_get(n, "returns")))
     body = dict_get(n, "body")
@@ -2167,6 +2444,7 @@ def function_def_skip(n, src: str, full: str, skip: int) -> str:
         hdr = fa + "\n"
     tenv_pop()
     param_pop()
+    tvar_scope_set(saved_tvars)
     return hdr + f"(define ({full} {params_of_skip(n, skip)})\n{txt})"
 
 def top_level_define(s, t: str) -> str:
