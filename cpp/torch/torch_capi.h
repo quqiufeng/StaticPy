@@ -82,6 +82,7 @@ double torchc_min(torchc_tensor a);
 double torchc_std(torchc_tensor a, long unbiased);
 long torchc_argmax(torchc_tensor a);           /* 展平后的最大下标 */
 torchc_tensor torchc_max_dim(torchc_tensor a, long dim, long want_index);
+torchc_tensor torchc_min_dim(torchc_tensor a, long dim, long want_index);
 torchc_tensor torchc_mean_dim(torchc_tensor a, long dim);
 
 /* ---- 形状（cat/stack/squeeze/unsqueeze）---- */
@@ -117,6 +118,9 @@ torchc_tensor torchc_l1_loss(torchc_tensor pred, torchc_tensor target);
 /* ---- 优化器内核（原地更新，NoGrad）---- */
 long torchc_sgd_step_momentum(torchc_tensor w, torchc_tensor g, torchc_tensor buf,
                               double lr, double momentum, double weight_decay, long nesterov);
+long torchc_set_grad(torchc_tensor w, torchc_tensor g);
+long torchc_adagrad_step(torchc_tensor w, torchc_tensor g, torchc_tensor acc,
+                         double lr, double lr_decay, double weight_decay, double eps, long step);
 long torchc_adam_step(torchc_tensor w, torchc_tensor g, torchc_tensor m, torchc_tensor v,
                       double lr, double beta1, double beta2, double eps,
                       double weight_decay, long step, long decoupled);

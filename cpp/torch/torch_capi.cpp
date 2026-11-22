@@ -660,6 +660,15 @@ torchc_tensor torchc_max_dim(torchc_tensor a, long dim, long want_index) {
   TORCHC_GUARD_END("max_dim")
 }
 
+torchc_tensor torchc_min_dim(torchc_tensor a, long dim, long want_index) {
+  clear_error(); TORCHC_NEED(a, "min_dim")
+  TORCHC_GUARD_BEGIN
+    auto r = at::min(*unwrap(a), dim);
+    if (want_index != 0) return wrap(std::get<1>(r).to(at::kLong));
+    return wrap(std::get<0>(r));
+  TORCHC_GUARD_END("min_dim")
+}
+
 torchc_tensor torchc_mean_dim(torchc_tensor a, long dim) {
   clear_error(); TORCHC_NEED(a, "mean_dim")
   TORCHC_GUARD_BEGIN return wrap(unwrap(a)->mean(dim)); TORCHC_GUARD_END("mean_dim")
@@ -847,6 +856,42 @@ long torchc_sgd_step_momentum(torchc_tensor w, torchc_tensor g, torchc_tensor bu
     W.sub_(grad.mul(lr));
     return 1;
   TORCHC_GUARD_END_LONG("sgd_step_momentum")
+}
+
+long torchc_set_grad(torchc_tensor w, torchc_tensor g) {
+  clear_error();
+  if (w == nullptr) { set_error("set_grad: 空句柄"); return 0; }
+  TORCHC_GUARD_BEGIN
+    auto &W = *unwrap(w);
+    if (g == nullptr) { W.mutable_grad() = at::Tensor(); return 1; }
+    W.mutable_grad() = unwrap(g)->detach().clone();
+    return 1;
+  TORCHC_GUARD_END_LONG("set_grad")
+}
+
+long torchc_adagrad_step(torchc_tensor w, torchc_tensor g, torchc_tensor acc,
+                         double lr, double lr_decay, double weight_decay, double eps, long step) {
+  clear_error();
+  if (w == nullptr || g == nullptr || acc == nullptr) {
+    set_error("adagrad_step: 空句柄");
+    return 0;
+  }
+  TORCHC_GUARD_BEGIN
+    torch::NoGradGuard ng;
+    auto &W = *unwrap(w);
+    auto &S = *unwrap(acc);
+    auto grad = *unwrap(g);
+    if (weight_decay != 0.0) grad = grad.add(W, weight_decay);
+    /* 照抄 torch/optim/adagrad.py：sum += g*g；clr = lr/(sqrt(sum)+eps)；p -= clr*g
+       lr_decay 走 torch 的 clr = lr/(1+(step-1)*lr_decay) */
+    S.addcmul_(grad, grad, 1);
+    double clr = lr;
+    if (lr_decay != 0.0) clr = lr / (1.0 + (static_cast<double>(step) - 1.0) * lr_decay);
+    at::Tensor denom = S.sqrt() + eps;
+    at::Tensor upd = grad / denom;
+    W.sub_(upd * clr);
+    return 1;
+  TORCHC_GUARD_END_LONG("adagrad_step")
 }
 
 long torchc_adam_step(torchc_tensor w, torchc_tensor g, torchc_tensor m, torchc_tensor v,

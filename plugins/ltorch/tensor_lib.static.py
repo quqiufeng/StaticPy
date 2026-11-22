@@ -22,6 +22,8 @@
 # 用法（concat 进用户程序，见 plugins/ltorch/build_app.sh）：
 #   bash plugins/ltorch/build_app.sh plugins/ltorch/lib_demo.static.py demo
 
+import math
+
 extern fn torchc_version() -> str from "torchc"
 extern fn torchc_last_error() -> str from "torchc"
 
@@ -86,6 +88,7 @@ extern fn torchc_min(a: ptr) -> double from "torchc"
 extern fn torchc_std(a: ptr, unbiased: int) -> double from "torchc"
 extern fn torchc_argmax(a: ptr) -> int from "torchc"
 extern fn torchc_max_dim(a: ptr, dim: int, want_index: int) -> ptr from "torchc"
+extern fn torchc_min_dim(a: ptr, dim: int, want_index: int) -> ptr from "torchc"
 extern fn torchc_mean_dim(a: ptr, dim: int) -> ptr from "torchc"
 
 extern fn torchc_cat(a: ptr, b: ptr, dim: int) -> ptr from "torchc"
@@ -113,6 +116,8 @@ extern fn torchc_dropout(x: ptr, p: double, training: int, seed: int) -> ptr fro
 
 extern fn torchc_sgd_step_momentum(w: ptr, g: ptr, buf: ptr, lr: double, momentum: double, weight_decay: double, nesterov: int) -> int from "torchc"
 extern fn torchc_adam_step(w: ptr, g: ptr, m: ptr, v: ptr, lr: double, beta1: double, beta2: double, eps: double, weight_decay: double, step: int, decoupled: int) -> int from "torchc"
+extern fn torchc_set_grad(w: ptr, g: ptr) -> int from "torchc"
+extern fn torchc_adagrad_step(w: ptr, g: ptr, acc: ptr, lr: double, lr_decay: double, weight_decay: double, eps: double, step: int) -> int from "torchc"
 extern fn torchc_rmsprop_step(w: ptr, g: ptr, sq: ptr, lr: double, alpha: double, eps: double, weight_decay: double) -> int from "torchc"
 
 extern fn torchc_set_grad_enabled(flag: int) -> int from "torchc"
@@ -283,6 +288,10 @@ class Tensor:
     def grad(self) -> Tensor:
         return Tensor(torchc_grad(self.h))
 
+    def set_grad(self, g: Tensor) -> None:
+        """对标 `p.grad = g`（差分灌梯度用；C 侧 detach().clone() 存进 mutable_grad）。"""
+        torchc_set_grad(self.h, g.h)
+
     def grad_values(self) -> str:
         """梯度的 CSV（没有梯度时返回空串，与 torch 的 None 对应）"""
         g: Tensor = self.grad()
@@ -331,6 +340,12 @@ class Tensor:
     def argmax_dim(self, dim: int) -> Tensor:
         return Tensor(torchc_max_dim(self.h, dim, 1))
 
+    def min_dim(self, dim: int) -> Tensor:
+        return Tensor(torchc_min_dim(self.h, dim, 0))
+
+    def argmin_dim(self, dim: int) -> Tensor:
+        return Tensor(torchc_min_dim(self.h, dim, 1))
+
     def mean_dim(self, dim: int) -> Tensor:
         return Tensor(torchc_mean_dim(self.h, dim))
 
@@ -361,6 +376,21 @@ class Tensor:
 
     def to(self, dtype_name: str) -> Tensor:
         return Tensor(torchc_cast(self.h, dtype_name))
+
+    def bool(self) -> Tensor:
+        return Tensor(torchc_cast(self.h, "bool"))
+
+    def float(self) -> Tensor:
+        return Tensor(torchc_cast(self.h, "float32"))
+
+    def double(self) -> Tensor:
+        return Tensor(torchc_cast(self.h, "float64"))
+
+    def long(self) -> Tensor:
+        return Tensor(torchc_cast(self.h, "int64"))
+
+    def int(self) -> Tensor:
+        return Tensor(torchc_cast(self.h, "int32"))
 
     def dtype(self) -> str:
         return torchc_dtype(self.h)
@@ -678,6 +708,10 @@ class CrossEntropyLoss:
     def forward(self, logits: Tensor, target: list) -> Tensor:
         return Tensor(torchc_cross_entropy(logits.h, _csv_int(target)))
 
+    def forward_t(self, logits: Tensor, target: Tensor) -> Tensor:
+        """target 传 Tensor 时的入口（对标 F.cross_entropy 直接吃 long 张量）。"""
+        return Tensor(torchc_cross_entropy(logits.h, target.values()))
+
 
 class Embedding(Module):
     """对标 nn.Embedding(num, dim)：forward(下标列表) = weight[index_select(0)]。"""
@@ -843,7 +877,8 @@ class MomentumSGD:
     weight_decay: float
     nesterov: int
 
-    def __init__(self, params: list, lr: float, momentum: float, weight_decay: float, nesterov: int):
+    def __init__(self, params: list, lr: float = 0.001, momentum: float = 0.0,
+                 weight_decay: float = 0.0, nesterov: int = 0):
         self.params = params
         self.lr = lr
         self.momentum = momentum
@@ -896,7 +931,8 @@ class Adam:
     decoupled: int
     t: int
 
-    def __init__(self, params: list, lr: float, beta1: float, beta2: float, eps: float, weight_decay: float):
+    def __init__(self, params: list, lr: float = 0.001, beta1: float = 0.9, beta2: float = 0.999,
+                 eps: float = 1e-08, weight_decay: float = 0.0):
         self.params = params
         self.lr = lr
         self.beta1 = beta1
@@ -945,9 +981,63 @@ class Adam:
 class AdamW(Adam):
     """对标 torch.optim.AdamW：weight_decay 走 decoupled 分支（w -= lr*wd*w）。"""
 
-    def __init__(self, params: list, lr: float, beta1: float, beta2: float, eps: float, weight_decay: float):
+    def __init__(self, params: list, lr: float = 0.001, beta1: float = 0.9, beta2: float = 0.999,
+                 eps: float = 1e-08, weight_decay: float = 0.01):
         super().__init__(params, lr, beta1, beta2, eps, weight_decay)
         self.decoupled = 1
+
+
+class Adagrad:
+    """对标 torch.optim.Adagrad(params, lr=1e-2, lr_decay=0, weight_decay=0, eps=1e-10)。"""
+
+    params: list
+    accs: list
+    lr: float
+    lr_decay: float
+    weight_decay: float
+    eps: float
+    t: int
+
+    def __init__(self, params: list, lr: float = 0.01, lr_decay: float = 0.0,
+                 weight_decay: float = 0.0, eps: float = 1e-10):
+        self.params = params
+        self.lr = lr
+        self.lr_decay = lr_decay
+        self.weight_decay = weight_decay
+        self.eps = eps
+        self.t = 0
+        self.accs = []
+        self.init_accs()
+
+    def init_accs(self) -> None:
+        """梯度平方累积：同 init_bufs。"""
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            self.accs.append(p.zeros_like())
+            i += 1
+
+    def zero_grad(self) -> None:
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            p.zero_grad()
+            i += 1
+
+    def step(self) -> int:
+        self.t += 1
+        n: int = 0
+        i: int = 0
+        while i < len(self.params):
+            p: Tensor = self.params[i]
+            g: Tensor = p.grad()
+            if torchc_is_tensor(g.h) != 0:
+                acc: Tensor = self.accs[i]
+                torchc_adagrad_step(p.h, g.h, acc.h, self.lr, self.lr_decay,
+                                    self.weight_decay, self.eps, self.t)
+                n += 1
+            i += 1
+        return n
 
 
 class RMSprop:
@@ -960,7 +1050,8 @@ class RMSprop:
     eps: float
     weight_decay: float
 
-    def __init__(self, params: list, lr: float, alpha: float, eps: float, weight_decay: float):
+    def __init__(self, params: list, lr: float = 0.01, alpha: float = 0.99,
+                 eps: float = 1e-08, weight_decay: float = 0.0):
         self.params = params
         self.lr = lr
         self.alpha = alpha
@@ -1012,8 +1103,80 @@ def load_tensor(path: str) -> Tensor:
     return Tensor(torchc_load(path))
 
 
+# ============================== v3：lr_scheduler ==============================
+#
+# 偏差（翻译器现状，见下）：调度器**不持有优化器**，只按 torch 的公式算 lr，由调用方写回
+# `opt.lr = sch.step()`。原因：静态类型写成 `opt: object` 后，`self.opt.lr` 会被翻译成未绑定
+# 裸名、`self.opt.set_lr(...)` 会段错误 —— object 型成员当前不可用。写成「纯函数算 lr」
+# 既绕开缺口，又保持数值与 torch 一致。
+
+
+class StepLR:
+    """对标 torch.optim.lr_scheduler.StepLR(opt, step_size, gamma)：
+    第 n 轮 lr = base_lr * gamma ** (n // step_size)。用 `opt.lr = sch.step()` 写回。"""
+
+    base_lr: float
+    step_size: int
+    gamma: float
+    last_epoch: int
+
+    def __init__(self, base_lr: float, step_size: int, gamma: float = 0.1):
+        self.base_lr = base_lr
+        self.step_size = step_size
+        self.gamma = gamma
+        self.last_epoch = 0
+
+    def step(self) -> float:
+        self.last_epoch += 1
+        k: int = 0
+        if self.step_size > 0:
+            k = self.last_epoch // self.step_size
+        return self.base_lr * (self.gamma ** k)
+
+
+class ExponentialLR:
+    """对标 ExponentialLR：第 n 轮 lr = base_lr * gamma ** n。"""
+
+    base_lr: float
+    gamma: float
+    last_epoch: int
+
+    def __init__(self, base_lr: float, gamma: float):
+        self.base_lr = base_lr
+        self.gamma = gamma
+        self.last_epoch = 0
+
+    def step(self) -> float:
+        self.last_epoch += 1
+        return self.base_lr * (self.gamma ** self.last_epoch)
+
+
+class CosineAnnealingLR:
+    """对标 CosineAnnealingLR(opt, T_max, eta_min)：
+    lr = eta_min + (base_lr - eta_min) * (1 + cos(pi * t / T_max)) / 2（t 从 1 开始）。"""
+
+    base_lr: float
+    t_max: int
+    eta_min: float
+    last_epoch: int
+
+    def __init__(self, base_lr: float, t_max: int, eta_min: float = 0.0):
+        self.base_lr = base_lr
+        self.t_max = t_max
+        self.eta_min = eta_min
+        self.last_epoch = 0
+
+    def step(self) -> float:
+        self.last_epoch += 1
+        frac: float = float(self.last_epoch) / float(self.t_max)
+        cosv: float = math.cos(math.pi * frac)
+        return self.eta_min + (self.base_lr - self.eta_min) * (1.0 + cosv) / 2.0
+
+
 def save_state_dict(params: list, paths: list) -> int:
     """把参数逐个落盘（一参数一文件，路径自己给全）；返回写成功的个数。"""
+    if len(paths) != len(params):
+        raise Exception("save_state_dict: paths 个数与 params 不符（会越界读垃圾指针，故直接拒绝）")
     n: int = 0
     i: int = 0
     while i < len(params):
@@ -1026,6 +1189,8 @@ def save_state_dict(params: list, paths: list) -> int:
 
 
 def load_state_dict(params: list, paths: list) -> int:
+    if len(paths) != len(params):
+        raise Exception("load_state_dict: paths 个数与 params 不符")
     n: int = 0
     i: int = 0
     while i < len(params):

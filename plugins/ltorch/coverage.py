@@ -62,8 +62,8 @@ MAP = {
     ("core", "sum"): "s:torch-sum",
     ("core", "mean"): "s:torch-mean",
     ("core", "max"): ["c:torchc_max", "p:Tensor.max"],
-    ("core", "min"): ["c:torchc_min", "p:Tensor.min"],
-    ("core", "argmax"): ["c:torchc_argmax", "p:Tensor.argmax"],
+    ("core", "min"): ["c:torchc_min", "p:Tensor.min", "p:Tensor.min_dim"],
+    ("core", "argmax"): ["c:torchc_argmax", "p:Tensor.argmax", "p:Tensor.argmax_dim"],
     ("core", "std"): ["c:torchc_std", "p:Tensor.std"],
     # ---- 形状 ----
     ("core", "reshape"): "s:torch-reshape",
@@ -126,14 +126,14 @@ MAP = {
     ("optim", "Adam"): "p:Adam",
     ("optim", "AdamW"): "p:AdamW",
     ("optim", "RMSprop"): "p:RMSprop",
-    ("optim", "Adagrad"): None,
-    ("optim", "Optimizer"): None,
-    ("optim", "lr_scheduler"): None,
+    ("optim", "Adagrad"): "p:Adagrad",
+    ("optim", "Optimizer"): ["p:MomentumSGD", "p:Adam", "p:AdamW", "p:RMSprop", "p:Adagrad"],
+    ("optim", "lr_scheduler"): ["p:StepLR", "p:ExponentialLR", "p:CosineAnnealingLR"],
     # ---- dtype ----
     ("dtype", "float64"): "c:torchc_tensor",
     ("dtype", "float32"): ["c:torchc_cast", "p:Tensor.to"],
     ("dtype", "int64"): ["c:torchc_cast", "p:Tensor.to"],
-    ("dtype", "bool"): None,
+    ("dtype", "bool"): "p:Tensor.bool",
 }
 
 # 分母：PyTorch 自省出的接口面规模（surface.py 的实测值）

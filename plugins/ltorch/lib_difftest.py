@@ -252,6 +252,63 @@ def main():
     print("gradmode_off=" + str(set_grad_enabled(0)))
     print("gradmode_is=" + str(is_grad_enabled()))
     print("gradmode_on=" + str(set_grad_enabled(1)))
+
+    # ================= v4：Adagrad / scheduler / dim 归约 / 类型转换 =================
+    o5: Linear = Linear(2, 1, 0)
+    o5.load({OW}, {SOW}, {OB}, {SOB})
+    optg: Adagrad = Adagrad(o5.parameters(), 0.01)
+    i = 0
+    while i < 3:
+        optg.zero_grad()
+        lg: Tensor = mse2.forward(o5.forward(ox), oy)
+        lg.backward()
+        optg.step()
+        i += 1
+    print("opt_adagrad_w=" + o5.w.values())
+    print("opt_adagrad_b=" + o5.b.values())
+
+    # set_grad：等价 `p.grad = g`，单步 Adagrad（闭式可算，便于定位）
+    s1: Tensor = tensor([1.0, 2.0], [1, 2]).requires_grad_(1)
+    s1.set_grad(tensor([0.5, -0.25], [1, 2]))
+    sl1: list = []
+    sl1.append(s1)
+    ag1: Adagrad = Adagrad(sl1, 0.01)
+    ag1.step()
+    print("setgrad_adagrad=" + s1.values())
+
+    # min_dim / argmin_dim
+    md: Tensor = tensor([3.0, 1.0, 4.0, 2.0], [2, 2])
+    print("min_dim=" + md.min_dim(0).values())
+    print("argmin_dim=" + md.argmin_dim(0).values())
+    print("min_dim1=" + md.min_dim(1).values())
+
+    # 类型转换
+    tc: Tensor = tensor([0.0, 1.5, -2.5, 3.9], [2, 2])
+    print("cast_bool_dtype=" + tc.bool().dtype())
+    print("cast_bool=" + tc.bool().values())
+    print("cast_long=" + tc.long().values())
+    print("cast_float_dtype=" + tc.long().float().dtype())
+
+    # lr_scheduler（不持 opt：opt.lr = sch.step()）
+    o6: MomentumSGD = MomentumSGD(o5.parameters(), 0.1, 0.0, 0.0, 0)
+    st: StepLR = StepLR(0.1, 2, 0.1)
+    j = 0
+    while j < 5:
+        o6.lr = st.step()
+        j += 1
+    print("steplr=" + str(o6.lr))
+    ex: ExponentialLR = ExponentialLR(0.1, 0.5)
+    j = 0
+    while j < 3:
+        o6.lr = ex.step()
+        j += 1
+    print("explr=" + str(o6.lr))
+    ca: CosineAnnealingLR = CosineAnnealingLR(1.0, 4, 0.0)
+    j = 0
+    while j < 3:
+        o6.lr = ca.step()
+        j += 1
+    print("coslr=" + str(o6.lr))
     print("ok")
 
 
@@ -519,6 +576,46 @@ def main():
     ref["gradmode_off"] = [0.0]
     ref["gradmode_is"] = [0.0]
     ref["gradmode_on"] = [1.0]
+
+    # ---------------- v4：Adagrad / scheduler / dim 归约 / 类型转换 ----------------
+    wv, bv = opt_run(lambda p: torch.optim.Adagrad(p, lr=0.01))
+    ref["opt_adagrad_w"] = wv
+    ref["opt_adagrad_b"] = bv
+
+    _s = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)
+    _s.grad = torch.tensor([0.5, -0.25], dtype=torch.float64)
+    torch.optim.Adagrad([_s], lr=0.01).step()
+    ref["setgrad_adagrad"] = flat(_s.detach())
+
+    _md = T([3.0, 1.0, 4.0, 2.0], (2, 2))
+    ref["min_dim"] = flat(_md.min(dim=0).values)
+    ref["argmin_dim"] = [float(x) for x in _md.argmin(dim=0).tolist()]
+    ref["min_dim1"] = flat(_md.min(dim=1).values)
+
+    _tc = T([0.0, 1.5, -2.5, 3.9], (2, 2))
+    ref["cast_bool_dtype"] = str(_tc.bool().dtype)
+    ref["cast_bool"] = [float(x) for x in _tc.bool().reshape(-1).tolist()]
+    ref["cast_long"] = [float(x) for x in _tc.long().reshape(-1).tolist()]
+    ref["cast_float_dtype"] = str(_tc.long().float().dtype)
+
+    _o = torch.optim.SGD([torch.zeros(1, dtype=torch.float64)], lr=0.1)
+    _st = torch.optim.lr_scheduler.StepLR(_o, step_size=2, gamma=0.1)
+    for _ in range(5):
+        _o.step()
+        _st.step()
+    ref["steplr"] = [_o.param_groups[0]["lr"]]
+    _o3 = torch.optim.SGD([torch.zeros(1, dtype=torch.float64)], lr=0.1)
+    _ex = torch.optim.lr_scheduler.ExponentialLR(_o3, gamma=0.5)
+    for _ in range(3):
+        _o3.step()
+        _ex.step()
+    ref["explr"] = [_o3.param_groups[0]["lr"]]
+    _o2 = torch.optim.SGD([torch.zeros(1, dtype=torch.float64)], lr=1.0)
+    _ca = torch.optim.lr_scheduler.CosineAnnealingLR(_o2, T_max=4, eta_min=0.0)
+    for _ in range(3):
+        _o2.step()
+        _ca.step()
+    ref["coslr"] = [_o2.param_groups[0]["lr"]]
 
     # ---------------- 比对 ----------------
     bad = 0
