@@ -863,6 +863,20 @@ def translate_attribute(n) -> str:
     """x.attr 当值用（顺序与旧版 Attribute 分支一致；class/张量分支这里没有）"""
     at = dict_get(n, "attr")
     rv = dict_get(n, "value")
+    # 枚举：Color.RED -> Color_RED；Color.RED.name -> "RED"；变量 c.value -> c
+    hit = enum_member_hit(n)
+    if hit != "":
+        return dict_get(rv, "id") + "_" + hit
+    if at == "name" or at == "value":
+        inner = enum_member_hit(rv)
+        if inner != "":
+            if at == "name":
+                return '"' + inner + '"'
+            return dict_get(dict_get(rv, "value"), "id") + "_" + inner
+    if at == "value" and nt(rv) == "Name":
+        # c = Color.RED 之后 c.value 就是那个整数（c.name 构建期报错，不静默出错值）
+        if dict_get(ENUM_VARS, mangle_name(dict_get(rv, "id"))) is not None:
+            return mangle_name(dict_get(rv, "id"))
     # 模块常量/函数取值：math.pi -> (pi)，time.time -> (clock)
     mv: str = module_value_name(n)
     if mv != "":
@@ -1516,7 +1530,10 @@ def translate_call(n) -> str:
     if nm == "sorted":
         al2 = dict_get(n, "args")
         if py_list_length(al2) > 0:
-            first: str = translate_expr(py_list_ref(al2, 0))
+            # 单个位置实参复用已翻译串（否则推导式里的 uid 会被多消耗一次，与种子漂移）
+            first: str = a
+            if py_list_length(al2) > 1:
+                first = translate_expr(py_list_ref(al2, 0))
             kval: str = "#f"
             rval: str = "#f"
             kws = dict_get(n, "keywords")
@@ -2979,6 +2996,9 @@ def collect_imports(body) -> int:
 # 仍然不做（遇到再补）：方法值（不带调用的 obj.m）、多继承、类属性访问。
 CLASSES = make_dict()
 CUR_CLASS = make_dict()
+# 枚举：类名 -> 成员名列表；变量名（mangle 后）-> 枚举类名（c = Color.RED）
+ENUM_MEMBERS = make_dict()
+ENUM_VARS = make_dict()
 
 def cur_class_set(s: str) -> int:
     dict_set(CUR_CLASS, "v", s)
@@ -3558,6 +3578,89 @@ def emit_class_method(nm: str, m, src: str) -> str:
     cur_class_set("")
     return txt
 
+def enum_class_p(n) -> int:
+    """`class X(Enum)` -> 1（只认显式 Enum 基类；「body 全是 int 常量」那条兜底
+    路径没搬过来，真遇到会 DIFF 出来，宁可红了再看，不静默猜）"""
+    bases = dict_get(n, "bases")
+    i: int = 0
+    while i < py_list_length(bases):
+        b = py_list_ref(bases, i)
+        if nt(b) == "Name" and dict_get(b, "id") == "Enum":
+            return 1
+        i = i + 1
+    return 0
+
+def enum_member_hit(n) -> str:
+    """`Color.RED` -> "RED"；不是枚举成员访问返回空串"""
+    if nt(n) != "Attribute":
+        return ""
+    rv = dict_get(n, "value")
+    if nt(rv) != "Name":
+        return ""
+    members = dict_get(ENUM_MEMBERS, dict_get(rv, "id"))
+    if members is None:
+        return ""
+    at = dict_get(n, "attr")
+    i: int = 0
+    while i < py_list_length(members):
+        if py_list_ref(members, i) == at:
+            return at
+        i = i + 1
+    return ""
+
+def emit_enum_class(n, src: str) -> str:
+    """枚举类 -> 顶层常量 Color_RED（同种子 translate_enum）"""
+    nm = dict_get(n, "name")
+    out: str = ";; enum " + nm
+    members = py_list()
+    b = dict_get(n, "body")
+    i: int = 0
+    while i < py_list_length(b):
+        it = py_list_ref(b, i)
+        if nt(it) == "Assign" and py_list_length(dict_get(it, "targets")) == 1:
+            tg = py_list_ref(dict_get(it, "targets"), 0)
+            if nt(tg) == "Name":
+                cn = dict_get(tg, "id")
+                members = py_list_append(members, cn)
+                out = out + "\n(define " + nm + "_" + cn + " " + translate_expr(dict_get(it, "value")) + ")"
+        i = i + 1
+    dict_set(ENUM_MEMBERS, nm, members)
+    return out
+
+def scan_enum_class_names(body) -> int:
+    """模块顶层先把枚举类名登记进 ENUM_MEMBERS（成员表留空，emit_enum_class 再填），
+    这样 `c = Color.RED` 的预扫不必依赖发射顺序"""
+    i: int = 0
+    while i < py_list_length(body):
+        s = py_list_ref(body, i)
+        if nt(s) == "ClassDef" and enum_class_p(s) == 1:
+            dict_set(ENUM_MEMBERS, dict_get(s, "name"), py_list())
+        i = i + 1
+    return 0
+
+def scan_enum_body(body) -> int:
+    """预扫 `c = Color.RED`，记下变量 -> 枚举类名（供 c.value 出整数）"""
+    i: int = 0
+    while i < py_list_length(body):
+        s = py_list_ref(body, i)
+        t = nt(s)
+        if t == "FunctionDef" or t == "ClassDef" or t == "While" or t == "For":
+            scan_enum_body(dict_get(s, "body"))
+        elif t == "If":
+            scan_enum_body(dict_get(s, "body"))
+            scan_enum_body(dict_get(s, "orelse"))
+        elif t == "Assign" and py_list_length(dict_get(s, "targets")) == 1:
+            tg = py_list_ref(dict_get(s, "targets"), 0)
+            if nt(tg) == "Name":
+                rv = dict_get(s, "value")
+                if nt(rv) == "Attribute":
+                    rv2 = dict_get(rv, "value")
+                    if nt(rv2) == "Name" and dict_get(ENUM_MEMBERS, dict_get(rv2, "id")) is not None:
+                        dict_set(ENUM_VARS, mangle_name(dict_get(tg, "id")),
+                                 dict_get(rv2, "id"))
+        i = i + 1
+    return 0
+
 def emit_class(n, src: str) -> str:
     """class X(Base) -> define-record-type + __init__ + 构造 + 方法（同种子 translate_class）"""
     nm = dict_get(n, "name")
@@ -4033,6 +4136,8 @@ def emit_module(tree, src: str, lib_mode: int) -> str:
     collect_sigs(body)
     collect_imports(body)
     collect_classes(body)
+    scan_enum_class_names(body)
+    scan_enum_body(body)
     i: int = 0
     while i < py_list_length(body):
         s = py_list_ref(body, i)
@@ -4044,7 +4149,10 @@ def emit_module(tree, src: str, lib_mode: int) -> str:
                 fnames = py_list_append(fnames, dict_get(s, "name"))
             out = py_list_append(out, "\n" + translate_function(s, src))
         elif t == "ClassDef":
-            out = py_list_append(out, "\n" + emit_class(s, src))
+            if enum_class_p(s) == 1:
+                out = py_list_append(out, "\n" + emit_enum_class(s, src))
+            else:
+                out = py_list_append(out, "\n" + emit_class(s, src))
         elif t == "Assign" or t == "AnnAssign":
             d = top_level_define(s, t)
             if d != "":

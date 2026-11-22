@@ -52,10 +52,15 @@ inv: int = ~6               # -7（= -(x+1)，二进制补码）
 extern fn img_open(path: str) -> ptr from "imgproc"
 ```
 
-**有限支持**：推导式（list / dict / set / 生成器；多 `for`、`if` 过滤、元组解包、
-迭代 `range` / `list` / `str` / py-list / tagged array）、`match`/`case`（字面量、通配、
-捕获、`|`、序列 `[a, *rest]`、映射 `{"k": v}`、类模式 `Pt(x=0)`/`Pt(1, y)`）、
-元组解构 `x, y = 1, 2`、切片 `a[1:3]`、`dataclass`（编译成 record）、`enum`（编译成常量）。
+**有限支持**（每条都有 `tests/semantics/` 用例与 [SPEC.md](./SPEC.md) 编号）：
+
+| 特性 | 支持范围 | 与 CPython 的已知偏差 |
+|---|---|---|
+| 推导式 `S-COMP` | list / dict / set / 生成器；多 `for`、`if` 过滤、元组解包；迭代 `range` / `list` / `str` / py-list / tagged array | 无（求值顺序同 CPython） |
+| `match`/`case` `S-MATCH` | 字面量、通配 `_`、捕获、`\|`、guard、序列 `[a, *rest]`、映射 `{"k": v}`、类模式 `Pt(x=0)`/`Pt(1, y)`；函数体与 if/while/for 块内都可用 | case body 里的 `return` 会被看见（走 `call/cc`），不需要额外标注 |
+| `dataclass` `S-DATACLASS` | body 全为注解字段的类 → `define-record-type`（字段 **mutable**，`p.x = v` 生效） | `==` 是记录同一性（不是逐字段相等）；`print(p)` 打记录而非 `Point(x=1, y=2)` |
+| `enum` `S-ENUM` | `Enum` 类 → 顶层常量 `Color_RED`；`成员`、`成员.name`、`成员.value`、`==` 全部编译期解析 | `print(Color.RED)` 打整数；**成员存进变量后取 `.name` 构建期报错**（要反向查表）；`.value` 可以 |
+| 元组解构 / 切片 | `x, y = 1, 2`、`a[1:3]`（含步长、负下标） | 无 |
 
 ### 数值与真值语义（对齐 CPython，不照抄 Scheme）
 

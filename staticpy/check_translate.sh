@@ -17,8 +17,12 @@ SEED_PLUGINS="${SEED_PLUGINS:-core}"
 norm() {
   sed -e 's/;;.*$//' -e 's/[[:space:]]\+/ /g' -e 's/^ //' -e 's/ $//' "$1" | grep -av '^[[:space:]]*$'
 }
-fail=0; total=0
+fail=0; total=0; skipped=0
 for f in "$@"; do
+  # 显式声明「种子通道专属」的夹具（自持解析器尚无该语法）：跳过并计数，不假装通过
+  if head -3 "$f" | grep -q '^# parse: seed-only'; then
+    echo "  SKIP $f (自举链路尚无该语法)"; skipped=$((skipped + 1)); continue
+  fi
   total=$((total+1))
   mode=""; marg=""
   # 用例自带 `# expect: build-error`：测的是「不支持的东西必须响」，不比对 IR
@@ -51,5 +55,5 @@ for f in "$@"; do
     echo "  DIFF $f"; diff -a <(norm "$CACHE/exp.ss") <(norm "$CACHE/got.ss") | head -8; fail=1
   fi
 done
-echo "---- $total files, fail=$fail"
+echo "---- $total files, fail=$fail, skip=$skipped"
 exit $fail

@@ -553,6 +553,9 @@ RECORD_FIELDS = {}  # 记录类名 → 字段顺序（供 match 的位置参数�
 SELF_PARAMS = ("self", "cls")
 TRANS_ERRORS = []   # 翻译期的“响亮失败”记录（stderr 报告）
 INSTANTIATED = set()  # 模块里被调用过的类名（Cls(...)）
+# 枚举类名 -> [成员名]（Color.RED -> Color_RED 常量，取代 record 字段访问）
+ENUM_MEMBERS = {}
+ENUM_VARS = {}   # 变量名 -> 枚举名（c = Color.RED 之后 c 就是该枚举的值）
 
 
 # 内置模块及其函数映射（模块名 -> {函数名: Scheme 函数名})
@@ -1484,6 +1487,20 @@ def make_float_vector(n, init_expr=None):
     return f"(make-vector {n} 0.0)"
 
 
+# 已知「绝不能静默吞掉」的语句形态 → 构建期报错（空 = 目前全部有实现）
+UNSUPPORTED_STMT_HINT = {}
+
+
+def stmt_reject(s) -> str:
+    """语句级兜底：已知「绝不能静默吞掉」的形态大声失败，其余保持注释（历史行为）"""
+    kind = type(s).__name__
+    hint = UNSUPPORTED_STMT_HINT.get(kind)
+    if hint is not None:
+        TRANS_ERRORS.append(f"第 {getattr(s, 'lineno', 0)} 行: {hint}")
+        return f"(error 'unsupported \"{kind}\")"
+    return f";; {kind}: {ast.dump(s)}"
+
+
 def translate_stmt(node, bindings=None):
     """翻译一条语句
     bindings: 收集 let 绑定，用于在函数级别统一包装
@@ -1566,8 +1583,10 @@ def translate_stmt(node, bindings=None):
         elif isinstance(op, ast.Mult):
             return f"  (set! {target} (* {target} {val}))"
         return f"  ;; aug-assign"
+    elif isinstance(node, ast.Match):
+        return "  " + translate_match(node)
     else:
-        return f"  ;; {type(node).__name__}: {ast.dump(node)}"
+        return "  " + stmt_reject(node)
 
 
 def has_return(stmts):
@@ -1586,6 +1605,11 @@ def has_return(stmts):
                 return True
             for h in s.handlers:
                 if has_return(h.body):
+                    return True
+        if isinstance(s, ast.Match):
+            # case body 里的 return 也算：漏了会让 __return__ 未绑定（运行期炸）
+            for c in s.cases:
+                if has_return(c.body):
                     return True
     return False
 
@@ -1718,7 +1742,7 @@ def translate_block(stmts):
                     TYPE_ENV[target] = inferred
                 exprs.append(f"(set! {target} {val})")
             elif not destructure_done:
-                exprs.append(f";; {ast.dump(s)}")
+                exprs.append(stmt_reject(s))
         elif isinstance(s, ast.Expr):
             exprs.append(translate_expr(s.value))
         elif isinstance(s, ast.Return):
@@ -1795,8 +1819,11 @@ def translate_block(stmts):
             exprs.append("(__break__ #f)")
         elif isinstance(s, ast.Call):
             exprs.append(translate_expr(s))
+        elif isinstance(s, ast.Match):
+            # 块内 match（if/while/for 体里）：与函数顶层同一套 pattern 编译器
+            exprs.append(translate_match(s))
         else:
-            exprs.append(f";; {type(s).__name__}: {ast.dump(s)}")
+            exprs.append(stmt_reject(s))
     return exprs
 
 
@@ -1985,7 +2012,8 @@ def translate_dataclass(node):
             fields.append(item.target.id)
     if not fields:
         return f";; class {name} (no fields)"
-    field_str = " ".join(fields)
+    # 字段一律可变：Python dataclass 的字段可写，不可变会让 `p.x = v` 退化成注释（静默丢赋值）
+    field_str = " ".join(f"(mutable {f})" for f in fields)
     RECORD_FIELDS[name] = fields
     return "\n".join([f"(define-record-type {name}", f"  (fields {field_str}))"])
 
@@ -1994,12 +2022,80 @@ def translate_enum(node):
     """翻译枚举类为 Scheme 常量定义"""
     name = node.name
     lines = [f";; enum {name}"]
+    members = []
     for item in node.body:
         if isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name):
             cname = item.targets[0].id
+            members.append(cname)
             val = translate_expr(item.value)
             lines.append(f"(define {name}_{cname} {val})")
+    ENUM_MEMBERS[name] = members
     return "\n".join(lines)
+
+
+def enum_member_of(node):
+    """`Color.RED` -> (Color, RED)；不是枚举成员访问返回 None"""
+    if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Name):
+        return None
+    owner = node.value.id
+    members = ENUM_MEMBERS.get(owner)
+    if not members or node.attr not in members:
+        return None
+    return owner, node.attr
+
+
+def scan_enum_vars(tree):
+    """预扫枚举类与 `c = Color.RED`，记下「变量 → 枚举名」，供 c.value 出整数"""
+    # 先占位记录枚举成员（translate_enum 要等模块体翻译时才跑，这里只求判定顺序无关）
+    for node in ast.walk(tree):
+        if is_enum_class(node):
+            members = [item.targets[0].id for item in node.body
+                       if isinstance(item, ast.Assign) and len(item.targets) == 1
+                       and isinstance(item.targets[0], ast.Name)]
+            if members:
+                ENUM_MEMBERS.setdefault(node.name, members)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        t = node.targets[0]
+        if not isinstance(t, ast.Name):
+            continue
+        hit = enum_member_of(node.value) if isinstance(node.value, ast.Attribute) else None
+        if hit:
+            ENUM_VARS[node_target_name(t)] = hit[0]
+
+
+def node_target_name(t):
+    return t.id
+
+
+def enum_attr_expr(node):
+    """枚举成员取值（编译期可解析时才出 IR，其它形态交回后面的分支）
+
+    Color.RED       -> Color_RED   （成员值本身）
+    Color.RED.name  -> "RED"
+    Color.RED.value -> Color_RED
+    """
+    hit = enum_member_of(node)
+    if hit:
+        return f"{hit[0]}_{hit[1]}"
+    if isinstance(node.value, ast.Name) and node.attr in ("name", "value"):
+        # c = Color.RED 之后：c.value 就是那个整数；c.name 需要反向查表（构建期报错而不是崩）
+        owner = ENUM_VARS.get(node.value.id)
+        if owner:
+            if node.attr == "value":
+                return f"{mangle_name(node.value.id)}"
+            TRANS_ERRORS.append(
+                f"第 {getattr(node, 'lineno', 0)} 行: 枚举成员变量取 .name 尚未支持"
+                f"（写 {owner}.成员.name 或直接比 {owner}.成员）")
+            return f"(error 'unsupported \"enum-var-name\")"
+    if isinstance(node.value, ast.Attribute) and node.attr in ("name", "value"):
+        inner = enum_member_of(node.value)
+        if inner:
+            if node.attr == "name":
+                return '"' + inner[1] + '"'
+            return f"{inner[0]}_{inner[1]}"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -2783,6 +2879,12 @@ def try_field_set(node_stmt):
             owner = _field_owner(cls, t.attr)
             if owner:
                 return f"({owner}-{t.attr}-set! {translate_expr(t.value)} {translate_expr(node_stmt.value)})"
+        # dataclass 记录：r.w = v -> (Rect-w-set! r v)（以前整条赋值静默变成注释）
+        if isinstance(t.value, ast.Name):
+            rtype = TYPE_ENV.get(t.value.id)
+            if rtype in RECORD_TYPES and t.attr in RECORD_TYPES[rtype]:
+                return (f"({rtype}-{t.attr}-set! {mangle_name(t.value.id)} "
+                        f"{translate_expr(node_stmt.value)})")
     return None
 
 
@@ -4519,6 +4621,10 @@ def translate_expr(node):
             return f"(py-str-ref {value} {idx})"
         return f"(py-get {value} {idx})"
     elif isinstance(node, ast.Attribute):
+        # 枚举成员（Color.RED -> Color_RED）：必须在 class 分支之前
+        _eattr = enum_attr_expr(node)
+        if _eattr is not None:
+            return _eattr
         # class 成员（self.x / 已知实例.x / 方法引用）
         _cattr = try_class_attr(node)
         if _cattr:
@@ -4757,7 +4863,7 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                 else:
                     body_exprs.append(f"(set! {target} {val})")
             elif target != "__destructured__" and not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Subscript)):
-                body_exprs.append(f";; {ast.dump(stmt)}")
+                body_exprs.append(stmt_reject(stmt))
         elif isinstance(stmt, ast.If):
             test = cp_truthy_test(stmt.test)
             then_exprs = translate_block(stmt.body)
@@ -4880,7 +4986,7 @@ def translate_function(node, source_file="", method_class=None, method_kind="fun
                     parts.append(f";; del: {ast.dump(t)}")
             body_exprs.append("(begin %s)" % " ".join(parts) if parts else "(void)")
         else:
-            body_exprs.append(f";; {type(stmt).__name__}: {ast.dump(stmt)}")
+            body_exprs.append(stmt_reject(stmt))
         si += 1
     
     # 生成函数体
@@ -5127,6 +5233,7 @@ def _run_pipeline(input_files, plugin_arg="", lib_mode=False):
     # 收集记录类型（先扫实例化，决定 enum-shaped 类的归属）
     collect_instantiated(tree)
     collect_record_types(tree)
+    scan_enum_vars(tree)
     
     # 生成 Scheme
     output_parts = []
