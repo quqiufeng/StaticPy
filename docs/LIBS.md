@@ -365,6 +365,18 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
       ——`if i > 0: out += ","` 与 `if j > 0: out += ","` 并列会写出双逗号，元素数对不上；
   3) `ps[i].zero_grad()` 这种**下标直调方法**会丢静态类型（段错误），必须 `t: Tensor = ps[i]` 再 `t.zero_grad()`；
   4) `save_params` 不建目录，先 `os_mkdir("<dir>")`，否则 `save=0`、`load=0` 静默不报错。
+- **多头自注意力模板** `plugins/ltorch/train_mha.static.py`：直接用 **`MultiheadAttention(embed, heads, seed)`**
+  （对标 `nn.MultiheadAttention`，v11 起有），`(T,E) → mha → +xs 残差 → mean(dim=0) → LayerNorm → Linear → CE`，
+  AdamW 100 步。**批处理写法**：`MultiheadAttention` 的注意力在整段序列上做，一次喂 `(N*T,E)` 会串味
+  （torch 靠 `attn_mask` 解决，本模板故意不引掩码）→ 逐样本 `index_select(行号 list)` 前向，再用
+  `cat(dim=0)` 把 `(1,N_CLS)` 拼成 `(N,N_CLS)`（= `batch=1` 推理的标准写法）。
+  数据故意设计成**三类在池化特征上均值完全相同（第 0 维均值恒 0）**、只有「高值 token 个数」不同
+  （1/2/0 个），所以只有按内容打分的注意力能分开 —— 把 `out_proj` 权重 `wo` 清零（注意力支路失效、
+  只剩残差）就**恰好掉到 3/9 = 0.333**（三类均值相同、argmax 全取 0）。
+  实跑：`loss 1.36 → 1.2e-3`、`acc 0.333 → 1.0`；`save 12` / `acc_wiped 0.333` / `load 12` → `1.0`。
+  **坑**：`tensor_from_csv` 的 shape 串是 `"行,列"`，写成 `"[9,8]"` 不报错但拿到空 shape
+  （后面 `index_select`/`mean_dim` 全线空转，最后在 `float("")` 上炸）；`parameters()` 里
+  `out + sub.parameters()` 链式拼列表会静默少一层（少了 head 的 2 个）→ 改成逐项 `append`。
 - **踩过的坑（写训练代码会撞到）**：默认实参不写齐会段错误（`Adam(ps, lr=…)` 必须给全默认值）；
   `CrossEntropyLoss` 收 `list` target，Tensor target 走 `forward_t`；`Sequential` 用**显式派发表**
   （静态语言无动态分派）；`__init__` 体内不建类型环境，需要局部类型标注的循环挪到普通方法。
@@ -387,6 +399,8 @@ bash plugins/ltorch/build_app.sh plugins/ltorch/train_template.static.py train_t
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_cnn.static.py train_cnn && ./dist/train_cnn
 # 现成模板 3（Transformer：Embedding + LayerNorm + 因果自注意力 + GELU FFN + AdamW + 存盘续训）：
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_attn.static.py train_attn && ./dist/train_attn
+# 现成模板 4（真 nn.MultiheadAttention：逐样本前向 + cat 拼批 + 残差 + LN + CE + 存盘续训）：
+bash plugins/ltorch/build_app.sh plugins/ltorch/train_mha.static.py train_mha && ./dist/train_mha
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
 python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：184/184（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6 + v10 Transformer/分类 25 + v11 自注意力 9）
 python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 125 条全验证、显式缺口 0（合计 7.1%）
