@@ -190,6 +190,11 @@
         ((py-glist? x) (py-glist-ref x i))
         (else (py-get x i))))
 
+(define (py-iter-prep x)
+  "for 循环入口：dict → 键的 vector（一次；Python 迭代 dict 得键）；
+   其余原样，交给 py-seq-len / py-seq-ref"
+  (if (hashtable? x) (list->vector (dict-keys x)) x))
+
 (define (py-range->list . args)
   "range(...) 在表达式位置（for 头由翻译器化成 do 循环）：返回 py-glist"
   (let* ((n (length args))
@@ -1495,6 +1500,8 @@ np 插件可覆盖成 PyArray 版"
         ((vector? x) (vector->list x))
         ;; 原生 Scheme list 已经是「Python list」：原样返回，别再包一层
         ((list? x) x)
+        ;; Python 迭代 dict 得「键」
+        ((hashtable? x) (dict-keys x))
         (else (list x))))
 
 ;; Python 的 < ：数值（int/float 混合）与字符串可比；其余不可比

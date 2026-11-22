@@ -1648,17 +1648,21 @@ def emit_for_stmt(stmt, indent="        "):
                 f"(let (({target} (vector-ref __iter __i))) {body_str})))")
     if isinstance(it, ast.Constant) and isinstance(it.value, str):
         iter_val = translate_expr(it)
+        # Python 迭代 str 得「1 字符 str」，与 py-get/py-items 一致（char 是 Scheme 概念）
         return (f"(let* ((__iter {iter_val}) (__n (string-length __iter))) "
                 f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
-                f"(let (({target} (string-ref __iter __i))) {body_str})))")
+                f"(let (({target} (string (string-ref __iter __i)))) {body_str})))")
     if isinstance(it, ast.Name):
         iter_name = it.id
         # py-seq-len / py-seq-ref 统一 vector / py-glist / tagged-array / str
         # （str 迭代给「1 字符 str」，与 CPython 一致；旧版给 char）
-        return (f"(let* ((__iter {iter_name}) (__n (py-seq-len __iter))) "
+        # py-iter-prep：dict → 键 vector（一次），否则原样
+        return (f"(let* ((__iter (py-iter-prep {iter_name})) (__n (py-seq-len __iter))) "
                 f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
                 f"(let (({target} (py-seq-ref __iter __i))) {body_str})))")
-    return ";; for loop (untranslated)"
+    # 其余可迭代表达式（Dict/Set 字面量、Call…）：py-items 统一展开，
+    # 不再出 ";; for loop (untranslated)"（等于把整段循环静默丢掉）
+    return f"(for-each (lambda ({target}) {body_str}) (py-items {translate_expr(it)}))"
 
 def translate_block(stmts):
     """翻译一个语句块（if/while 体），正确处理 set! 赋值"""

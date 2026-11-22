@@ -1909,16 +1909,20 @@ def block_for(s, lvl: int) -> str:
     if nt(it) == "List" or nt(it) == "ListComp" or nt(it) == "Tuple":
         return f"(let* ((__iter {translate_expr(it)}) (__n (vector-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({nm} (vector-ref __iter __i))) {bs})))"
     if nt(it) == "Constant" and dict_get(it, "_k") == "str":
-        return f"(let* ((__iter {translate_expr(it)}) (__n (string-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({nm} (string-ref __iter __i))) {bs})))"
+        # Python 迭代 str 得「1 字符 str」，与 py-get/py-items 一致（char 是 Scheme 概念）
+        return f"(let* ((__iter {translate_expr(it)}) (__n (string-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({nm} (string (string-ref __iter __i)))) {bs})))"
     if nt(it) == "Name":
         # 统一走 py-seq-len / py-seq-ref（vector / glist / tagged / str 通吃）。
         # 曾经 lvl==1（函数体顶层）走 py-iter-seq + vector-length：那会把 py-glist
         # 整表拷成 vector（O(n) 一次性浪费，且每层循环各拷一次）。
+        # py-iter-prep：dict → 键 vector（一次），否则原样（每循环一次类型判断）。
         iter_name: str = dict_get(it, "id")
-        return (f"(let* ((__iter {iter_name}) (__n (py-seq-len __iter))) "
+        return (f"(let* ((__iter (py-iter-prep {iter_name})) (__n (py-seq-len __iter))) "
                 f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
                 f"(let (({nm} (py-seq-ref __iter __i))) {bs})))")
-    return ";; for loop (untranslated)"
+    # 其余可迭代表达式（Dict/Set 字面量、Call、条件式…）：交给 py-items 统一展开，
+    # 不再出 ";; for loop (untranslated)" —— 那种注释等于把整段循环静默丢掉。
+    return f"(for-each (lambda ({nm}) {bs}) (py-items {translate_expr(it)}))"
 
 def is_range(it) -> bool:
     if nt(it) != "Call":
