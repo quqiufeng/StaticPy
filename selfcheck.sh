@@ -54,6 +54,11 @@ else
   echo "  构建 dist/normscm 失败"; fail=1
 fi
 
+echo ">>> [0f/4] 预置名登记一致性（种子 ⇄ 自举 ⇄ 运行时 六条规则）"
+if _reg_out=$($PY tools/check_registry.py 2>&1); then echo "  ok（$(tail -1 <<<"$_reg_out")）"; else
+  echo "  登记漂移：$PY tools/check_registry.py -v"; fail=1
+fi
+
 echo ">>> [1/4] 构建 C 库 + 前端（imgproc）"
 bash imgproc/build.sh >/dev/null 2>&1 && echo "  ok" || { echo "  失败"; fail=1; }
 
