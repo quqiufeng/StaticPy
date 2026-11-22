@@ -244,9 +244,14 @@ STATICPY_PROFILE=source bash staticpy/static_build.sh app.static.py app
 STATICPY_PROFILE=block bash staticpy/static_build.sh app.static.py app && ./dist/app
 STATICPY_PROFILE=block STATICPY_PGO=1 bash staticpy/static_build.sh app.static.py app
 
+# 常数因子基准（编译时间/体积/冷启动/FFI 往返；固定输入，详见 docs/PERF.md）
+bash tools/bench.sh                              # 六阶段取中位
+bash tools/bench.sh --baseline ~/iso_gen/bench/base.json   # 与基线逐项比（|Δ|>5% 才当信号）
+
 # 验证
 PY=python3
 $PY tools/split_plugins.py --check    # plugins/ ⇄ static_prelude.scm 单一真源（防漂移）
+$PY tools/check_registry.py           # 预置名 ⇄ parser/emitter 两套实现登记一致性
 $PY imgproc/pil_surface.py > imgproc/pil_api.md
 $PY imgproc/frontend_coverage.py
 $PY imgproc/difftest.py -v
