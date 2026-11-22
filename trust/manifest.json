@@ -25,18 +25,18 @@
       "path": "staticpy/static_translate.py",
       "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
       "state": "present",
-      "sha256": "a12a36d54c724294feed402285fb54242289ff7b30c104ac1d4ea5126dfeb1b9",
-      "bytes": 232863,
-      "lines": 5218
+      "sha256": "ab624eb0c8198698400fda601ed63b0cc83b6c06c9522badb34f2de533236527",
+      "bytes": 238930,
+      "lines": 5348
     },
     {
       "role": "seed",
       "path": "tools/seed/prelude.scm",
       "why": "**运行时真源**（split_plugins.py 从它切出 plugins/ 再拼回 prelude）；改语义改这里",
       "state": "present",
-      "sha256": "007b6a4bf2f1d5e8d2b6a140735d67977568c28be860fa6fd4c4221ba3ee2a97",
-      "bytes": 123832,
-      "lines": 2990
+      "sha256": "b1f1cc9e774df9fb989726e9c707da8a8f2dd9f7fd0e3c8dbe7b547b1ddf3786",
+      "bytes": 128464,
+      "lines": 3088
     },
     {
       "role": "seed",
@@ -52,26 +52,26 @@
       "path": "plugins/core/runtime.scm",
       "why": "切分后的 core 运行时（构建实际读它）：位运算等兜底在此",
       "state": "present",
-      "sha256": "341a15f351d18525cbe5ed4e734e15b88855676bc23d1557e04ccc61fc22b88c",
-      "bytes": 95537,
-      "lines": 2257
+      "sha256": "d1df4b414f86ab67933c96eccaf0b233d8126d11910a43aeff8c6143bb18a65b",
+      "bytes": 98431,
+      "lines": 2318
     },
     {
       "role": "gen",
       "path": "staticpy/static_prelude.scm",
       "why": "**生成物**（勿手改）：prelude ⇄ plugins 必须同步，check 不过就别提交",
       "state": "present",
-      "sha256": "dbb309daeb950eef4929d8a20a5c7e75f1fd73e19775a69ccd3c87004c29aab5",
-      "bytes": 123782,
-      "lines": 2986
+      "sha256": "101cf69e5f685b0bb26f70cd9e526776edd1130a2620de828e2ab18c3d34cc52",
+      "bytes": 128414,
+      "lines": 3084
     },
     {
       "role": "seed",
       "path": "staticpy/static_stdlib.scm",
       "why": "标准库（合并进 ELF）",
       "state": "present",
-      "sha256": "91cc83d8734d0ef477c83a5914fd86e525551901e7d830b59166ac935286e2f6",
-      "bytes": 658,
+      "sha256": "24143a4f10981ddf469f70815d989093b41dc8cd5c9cded690abc4c65d80ef6c",
+      "bytes": 649,
       "lines": 10
     },
     {
@@ -79,44 +79,44 @@
       "path": "staticpy/static_translate.static.py",
       "why": "环2 实现：词法器+驱动（自举，可被 ELF 顶替种子）",
       "state": "present",
-      "sha256": "889cbdcaa1ea95fcddd8b47e4bb31bb982a9b41383ee0c9781ae5b03b5670a1f",
-      "bytes": 17343,
-      "lines": 563
+      "sha256": "d52042cce12ebd6f368e9660210df0f9b13c7820b5fc189604d199d85bbe914f",
+      "bytes": 20678,
+      "lines": 677
     },
     {
       "role": "impl",
       "path": "staticpy/parse_lib.static.py",
       "why": "环2 实现：解析器",
       "state": "present",
-      "sha256": "f3fbfaa35130d557e09c4c005b2495296758975822914a752a3c3936269cb765",
-      "bytes": 59427,
-      "lines": 2061
+      "sha256": "12738952658ac1284059cd9799f57af816f6d824d07fdad9d4ddb694d3e3f1c0",
+      "bytes": 59443,
+      "lines": 2060
     },
     {
       "role": "impl",
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "786d2686fcec8e47323d1ac1ebd4f46ffe79b93599482f67036aee314272ecba",
-      "bytes": 153277,
-      "lines": 4011
+      "sha256": "fed6d0d9c8f9e07a00251b4abb7e8f757ad14e0f481932f9c37746a291c00095",
+      "bytes": 164172,
+      "lines": 4210
     },
     {
       "role": "impl",
       "path": "staticpy/emit_dump.static.py",
       "why": "环2 实现：入口薄壳",
       "state": "present",
-      "sha256": "e19369ad8e77c15e3f26e8a3ebbb0dede507396f7a53dae14f9d6b3f1cd440ae",
-      "bytes": 806,
-      "lines": 22
+      "sha256": "e65380d28863348b1cb8af6ac6dd5436c906fe586e8b74142fd58201ce049a2a",
+      "bytes": 760,
+      "lines": 20
     },
     {
       "role": "impl",
       "path": "selfhost/staticc.py",
       "why": "环3 的另一份实现：Python 子集语法的编译器（DDC 的 C1）",
       "state": "present",
-      "sha256": "3968290c2213e0a431467d7bca303b7a99a2504c16677fd8fda63370578b6e0b",
-      "bytes": 34588,
+      "sha256": "a81a0c754106fc83b38ca8cd41f407efd04a71e380358e2fe2c80a46f3393a29",
+      "bytes": 34579,
       "lines": 1132
     },
     {
@@ -124,9 +124,9 @@
       "path": "selfcheck.sh",
       "why": "一键自检",
       "state": "present",
-      "sha256": "b3cd238fe82b58a0ee4d12c00fcd044bb7c50a4111f64bc8b70e75b66636a34e",
-      "bytes": 5918,
-      "lines": 119
+      "sha256": "cefe371d2b5919d55bdc7c342abfa8cd51eeeb4cdb9a5f6d443f489391912efc",
+      "bytes": 6726,
+      "lines": 134
     },
     {
       "role": "harness",
@@ -142,26 +142,26 @@
       "path": "staticpy/check_parse.sh",
       "why": "判据：AST 形状差分（vs CPython ast）",
       "state": "present",
-      "sha256": "bbbda361af81cdae893b5b9ca9b456d325b356f8cc987fe4170936f9cc574d06",
-      "bytes": 1075,
-      "lines": 24
+      "sha256": "9e7086f498ebc567a9c415564e01ad0fa2dcb7183ff264ee1543023ef038bd40",
+      "bytes": 1407,
+      "lines": 29
     },
     {
       "role": "harness",
       "path": "staticpy/check_translate.sh",
       "why": "判据：IR 逐字节差分（自举 vs 冻结种子）",
       "state": "present",
-      "sha256": "c31c3ddaa1ce46f9870db8987ea84bd3fcf8a0b54d06312d97532c8d9d93b12d",
-      "bytes": 2709,
-      "lines": 55
+      "sha256": "71fd6f1115075da04a30f11d2c45832dede7d72426b6bc63c1f121446f16c8e3",
+      "bytes": 3005,
+      "lines": 59
     },
     {
       "role": "harness",
       "path": "staticpy/semantics_diff.py",
       "why": "判据：语义差分（CPython 跑 vs ELF 跑）",
       "state": "present",
-      "sha256": "c953f8194c69bdaf6f7447632769057e0cbbd6174e7b8f97f029b0701060fb69",
-      "bytes": 7232,
+      "sha256": "b47e8a4c70de50e2b95f1fccb7d52c66c685c74d2c6a30bb9afeaef8f4ae4353",
+      "bytes": 7223,
       "lines": 169
     },
     {
@@ -169,17 +169,17 @@
       "path": "trust/normalize_scm.py",
       "why": "判据：IR token 级规范化（去注释/去空白）",
       "state": "present",
-      "sha256": "a4c5ae22865d583ab4ae94626855acaefa4ffd4bd66bb2e5df2c41e80bcd8f03",
-      "bytes": 3105,
-      "lines": 95
+      "sha256": "cf29f64039cee7231223fc9f8ae4bf9a2a41011da5e758602dfeddec35ef1f72",
+      "bytes": 3314,
+      "lines": 102
     },
     {
       "role": "harness",
       "path": "trust/ddc.sh",
       "why": "判据：异源双编译交叉验证（环3 抗后门）",
       "state": "present",
-      "sha256": "a61f8e5bb11ffc50373c3874c378ebf740c222b300dc29bfba5b9d3f68814082",
-      "bytes": 8107,
+      "sha256": "c85f3ec7b4dec46d86c78a77cd3024ea68f130fa9dbcf8c2753aa7450e72fd07",
+      "bytes": 8098,
       "lines": 162
     },
     {
@@ -187,8 +187,8 @@
       "path": "trust/fixpoint.sh",
       "why": "判据：三阶段固定点（自举收敛）",
       "state": "present",
-      "sha256": "601e4b4a03e42af8afdf8b0ef44cc1c2242d476851c570f0b0addea6c39ac08f",
-      "bytes": 4180,
+      "sha256": "7783a0bb9401209703cd94ac04125dffaaa5f0d12b7fdc295b5fd2a4459fba55",
+      "bytes": 4171,
       "lines": 85
     },
     {
@@ -196,8 +196,8 @@
       "path": "trust/rebuild_spboot.sh",
       "why": "把 ~/iso_gen/spboot/spboot_self 重编成当前源码产物（防止陈旧二进制冒充 C2）",
       "state": "present",
-      "sha256": "4fbcd70dcc31a765c6fa55de99ab823ea4fa75d734f66678aa97357aa44e8162",
-      "bytes": 2631,
+      "sha256": "2e7ab276bea12f42aed3f3bd1a8922d2b7267ff08e317b86565f8cc5a001f0e4",
+      "bytes": 2622,
       "lines": 45
     },
     {
@@ -1009,6 +1009,24 @@
       "sha256": "ecd30b05e0dd4fea3a13c26810dd9e1992dc379049482c393d5a19e6b5090aab",
       "bytes": 199192,
       "lines": 5079
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/torch/torch_capi.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "6472406e957d39c4bf590099b3cbbe5dd271230e9ce81562f81adb75875e1d2d",
+      "bytes": 12820,
+      "lines": 479
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/torch/torch_capi.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "95f0879425976f867db23e4b378f3754682b677eec768f173ace81f8bde1c94f",
+      "bytes": 3074,
+      "lines": 75
     },
     {
       "role": "cpp",
@@ -2113,8 +2131,8 @@
       "path": "trust/backend_drill.sh",
       "why": "判据/证据装置（自动收录：改它=改判据，必须显式重签）",
       "state": "present",
-      "sha256": "c3722e71ef272054cd990a9959ea6d29a5a3ac5c7aacc150f2b736fdb078a83d",
-      "bytes": 4670,
+      "sha256": "2c41e653c4bd228aad68f4cbead12486f52097871d901d7eebba5569450fc6b6",
+      "bytes": 4661,
       "lines": 114
     },
     {
