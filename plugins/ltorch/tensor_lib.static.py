@@ -117,6 +117,7 @@ extern fn torchc_dropout(x: ptr, p: double, training: int, seed: int) -> ptr fro
 extern fn torchc_sgd_step_momentum(w: ptr, g: ptr, buf: ptr, lr: double, momentum: double, weight_decay: double, nesterov: int) -> int from "torchc"
 extern fn torchc_adam_step(w: ptr, g: ptr, m: ptr, v: ptr, lr: double, beta1: double, beta2: double, eps: double, weight_decay: double, step: int, decoupled: int) -> int from "torchc"
 extern fn torchc_set_grad(w: ptr, g: ptr) -> int from "torchc"
+extern fn torchc_lstm(x: ptr, wih: ptr, whh: ptr, bih: ptr, bhh: ptr, h0: ptr, c0: ptr, want: int) -> ptr from "torchc"
 extern fn torchc_adagrad_step(w: ptr, g: ptr, acc: ptr, lr: double, lr_decay: double, weight_decay: double, eps: double, step: int) -> int from "torchc"
 extern fn torchc_rmsprop_step(w: ptr, g: ptr, sq: ptr, lr: double, alpha: double, eps: double, weight_decay: double) -> int from "torchc"
 
@@ -1168,7 +1169,9 @@ class CosineAnnealingLR:
 
     def step(self) -> float:
         self.last_epoch += 1
-        frac: float = float(self.last_epoch) / float(self.t_max)
+        t: float = float(self.last_epoch)
+        tm: float = float(self.t_max)
+        frac: float = t / tm
         cosv: float = math.cos(math.pi * frac)
         return self.eta_min + (self.base_lr - self.eta_min) * (1.0 + cosv) / 2.0
 
@@ -1202,3 +1205,52 @@ def load_state_dict(params: list, paths: list) -> int:
             n += 1
         i += 1
     return n
+
+class LSTM:
+    """torch.nn.LSTM 单层单向（batch_first=False）。
+
+    权重顺序与 torch 的 flat_weights 一致 {w_ih, w_hh, b_ih, b_hh}，门序 i,f,g,o；
+    数值落 at::lstm（ATen 内核），与 torch 逐位一致（float64 实测 max|Δ|=0）。
+    forward(x) → out(seq,batch,hid)；另给 final_hidden / final_cell（h_n / c_n）。
+    """
+
+    w_ih: Tensor
+    w_hh: Tensor
+    b_ih: Tensor
+    b_hh: Tensor
+    hid: int
+    n_in: int
+
+    def __init__(self, n_in: int, n_hidden: int):
+        self.n_in = n_in
+        self.hid = n_hidden
+        self.w_ih = zeros([0])
+        self.w_hh = zeros([0])
+        self.b_ih = zeros([0])
+        self.b_hh = zeros([0])
+
+    def load(self, wih_csv: str, whh_csv: str, bih_csv: str, bhh_csv: str) -> None:
+        """灌权重（CSV 展平，行主序）：w_ih(4h,in) w_hh(4h,h) b_ih(4h) b_hh(4h)"""
+        h4: int = 4 * self.hid
+        self.w_ih = tensor_from_csv(wih_csv, str(h4) + "," + str(self.n_in))
+        self.w_hh = tensor_from_csv(whh_csv, str(h4) + "," + str(self.hid))
+        self.b_ih = tensor_from_csv(bih_csv, str(h4))
+        self.b_hh = tensor_from_csv(bhh_csv, str(h4))
+
+    def run(self, x: Tensor, want: int) -> Tensor:
+        sh: str = x.shape()
+        parts: list = sh.split(",")
+        batch: int = string_to_int(parts[1])
+        h0: Tensor = zeros([1, batch, self.hid])
+        c0: Tensor = zeros([1, batch, self.hid])
+        return Tensor(torchc_lstm(x.h, self.w_ih.h, self.w_hh.h, self.b_ih.h, self.b_hh.h,
+                                  h0.h, c0.h, want))
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.run(x, 0)
+
+    def final_hidden(self, x: Tensor) -> Tensor:
+        return self.run(x, 1)
+
+    def final_cell(self, x: Tensor) -> Tensor:
+        return self.run(x, 2)

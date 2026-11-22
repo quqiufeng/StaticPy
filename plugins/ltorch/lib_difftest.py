@@ -309,6 +309,15 @@ def main():
         o6.lr = ca.step()
         j += 1
     print("coslr=" + str(o6.lr))
+
+    # ================= v5：LSTM（单层单向，落 at::lstm） =================
+    lx: Tensor = tensor({LX}, [3, 2, 4])
+    rec: LSTM = LSTM(4, 5)
+    rec.load({LW_IH}, {LW_HH}, {LB_IH}, {LB_HH})
+    print("lstm_out=" + rec.forward(lx).values())
+    print("lstm_hn=" + rec.final_hidden(lx).values())
+    print("lstm_cn=" + rec.final_cell(lx).values())
+
     print("ok")
 
 
@@ -404,6 +413,14 @@ def main():
     ox = [1.0, 2.0, 3.0, 4.0, 0.5, -1.0]           # 3x2
     oy = [1.0, 2.0, 3.0]                           # 3x1
 
+    # ---- v5 LSTM：S=3,B=2,I=4,H=5（pairs 与 ref 共用同一份数值）----
+    lS, lB, lI, lH = 3, 2, 4, 5
+    lw_ih = torch.randn(4 * lH, lI, generator=g2, dtype=torch.float64) * 0.5
+    lw_hh = torch.randn(4 * lH, lH, generator=g2, dtype=torch.float64) * 0.5
+    lb_ih = torch.randn(4 * lH, generator=g2, dtype=torch.float64) * 0.2
+    lb_hh = torch.randn(4 * lH, generator=g2, dtype=torch.float64) * 0.2
+    lx = torch.randn(lS, lB, lI, generator=g2, dtype=torch.float64)
+
     spath = os.path.join(WORK, "saved_param.bin")
     if os.path.exists(spath):
         os.remove(spath)
@@ -427,6 +444,8 @@ def main():
         "OW": csv(ow), "SOW": "1,2", "OB": csv(ob), "SOB": "1,1",
         "OX": csv(ox), "SOX": "3,2", "OY": csv(oy), "SOY": "3,1",
         "SPATH": '"' + spath + '"',
+        "LX": "[" + csv(flat(lx)) + "]", "LW_IH": csv(flat(lw_ih)), "LW_HH": csv(flat(lw_hh)),
+        "LB_IH": csv(flat(lb_ih)), "LB_HH": csv(flat(lb_hh)),
     }
     ours = run_elf(pairs, verbose)
 
@@ -616,6 +635,18 @@ def main():
         _o2.step()
         _ca.step()
     ref["coslr"] = [_o2.param_groups[0]["lr"]]
+
+    # ---------------- v5：LSTM ----------------
+    _lstm = torch.nn.LSTM(lI, lH, dtype=torch.float64)
+    with torch.no_grad():
+        _lstm.weight_ih_l0.copy_(lw_ih)
+        _lstm.weight_hh_l0.copy_(lw_hh)
+        _lstm.bias_ih_l0.copy_(lb_ih)
+        _lstm.bias_hh_l0.copy_(lb_hh)
+    _lout, (_lhn, _lcn) = _lstm(lx)
+    ref["lstm_out"] = flat(_lout.detach())
+    ref["lstm_hn"] = flat(_lhn.detach())
+    ref["lstm_cn"] = flat(_lcn.detach())
 
     # ---------------- 比对 ----------------
     bad = 0

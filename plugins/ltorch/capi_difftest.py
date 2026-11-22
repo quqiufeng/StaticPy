@@ -43,6 +43,12 @@ def flat(m):
 
 
 # ---------------------------------------------------------------- A 侧：pip torch
+def _lseq(n, phase=0.0):
+    """确定性权重序列：两侧各自生成同一份（拷到 CSV 也省得传）。"""
+    import math
+    return [math.sin((i + 1) * 0.7 + phase) * 0.5 for i in range(n)]
+
+
 def side_expect():
     import torch
 
@@ -154,6 +160,7 @@ class Cap:
             ("torchc_is_grad_enabled", ctypes.c_long, []),
             ("torchc_save", ctypes.c_long, [P, ctypes.c_char_p]),
             ("torchc_load", P, [ctypes.c_char_p]),
+            ("torchc_lstm", P, [P, P, P, P, P, P, P, ctypes.c_long]),
             ("torchc_free_int", ctypes.c_long, [P]),
         ]
         for nm, res, arg in sig:
@@ -282,6 +289,19 @@ def side_actual():
     # dropout：训练态必须恒等，eval 态必须恒等（p 只在 train 生效）
     c.put(out, "dropout_eval", L.torchc_dropout(x, 0.5, 0, 0))
 
+    # LSTM：I=2,H=2,S=3,B=1（权重确定性生成，两侧一致）
+    lx = c.t(_lseq(3 * 1 * 2), "3,1,2")
+    lwih = c.t(_lseq(4 * 2 * 2, 2.0), "8,2")
+    lwhh = c.t(_lseq(4 * 2 * 2, 3.0), "8,2")
+    lbih = c.t(_lseq(8, 4.0), "8")
+    lbhh = c.t(_lseq(8, 5.0), "8")
+    lh0 = L.torchc_zeros(b"1,1,2")
+    lc0 = L.torchc_zeros(b"1,1,2")
+    c.put(out, "lstm_out", L.torchc_lstm(lx, lwih, lwhh, lbih, lbhh, lh0, lc0, 0))
+    c.put(out, "lstm_hn", L.torchc_lstm(lx, lwih, lwhh, lbih, lbhh, lh0, lc0, 1))
+    c.put(out, "lstm_cn", L.torchc_lstm(lx, lwih, lwhh, lbih, lbhh, lh0, lc0, 2))
+    c.free(lx, lwih, lwhh, lbih, lbhh, lh0, lc0)
+
     c.free(x, y, logits, img, ker, vec, sq, bias, bn_x, gm, bt, mu, va,
            w, g, buf, w2, g2, m, v, w3, g3, m3, v3, w4, g4, s4)
     return out
@@ -315,6 +335,18 @@ def side_expect_optim():
     p.grad = tn([[0.1, -0.2]])
     torch.optim.RMSprop([p], lr=0.01).step()
     out["rmsprop_w"] = {"vals": flat(p.detach().tolist()), "shape": [1, 2]}
+
+    # LSTM（I=2,H=2,S=3,B=1）：与 side_actual 同一份确定性权重
+    lm = torch.nn.LSTM(2, 2, dtype=torch.float64)
+    with torch.no_grad():
+        lm.weight_ih_l0.copy_(tn(_lseq(16, 2.0)).reshape(8, 2))
+        lm.weight_hh_l0.copy_(tn(_lseq(16, 3.0)).reshape(8, 2))
+        lm.bias_ih_l0.copy_(tn(_lseq(8, 4.0)))
+        lm.bias_hh_l0.copy_(tn(_lseq(8, 5.0)))
+    lo, (lhn, lcn) = lm(tn(_lseq(6)).reshape(3, 1, 2))
+    out["lstm_out"] = {"vals": flat(lo.detach().tolist()), "shape": [3, 1, 2]}
+    out["lstm_hn"] = {"vals": flat(lhn.detach().tolist()), "shape": [1, 1, 2]}
+    out["lstm_cn"] = {"vals": flat(lcn.detach().tolist()), "shape": [1, 1, 2]}
     return out
 
 

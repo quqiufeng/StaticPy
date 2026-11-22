@@ -1015,4 +1015,35 @@ long torchc_free_int(torchc_tensor a) {
   return 1;
 }
 
+// ---- LSTM ----
+/* ---- LSTM：直接落 at::lstm（ATen 实现，与 torch.nn.LSTM 单层单向同源） ----
+ * 参数顺序 = torch flat_weights：{w_ih, w_hh, b_ih, b_hh}；门顺序 i,f,g,o 由 ATen 保证。
+ * x:(seq,batch,input)，h0/c0:(1,batch,hidden)。want: 0=out 1=h_n 2=c_n。 */
+static std::tuple<at::Tensor, at::Tensor, at::Tensor> lstm_run(
+    torchc_tensor x, torchc_tensor wih, torchc_tensor whh, torchc_tensor bih,
+    torchc_tensor bhh, torchc_tensor h0, torchc_tensor c0) {
+  std::vector<at::Tensor> params = {*unwrap(wih), *unwrap(whh), *unwrap(bih), *unwrap(bhh)};
+  std::vector<at::Tensor> hx = {*unwrap(h0), *unwrap(c0)};
+  return at::lstm(*unwrap(x), hx, params, /*has_biases=*/true, /*num_layers=*/1,
+                  /*dropout_p=*/0.0, /*train=*/false, /*bidirectional=*/false,
+                  /*batch_first=*/false);
+}
+
+torchc_tensor torchc_lstm(torchc_tensor x, torchc_tensor wih, torchc_tensor whh,
+                          torchc_tensor bih, torchc_tensor bhh, torchc_tensor h0,
+                          torchc_tensor c0, long want) {
+  clear_error();
+  if (x == nullptr || wih == nullptr || whh == nullptr || bih == nullptr ||
+      bhh == nullptr || h0 == nullptr || c0 == nullptr) {
+    set_error("lstm: 空句柄");
+    return nullptr;
+  }
+  TORCHC_GUARD_BEGIN
+    auto r = lstm_run(x, wih, whh, bih, bhh, h0, c0);
+    if (want == 0) return wrap(std::get<0>(r));
+    if (want == 1) return wrap(std::get<1>(r));
+    return wrap(std::get<2>(r));
+  TORCHC_GUARD_END("lstm")
+}
+
 }  // extern "C"

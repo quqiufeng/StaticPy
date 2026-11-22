@@ -119,6 +119,11 @@ torchc_tensor torchc_l1_loss(torchc_tensor pred, torchc_tensor target);
 long torchc_sgd_step_momentum(torchc_tensor w, torchc_tensor g, torchc_tensor buf,
                               double lr, double momentum, double weight_decay, long nesterov);
 long torchc_set_grad(torchc_tensor w, torchc_tensor g);
+/* LSTM 单层单向：x(seq,batch,in) + flat_weights{w_ih,w_hh,b_ih,b_hh} + h0/c0(1,batch,hid)；
+   want 0=out(seq,batch,hid) 1=h_n 2=c_n。 */
+torchc_tensor torchc_lstm(torchc_tensor x, torchc_tensor wih, torchc_tensor whh,
+                          torchc_tensor bih, torchc_tensor bhh, torchc_tensor h0,
+                          torchc_tensor c0, long want);
 long torchc_adagrad_step(torchc_tensor w, torchc_tensor g, torchc_tensor acc,
                          double lr, double lr_decay, double weight_decay, double eps, long step);
 long torchc_adam_step(torchc_tensor w, torchc_tensor g, torchc_tensor m, torchc_tensor v,

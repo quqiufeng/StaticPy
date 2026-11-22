@@ -120,7 +120,7 @@ MAP = {
     ("nn", "CrossEntropyLoss"): "p:CrossEntropyLoss",
     ("nn", "L1Loss"): "s:torch-l1-loss",
     ("nn", "Embedding"): "p:Embedding",
-    ("nn", "LSTM"): None,
+    ("nn", "LSTM"): "p:LSTM",
     # ---- optim ----
     ("optim", "SGD"): "p:SGD",
     ("optim", "Adam"): "p:Adam",
