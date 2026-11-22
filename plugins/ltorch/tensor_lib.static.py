@@ -497,21 +497,32 @@ class Linear(Module):
         ps: list = self.parameters()
         return ps[i]
 
+    def state_names(self) -> list:
+        """torch.nn.Linear 的键面：weight / bias。"""
+        out: list = []
+        out.append("weight")
+        out.append("bias")
+        return out
+
+    def state_list(self) -> list:
+        """state_dict 的下标所指的实表（与 state_names 一一对应）。"""
+        return self.parameters()
+
     def param(self, name: str) -> Tensor:
-        """按名字取参数（state_dict 给下标，Tensor 从 parameters() 取回保静态类型）。"""
-        ps: list = self.parameters()
-        d: dict = param_names(ps, self.tag)
+        """按名字取参数（state_dict 给下标，Tensor 从 state_list() 取回保静态类型）。"""
+        ps: list = self.state_list()
+        d: dict = self.state_dict()
         idx: int = int(d[name])
         return ps[idx]
 
     def state_dict(self) -> dict:
-        return param_names(self.parameters(), self.tag)
+        return names_index(self.state_names())
 
     def save(self, path: str) -> int:
-        return save_params(self.parameters(), path)
+        return save_params(self.state_list(), path)
 
     def load_ckpt(self, path: str) -> int:
-        return load_params(self.parameters(), path)
+        return load_params(self.state_list(), path)
 
 
 class ReLU(Module):
@@ -659,21 +670,31 @@ class Conv2d(Module):
         ps: list = self.parameters()
         return ps[i]
 
+    def state_names(self) -> list:
+        """torch.nn.Conv2d 的键面：weight / bias。"""
+        out: list = []
+        out.append("weight")
+        out.append("bias")
+        return out
+
+    def state_list(self) -> list:
+        return self.parameters()
+
     def param(self, name: str) -> Tensor:
-        """按名字取参数（state_dict 给下标，Tensor 从 parameters() 取回保静态类型）。"""
-        ps: list = self.parameters()
-        d: dict = param_names(ps, self.tag)
+        """按名字取参数（state_dict 给下标，Tensor 从 state_list() 取回保静态类型）。"""
+        ps: list = self.state_list()
+        d: dict = self.state_dict()
         idx: int = int(d[name])
         return ps[idx]
 
     def state_dict(self) -> dict:
-        return param_names(self.parameters(), self.tag)
+        return names_index(self.state_names())
 
     def save(self, path: str) -> int:
-        return save_params(self.parameters(), path)
+        return save_params(self.state_list(), path)
 
     def load_ckpt(self, path: str) -> int:
-        return load_params(self.parameters(), path)
+        return load_params(self.state_list(), path)
 
 
 class MaxPool2d(Module):
@@ -743,6 +764,7 @@ class BatchNorm1d(Module):
     eps: float
     momentum: float
     training: int
+    nbt: Tensor
 
     def __init__(self, n: int, eps: float, momentum: float = 0.1):
         super().__init__()
@@ -754,6 +776,7 @@ class BatchNorm1d(Module):
         self.var = ones([n])
         self.gamma = ones([n]).requires_grad_(1)
         self.beta = zeros([n]).requires_grad_(1)
+        self.nbt = zeros([1])        # num_batches_tracked（torch 的同名 buffer）
 
     def load(self, mean_csv: str, var_csv: str, gamma_csv: str, beta_csv: str, n: int) -> None:
         """灌 running_mean / running_var / weight / bias（各 (C,) 一条 CSV）。"""
@@ -779,6 +802,8 @@ class BatchNorm1d(Module):
         return self.var
 
     def forward(self, x: Tensor) -> Tensor:
+        if self.training == 1:
+            self.nbt = self.nbt.add_scalar(1.0)   # 同 torch：训练态每前向 +1
         return Tensor(torchc_batch_norm_train(x.h, self.mean.h, self.var.h,
                                              self.gamma.h, self.beta.h, self.eps,
                                              self.momentum, self.training))
@@ -794,26 +819,42 @@ class BatchNorm1d(Module):
         ps: list = self.parameters()
         return ps[i]
 
+    def state_names(self) -> list:
+        """torch.nn.BatchNorm1d 的键面（含 buffer）：weight/bias/running_mean/running_var/num_batches_tracked。"""
+        out: list = []
+        out.append("weight")
+        out.append("bias")
+        out.append("running_mean")
+        out.append("running_var")
+        out.append("num_batches_tracked")
+        return out
+
+    def state_list(self) -> list:
+        """顺序与 state_names 对齐：gamma, beta, mean, var, nbt。"""
+        out: list = []
+        out.append(self.gamma)
+        out.append(self.beta)
+        out.append(self.mean)
+        out.append(self.var)
+        out.append(self.nbt)
+        return out
+
     def param(self, name: str) -> Tensor:
-        """按名字取参数（state_dict 给下标，Tensor 从 parameters() 取回保静态类型）。"""
-        ps: list = self.parameters()
-        d: dict = param_names(ps, self.tag)
+        """按名字取（含 buffer：running_mean / running_var / num_batches_tracked 也在表里）。"""
+        ps: list = self.state_list()
+        d: dict = self.state_dict()
         idx: int = int(d[name])
         return ps[idx]
 
     def state_dict(self) -> dict:
-        return param_names(self.parameters(), self.tag)
+        return names_index(self.state_names())
 
     def save(self, path: str) -> int:
-        """gamma/beta 走 parameters()，running mean/var 另存 <path>.bn.* 两份。"""
-        n: int = save_params(self.parameters(), path)
-        n += save_params(bn_extras_one(self), path + ".bn")
-        return n
+        """5 份：gamma/beta/running_mean/running_var/num_batches_tracked（同 torch 的 state_dict）。"""
+        return save_params(self.state_list(), path)
 
     def load_ckpt(self, path: str) -> int:
-        n: int = load_params(self.parameters(), path)
-        n += load_params(bn_extras_one(self), path + ".bn")
-        return n
+        return load_params(self.state_list(), path)
 
 
 class CrossEntropyLoss:
@@ -932,28 +973,77 @@ class Sequential(Module):
         ps: list = self.parameters()
         return ps[i]
 
-    def state_dict(self) -> dict:
-        """名字 → 参数下标（对齐 torch 的键面：sequential.<i>）。"""
-        return param_names(self.parameters(), self.tag)
+    def state_names(self) -> list:
+        """torch.nn.Sequential 的键面：子层按**登记位置**编号（relu/dropout 无参数故不出现）。
 
-    def param(self, name: str) -> Tensor:
-        """按名字取参数（state_dict 只给下标，Tensor 从 parameters() 里取回保类型）。"""
-        ps: list = self.parameters()
-        d: dict = param_names(ps, self.tag)
+        如 Sequential(Linear, BatchNorm1d, ReLU, Dropout, Linear) →
+        0.weight / 0.bias / 1.weight / 1.bias / 1.running_mean / 1.running_var /
+        1.num_batches_tracked / 4.weight / 4.bias（与 torch 逐键一致）。
+        """
+        out: list = []
+        i: int = 0
+        while i < len(self.kinds):
+            k: str = self.kinds[i]
+            j: int = self.idxs[i]
+            pre: str = str(i)
+            if k == "linear":
+                out.append(pre + ".weight")
+                out.append(pre + ".bias")
+            if k == "bn":
+                b: BatchNorm1d = self.bns[j]
+                ns: list = b.state_names()
+                q: int = 0
+                while q < len(ns):
+                    out.append(pre + "." + ns[q])
+                    q += 1
+            i += 1
+        return out
+
+    def state_list(self) -> list:
+        """按 state_names 的同一次序展开实表（子层参数/BN buffer 交错登记）。"""
+        out: list = []
+        i = 0
+        while i < len(self.kinds):
+            k = self.kinds[i]
+            j = self.idxs[i]
+            if k == "linear":
+                l: Linear = self.linears[j]
+                ps: list = l.state_list()
+                q: int = 0
+                while q < len(ps):
+                    out.append(ps[q])
+                    q += 1
+            if k == "bn":
+                b: BatchNorm1d = self.bns[j]
+                qs: list = b.state_list()
+                q = 0
+                while q < len(qs):
+                    out.append(qs[q])
+                    q += 1
+            i += 1
+        return out
+
+    def state_dict(self) -> dict:
+        """名字 → 下标（下标指向 state_list()）。"""
+        return names_index(self.state_names())
+
+    def param_by(self, name: str) -> Tensor:
+        """按 state_dict 的名字取 Tensor（含 BN buffer）。"""
+        ps: list = self.state_list()
+        d: dict = self.state_dict()
         idx: int = int(d[name])
         return ps[idx]
 
+    def param(self, name: str) -> Tensor:
+        """按名字取参数（state_dict 只给下标，Tensor 从 state_list() 里取回保类型）。"""
+        return self.param_by(name)
+
     def save(self, path: str) -> int:
-        """权重 <path>.i + 每个 BN 的 running mean/var <path>.bn.i
-        （torch 的 state_dict 里 BN 也带 running_mean/running_var，这里同语义）。"""
-        n: int = save_params(self.parameters(), path)
-        n += save_params(bn_extras(self.bns), path + ".bn")
-        return n
+        """按 state_names 次序一参数一文件 <path>.i（BN 的 buffer 也在其中，同 torch）。"""
+        return save_params(self.state_list(), path)
 
     def load_ckpt(self, path: str) -> int:
-        n: int = load_params(self.parameters(), path)
-        n += load_params(bn_extras(self.bns), path + ".bn")
-        return n
+        return load_params(self.state_list(), path)
 
     def forward(self, x: Tensor) -> Tensor:
         y: Tensor = x
@@ -1413,32 +1503,12 @@ def load_params(params: list, path: str) -> int:
     return n
 
 
-def bn_extras_one(b: BatchNorm1d) -> list:
-    """单个 BN 的 running stats（顺序：mean, var）。"""
-    out: list = []
-    out.append(b.mean)
-    out.append(b.var)
-    return out
-
-
-def bn_extras(bns: list) -> list:
-    """一批 BN 的 running stats 展平（顺序与 bns 一致，各 mean/var 相邻）。"""
-    out: list = []
-    i: int = 0
-    while i < len(bns):
-        b: BatchNorm1d = bns[i]
-        out.append(b.mean)
-        out.append(b.var)
-        i += 1
-    return out
-
-
-def param_names(params: list, prefix: str) -> dict:
-    """名字 → 下标：torch 的 state_dict 键面（dict 无泛型，故此表只存序号）。"""
+def names_index(ns: list) -> dict:
+    """名字列表 → 下标表：state_dict 的键面就是这一串名字（照 torch，如 "0.weight"）。"""
     d: dict = {}
     i: int = 0
-    while i < len(params):
-        d[prefix + "." + str(i)] = i
+    while i < len(ns):
+        d[ns[i]] = i
         i += 1
     return d
 

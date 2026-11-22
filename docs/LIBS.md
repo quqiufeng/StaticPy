@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **134/134** |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **144/144** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -297,19 +297,26 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   `nn.LSTM` 直接落 `at::lstm`（`torchc_lstm`，want=0/1/2 取 out/h_n/c_n），与 `torch.nn.LSTM` 逐位一致。
 - **v6（`state_dict` 协议 + `Optimizer` 基类）**：`nn` 侧每个模型类都提供
   `parameters()` / `param(name)` / `param_at(i)` / `state_dict()` / `save(path)` / `load_ckpt(path)`，
-  `state_dict` 是 **名字 → 参数下标** 的 dict（对齐 torch 的键面，键数与其 `state_dict()` 相同），
-  `param*` 负责把 `list` 里取回的元素**标回 `Tensor`**（否则丢静态类型）；
+  `state_dict` 是 **名字 → 下标** 的 dict（名字来自 `state_names()`，下标指向 `state_list()`），
+  `param(name)` / `param_at(i)` 负责把 `list` 里取回的元素**标回 `Tensor`**（否则丢静态类型）；
   优化器统一继承 `Optimizer`（`n_params/zero_grad/state_dict/load_state_dict`），
   `state_dict` 只装**标量超参**（`lr/betas/eps/weight_decay/t`），Tensor 状态（`m/v`）不进 dict——
   权重走 `save/load_ckpt`（`save_params`/`load_params` 自由函数，`len` 不符抛 `Exception`）。
   注意 `super()` 只支持 `__init__`，子类的 `state_dict` 要自填字段而非 `super().state_dict()`。
+- **v8（键面与 torch 逐键对齐）**：键不再是 `linear.0` 这种自定义式，而是 torch 的**嵌套编号**——
+  `Sequential(Linear, BatchNorm1d, ReLU, Dropout, Linear)` 得到
+  `0.weight / 0.bias / 1.weight / 1.bias / 1.running_mean / 1.running_var / 1.num_batches_tracked / 4.weight / 4.bias`，
+  与 `torch.nn.Sequential` 的 `state_dict().keys()` **逐键一致**（无参子层不占键位、编号照登记位置）。
+  为此 `BatchNorm1d` 补了 `num_batches_tracked`（训练态每前向 +1，同 torch）；
+  它的 `save/load_ckpt` 现在就是 `state_list()` 一把存（5 项），不再走 `<path>.bn.*` 旁路。
 - **`BatchNorm1d` 训练态**：`torchc_batch_norm_train(x, running_mean, running_var, gamma, beta,
   eps, momentum, training)` —— 落 `at::batch_norm`，训练时用 batch 统计归一化并**原地更新**
   running mean/var（`(1-m)*running + m*batch`，方差无偏），与 `F.batch_norm(..., training=True)`
   逐位一致（v7 15 项）。`m.train()/eval()` 一次切全部 BN/Dropout 子层（对标 `model.train/eval`）。
-  **坑**：running mean/var 不在 `parameters()` 里，所以 `save/load_ckpt` 额外存一份
-  `<path>.bn.i`（torch 的 `state_dict` 里 BN 也带这两项）；忘存就会「续训后精度掉一截」。
-  模板里的实测：`nparams 8` / `save 10`（8 权重 + 2 个 BN 统计）→ 清零 → `load 10` → acc 复原。
+  **坑**：running mean/var 不在 `parameters()` 里（它们是 buffer），所以 `save/load_ckpt` 走
+  `state_list()` 把 buffer 一起存（v8 起 BN 存 5 项：gamma/beta/mean/var/num_batches_tracked）；
+  忘存就会「续训后精度掉一截」。
+  模板里的实测：`nparams 8` / `save 11`（8 权重 + 3 个 BN 项）→ 清零 → `load 11` → acc 复原。
 - **训练模板** `plugins/ltorch/train_template.static.py`：**没有向上转型**——训练函数不能标
   `opt: Optimizer` 再接 `AdamW`（报 `argument 2 ... expects 'Optimizer', got 'AdamW'`），
   要按**具体优化器类**标注；`Dropout` 有 `train()/eval()` 两态，评估前 `eval()` 才确定性。
@@ -333,8 +340,8 @@ bash plugins/ltorch/build_app.sh my_train.static.py my_train && ./my_train
 # 现成模板（三层 MLP + Dropout + AdamW + StepLR + 中途 save/load 续训）：
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_template.static.py train_template && ./dist/train_template
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
-python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：134/134（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15）
-python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 104 条全验证、显式缺口 0（合计 5.9%）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：144/144（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10）
+python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 106 条全验证、显式缺口 0（合计 6.0%）
 python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：40/40（容差 1e-10）
 ```
 

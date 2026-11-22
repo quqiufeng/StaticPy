@@ -31,6 +31,17 @@ def flat(t):
 
 # ---------------------------------------------------------------- 探针源码
 PROBE = '''# 自动生成（plugins/ltorch/lib_difftest.py）—— tensor_lib 对拍探针
+def join8(ns: list) -> str:
+    s: str = ""
+    i: int = 0
+    while i < len(ns):
+        if i > 0:
+            s = s + ","
+        s = s + ns[i]
+        i += 1
+    return s
+
+
 def main():
     a: Tensor = tensor([1.0, 2.0, 3.0, 4.0], [2, 2])
     b: Tensor = tensor([0.5, -1.0, 2.0, 3.0], [2, 2])
@@ -324,7 +335,7 @@ def main():
     ck.load({W1}, {S1}, {B1}, {SB1})
     print("ck_nparams=" + str(len(ck.parameters())))
     print("ck_sd_nkeys=" + str(len(ck.state_dict())))
-    ck_w: Tensor = ck.param("linear.0")
+    ck_w: Tensor = ck.param("weight")          # 键面照 torch：Linear 就是 weight/bias
     print("ck_sd_w=" + ck_w.values())
     ck_b: Tensor = ck.param_at(1)
     print("ck_pat_b=" + ck_b.values())
@@ -390,6 +401,37 @@ def main():
     sq7.eval()
     q7b: Tensor = sq7.forward(xbt)
     print("sq7_shapes=" + q7a.shape() + "|" + q7b.shape())
+
+    # ================= v8：torch 键面对齐（嵌套子层编号 + BN buffer） =================
+    # （a）键面：与训练模板同形 Sequential(Linear, BN, ReLU, Dropout, Linear)
+    m8: Sequential = Sequential()
+    bn8: BatchNorm1d = BatchNorm1d(4, 1e-05, 0.1)
+    m8.add_linear(Linear(3, 4, 41))
+    m8.add_bn(bn8)
+    m8.add_relu()
+    m8.add_dropout(Dropout(0.1, 42))
+    m8.add_linear(Linear(4, 2, 43))
+    print("sd8_nkeys=" + str(len(m8.state_dict())))
+    print("sd8_keys=" + join8(m8.state_names()))
+    print("sd8_nstate=" + str(len(m8.state_list())))
+    m8path: str = "/home/quqiufeng/iso_gen/ck8/m"
+    print("sd8_save=" + str(m8.save(m8path)))
+    print("sd8_load=" + str(m8.load_ckpt(m8path)))
+    # （b）数值：BN 打头，running stats 吃同一份输入（Linear 权重随机，不可比）
+    m8b: Sequential = Sequential()
+    bnb: BatchNorm1d = BatchNorm1d(3, 1e-05, 0.1)
+    m8b.add_bn(bnb)
+    m8b.add_relu()
+    m8b.add_dropout(Dropout(0.1, 44))
+    m8b.add_linear(Linear(3, 2, 45))
+    print("sd8b_keys=" + join8(m8b.state_names()))
+    x8: Tensor = tensor_from_csv({X8}, {SX8})
+    m8b.forward(x8)
+    m8b.forward(x8)
+    print("sd8b_nbt=" + str(bnb.param("num_batches_tracked").item()))
+    print("sd8b_rm=" + bnb.param("running_mean").values())
+    print("sd8b_rv=" + bnb.param("running_var").values())
+    print("sd8b_ngamma=" + str(bnb.param("weight").numel()))
 
     print("ok")
 
@@ -523,6 +565,7 @@ def main():
         "LB_IH": csv(flat(lb_ih)), "LB_HH": csv(flat(lb_hh)),
         "BN7M": csv(bn7_mu), "BN7V": csv(bn7_va),
         "XBT": csv(xbt_v), "SXBT": "4,3",
+        "X8": csv(xbt_v), "SX8": "4,3",
     }
     ours = run_elf(pairs, verbose)
 
@@ -770,15 +813,35 @@ def main():
     ref["bn7_rv2"] = flat(_bn7.running_var)
     _bn7.eval()
     ref["bn7_y_eval"] = flat(_bn7(xbt))
-    ref["bn7_save"] = [4.0]      # gamma,beta + mean,var
+    ref["bn7_save"] = [5.0]      # gamma,beta + mean,var + num_batches_tracked
     ref["bn7_rm_zeroed"] = [0.0, 0.0, 0.0]
-    ref["bn7_load"] = [4.0]
+    ref["bn7_load"] = [5.0]
     ref["bn7_rm_loaded"] = ref["bn7_rm2"]      # 存盘点上的 running_mean
     ref["bn7_rv_loaded"] = ref["bn7_rv2"]
     ref["bn7_nparams"] = [2.0]
     # Sequential(Linear, BN)：Linear 权重随机不可比 → 只比参数个数与 eval/train 形状
     ref["sq7_nparams"] = [4.0]
     ref["sq7_shapes"] = "4,3|4,3"
+
+    # ---------------- v8：torch 键面 ----------------
+    _m8 = torch.nn.Sequential(torch.nn.Linear(3, 4), torch.nn.BatchNorm1d(4, 1e-05, 0.1),
+                              torch.nn.ReLU(), torch.nn.Dropout(0.1), torch.nn.Linear(4, 2))
+    _k8 = list(_m8.state_dict().keys())
+    ref["sd8_nkeys"] = [float(len(_k8))]
+    ref["sd8_keys"] = ",".join(_k8)
+    ref["sd8_nstate"] = [float(len(_k8))]
+    ref["sd8_save"] = [float(len(_k8))]
+    ref["sd8_load"] = [float(len(_k8))]
+    _m8b = torch.nn.Sequential(torch.nn.BatchNorm1d(3, 1e-05, 0.1), torch.nn.ReLU(),
+                               torch.nn.Dropout(0.1), torch.nn.Linear(3, 2))
+    ref["sd8b_keys"] = ",".join(_m8b.state_dict().keys())
+    _x8 = T(xbt_v, (4, 3))
+    _m8b(_x8)
+    _m8b(_x8)
+    ref["sd8b_nbt"] = [float(_m8b[0].num_batches_tracked)]
+    ref["sd8b_rm"] = flat(_m8b[0].running_mean)
+    ref["sd8b_rv"] = flat(_m8b[0].running_var)
+    ref["sd8b_ngamma"] = [float(_m8b[0].weight.numel())]
 
     # ---------------- 比对 ----------------
     bad = 0
