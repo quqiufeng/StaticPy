@@ -106,9 +106,11 @@ def comment_label(t: str) -> str:
 
 
 def def_name(t: str) -> str:
-    """`(define (static_foo a b)` → `foo`；不是函数定义返回空串"""
+    """`(define (static_foo a b)` → `foo`；`(define (py-list-ref a b)` → `py-list-ref`
+    运行时（prelude/stdlib）的函数名不带 static_ 前缀，也要认，才能给
+    「无 py 归属」的 hits 归因到具体运行时函数。"""
     tt: str = str_trim(t)
-    h: str = "(define (static_"
+    h: str = "(define ("
     if not str_starts_with(tt, h):
         return ""
     rest: str = str_slice(tt, str_length(h), str_length(tt))
@@ -118,7 +120,11 @@ def def_name(t: str) -> str:
         if c == " " or c == ")" or c == "(":
             break
         k = k + 1
-    return str_slice(rest, 0, k)
+    nm: str = str_slice(rest, 0, k)
+    hs: str = "static_"
+    if str_starts_with(nm, hs):
+        return str_slice(nm, str_length(hs), str_length(nm))
+    return nm
 
 
 def scan_labels(ss_text: str) -> list:
@@ -254,6 +260,8 @@ def report(prof_path: str, ss_override: str, limit: int, fn_only: bool) -> None:
     fns: list = py_list_ref(packed, 1)
     stmt_d: dict = make_dict()
     stmt_n: list = py_list()
+    rt_d: dict = make_dict()
+    rt_n: list = py_list()
     fn_d: dict = make_dict()
     fn_n: list = py_list()
     total: int = 0
@@ -272,6 +280,10 @@ def report(prof_path: str, ss_override: str, limit: int, fn_only: bool) -> None:
                 fn = py_list_ref(fns, ln - 1)
             if str_length(lab) == 0:
                 runtime = runtime + cnt
+                rf: str = "?"
+                if str_length(fn) > 0:
+                    rf = fn
+                rt_n = bump(rt_d, rt_n, rf, cnt)
             else:
                 stmt_n = bump(stmt_d, stmt_n, lab, cnt)
                 if str_length(fn) > 0:
@@ -297,6 +309,18 @@ def report(prof_path: str, ss_override: str, limit: int, fn_only: bool) -> None:
             v: int = string_to_int(py_list_ref(pair, 1))
             print("  " + pad_left(string_of_int(v), 9) + "  " + pct(v, total) + "  " + nm)
             k = k + 1
+    if not fn_only:
+        print("")
+        print("  运行时函数级（prelude/stdlib，无 py 归属；? = 顶层/未归因）")
+        print("   hits      占比  运行时函数")
+        tr: list = top_rows(rt_d, rt_n, limit)
+        k3: int = 0
+        while k3 < py_list_length(tr):
+            pair3: list = split_ws_tab(py_list_ref(tr, k3))
+            nm3: str = py_list_ref(pair3, 0)
+            v3: int = string_to_int(py_list_ref(pair3, 1))
+            print("  " + pad_left(string_of_int(v3), 9) + "  " + pct(v3, total) + "  " + nm3)
+            k3 = k3 + 1
     print("")
     print("  语句级（hits 最高的 py 行 = 最该改的那一行）")
     print("   hits      占比  位置")
