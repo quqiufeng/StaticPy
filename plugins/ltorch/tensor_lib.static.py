@@ -491,6 +491,26 @@ class Linear(Module):
         self.w.zero_grad()
         self.b.zero_grad()
 
+    def param_at(self, i: int) -> Tensor:
+        """按序号取参数并标注回 Tensor：`ps[0].sum()` 不行（list 元素是 any）。"""
+        ps: list = self.parameters()
+        return ps[i]
+
+    def param(self, name: str) -> Tensor:
+        """按名字取参数（state_dict 给下标，Tensor 从 parameters() 取回保静态类型）。"""
+        ps: list = self.parameters()
+        d: dict = param_names(ps, self.tag)
+        idx: int = int(d[name])
+        return ps[idx]
+    def state_dict(self) -> dict:
+        return param_names(self.parameters(), self.tag)
+
+    def save(self, path: str) -> int:
+        return save_params(self.parameters(), path)
+
+    def load_ckpt(self, path: str) -> int:
+        return load_params(self.parameters(), path)
+
 
 class ReLU(Module):
     def __init__(self):
@@ -535,15 +555,26 @@ class MSELoss:
 
 # ============================== optim ==============================
 
-class SGD:
-    """对标 torch.optim.SGD(params, lr)：step 走 torchc_sgd_step（NoGrad 原地 w -= lr*g）。"""
+class Optimizer:
+    """对标 torch.optim.Optimizer：params / lr / zero_grad / state_dict / load_state_dict。
+
+    state_dict 只装**标量超参**（lr 与各自的 beta/eps/t …），对齐 torch 的
+    param_groups[i] 视图；Tensor 状态（m/v/buf）不进 dict —— StaticPy 的 dict 是
+    hashtable 无泛型，塞进去取回来就丢了静态类型（docs/LANGUAGE.md:180），
+    模型权重请走 Module.save / Module.load。
+    """
 
     params: list
     lr: float
+    tag: str
 
     def __init__(self, params: list, lr: float):
         self.params = params
         self.lr = lr
+        self.tag = "optimizer"
+
+    def n_params(self) -> int:
+        return len(self.params)
 
     def zero_grad(self) -> None:
         i: int = 0
@@ -551,6 +582,24 @@ class SGD:
             p: Tensor = self.params[i]
             p.zero_grad()
             i += 1
+
+    def state_dict(self) -> dict:
+        d: dict = {}
+        d["lr"] = self.lr
+        d["n_params"] = len(self.params)
+        return d
+
+    def load_state_dict(self, d: dict) -> int:
+        self.lr = float(d["lr"])
+        return 1
+
+
+class SGD(Optimizer):
+    """对标 torch.optim.SGD(params, lr)：step 走 torchc_sgd_step（NoGrad 原地 w -= lr*g）。"""
+
+    def __init__(self, params: list, lr: float):
+        super().__init__(params, lr)
+        self.tag = "sgd"
 
     def step(self) -> int:
         n: int = 0
@@ -602,6 +651,26 @@ class Conv2d(Module):
     def zero_grad(self) -> None:
         self.w.zero_grad()
         self.b.zero_grad()
+
+    def param_at(self, i: int) -> Tensor:
+        """按序号取参数并标注回 Tensor：`ps[0].sum()` 不行（list 元素是 any）。"""
+        ps: list = self.parameters()
+        return ps[i]
+
+    def param(self, name: str) -> Tensor:
+        """按名字取参数（state_dict 给下标，Tensor 从 parameters() 取回保静态类型）。"""
+        ps: list = self.parameters()
+        d: dict = param_names(ps, self.tag)
+        idx: int = int(d[name])
+        return ps[idx]
+    def state_dict(self) -> dict:
+        return param_names(self.parameters(), self.tag)
+
+    def save(self, path: str) -> int:
+        return save_params(self.parameters(), path)
+
+    def load_ckpt(self, path: str) -> int:
+        return load_params(self.parameters(), path)
 
 
 class MaxPool2d(Module):
@@ -696,6 +765,27 @@ class BatchNorm1d(Module):
         out.append(self.gamma)
         out.append(self.beta)
         return out
+
+    def param_at(self, i: int) -> Tensor:
+        """按序号取参数并标注回 Tensor：`ps[0].sum()` 不行（list 元素是 any）。"""
+        ps: list = self.parameters()
+        return ps[i]
+
+    def param(self, name: str) -> Tensor:
+        """按名字取参数（state_dict 给下标，Tensor 从 parameters() 取回保静态类型）。"""
+        ps: list = self.parameters()
+        d: dict = param_names(ps, self.tag)
+        idx: int = int(d[name])
+        return ps[idx]
+    def state_dict(self) -> dict:
+        return param_names(self.parameters(), self.tag)
+
+    def save(self, path: str) -> int:
+        return save_params(self.parameters(), path)
+
+    def load_ckpt(self, path: str) -> int:
+        return load_params(self.parameters(), path)
+
 
 
 class CrossEntropyLoss:
@@ -809,6 +899,28 @@ class Sequential(Module):
     def add_flatten(self) -> None:
         self.push("flatten", 0)
 
+    def param_at(self, i: int) -> Tensor:
+        """按序号取参数并标注回 Tensor：`ps[0].sum()` 不行（list 元素是 any）。"""
+        ps: list = self.parameters()
+        return ps[i]
+
+    def state_dict(self) -> dict:
+        """名字 → 参数下标（对齐 torch 的键面：sequential.<i>）。"""
+        return param_names(self.parameters(), self.tag)
+
+    def param(self, name: str) -> Tensor:
+        """按名字取参数（state_dict 只给下标，Tensor 从 parameters() 里取回保类型）。"""
+        ps: list = self.parameters()
+        d: dict = param_names(ps, self.tag)
+        idx: int = int(d[name])
+        return ps[idx]
+
+    def save(self, path: str) -> int:
+        return save_params(self.parameters(), path)
+
+    def load_ckpt(self, path: str) -> int:
+        return load_params(self.parameters(), path)
+
     def forward(self, x: Tensor) -> Tensor:
         y: Tensor = x
         i: int = 0
@@ -868,25 +980,39 @@ class Sequential(Module):
 
 # ============================== v3：optim 扩展 ==============================
 
-class MomentumSGD:
+class MomentumSGD(Optimizer):
     """对标 torch.optim.SGD(params, lr, momentum, weight_decay, nesterov)。"""
 
-    params: list
     bufs: list
-    lr: float
     momentum: float
     weight_decay: float
     nesterov: int
 
     def __init__(self, params: list, lr: float = 0.001, momentum: float = 0.0,
                  weight_decay: float = 0.0, nesterov: int = 0):
-        self.params = params
-        self.lr = lr
+        super().__init__(params, lr)
+        self.tag = "momentum_sgd"
         self.momentum = momentum
         self.weight_decay = weight_decay
         self.nesterov = nesterov
         self.bufs = []
         self.init_bufs()
+
+    def state_dict(self) -> dict:
+        d: dict = {}
+        d["lr"] = self.lr
+        d["n_params"] = len(self.params)
+        d["momentum"] = self.momentum
+        d["weight_decay"] = self.weight_decay
+        d["nesterov"] = self.nesterov
+        return d
+
+    def load_state_dict(self, d: dict) -> int:
+        self.lr = float(d["lr"])
+        self.momentum = float(d["momentum"])
+        self.weight_decay = float(d["weight_decay"])
+        self.nesterov = int(d["nesterov"])
+        return 1
 
     def init_bufs(self) -> None:
         """动量缓冲：必须放普通方法里做——__init__ 体不进类型环境（见 docs/MIGRATION.md「已知坑」）。"""
@@ -894,13 +1020,6 @@ class MomentumSGD:
         while i < len(self.params):
             p: Tensor = self.params[i]
             self.bufs.append(p.zeros_like())
-            i += 1
-
-    def zero_grad(self) -> None:
-        i: int = 0
-        while i < len(self.params):
-            p: Tensor = self.params[i]
-            p.zero_grad()
             i += 1
 
     def step(self) -> int:
@@ -918,13 +1037,11 @@ class MomentumSGD:
         return n
 
 
-class Adam:
+class Adam(Optimizer):
     """对标 torch.optim.Adam(params, lr, betas=(0.9,0.999), eps, weight_decay)。"""
 
-    params: list
     ms: list
     vs: list
-    lr: float
     beta1: float
     beta2: float
     eps: float
@@ -934,8 +1051,8 @@ class Adam:
 
     def __init__(self, params: list, lr: float = 0.001, beta1: float = 0.9, beta2: float = 0.999,
                  eps: float = 1e-08, weight_decay: float = 0.0):
-        self.params = params
-        self.lr = lr
+        super().__init__(params, lr)
+        self.tag = "adam"
         self.beta1 = beta1
         self.beta2 = beta2
         self.eps = eps
@@ -955,12 +1072,26 @@ class Adam:
             self.vs.append(p.zeros_like())
             i += 1
 
-    def zero_grad(self) -> None:
-        i: int = 0
-        while i < len(self.params):
-            p: Tensor = self.params[i]
-            p.zero_grad()
-            i += 1
+    def state_dict(self) -> dict:
+        """对齐 torch：betas 扁平为 beta1/beta2（dict 无元组泛型，避免 list 嵌套）。"""
+        d: dict = {}
+        d["lr"] = self.lr
+        d["n_params"] = len(self.params)
+        d["beta1"] = self.beta1
+        d["beta2"] = self.beta2
+        d["eps"] = self.eps
+        d["weight_decay"] = self.weight_decay
+        d["t"] = self.t
+        return d
+
+    def load_state_dict(self, d: dict) -> int:
+        self.lr = float(d["lr"])
+        self.beta1 = float(d["beta1"])
+        self.beta2 = float(d["beta2"])
+        self.eps = float(d["eps"])
+        self.weight_decay = float(d["weight_decay"])
+        self.t = int(d["t"])
+        return 1
 
     def step(self) -> int:
         self.t += 1
@@ -988,12 +1119,10 @@ class AdamW(Adam):
         self.decoupled = 1
 
 
-class Adagrad:
+class Adagrad(Optimizer):
     """对标 torch.optim.Adagrad(params, lr=1e-2, lr_decay=0, weight_decay=0, eps=1e-10)。"""
 
-    params: list
     accs: list
-    lr: float
     lr_decay: float
     weight_decay: float
     eps: float
@@ -1001,8 +1130,8 @@ class Adagrad:
 
     def __init__(self, params: list, lr: float = 0.01, lr_decay: float = 0.0,
                  weight_decay: float = 0.0, eps: float = 1e-10):
-        self.params = params
-        self.lr = lr
+        super().__init__(params, lr)
+        self.tag = "adagrad"
         self.lr_decay = lr_decay
         self.weight_decay = weight_decay
         self.eps = eps
@@ -1018,12 +1147,23 @@ class Adagrad:
             self.accs.append(p.zeros_like())
             i += 1
 
-    def zero_grad(self) -> None:
-        i: int = 0
-        while i < len(self.params):
-            p: Tensor = self.params[i]
-            p.zero_grad()
-            i += 1
+    def state_dict(self) -> dict:
+        d: dict = {}
+        d["lr"] = self.lr
+        d["n_params"] = len(self.params)
+        d["lr_decay"] = self.lr_decay
+        d["weight_decay"] = self.weight_decay
+        d["eps"] = self.eps
+        d["t"] = self.t
+        return d
+
+    def load_state_dict(self, d: dict) -> int:
+        self.lr = float(d["lr"])
+        self.lr_decay = float(d["lr_decay"])
+        self.weight_decay = float(d["weight_decay"])
+        self.eps = float(d["eps"])
+        self.t = int(d["t"])
+        return 1
 
     def step(self) -> int:
         self.t += 1
@@ -1041,20 +1181,18 @@ class Adagrad:
         return n
 
 
-class RMSprop:
+class RMSprop(Optimizer):
     """对标 torch.optim.RMSprop(params, lr, alpha, eps, weight_decay)。"""
 
-    params: list
     sqs: list
-    lr: float
     alpha: float
     eps: float
     weight_decay: float
 
     def __init__(self, params: list, lr: float = 0.01, alpha: float = 0.99,
                  eps: float = 1e-08, weight_decay: float = 0.0):
-        self.params = params
-        self.lr = lr
+        super().__init__(params, lr)
+        self.tag = "rmsprop"
         self.alpha = alpha
         self.eps = eps
         self.weight_decay = weight_decay
@@ -1069,12 +1207,21 @@ class RMSprop:
             self.sqs.append(p.zeros_like())
             i += 1
 
-    def zero_grad(self) -> None:
-        i: int = 0
-        while i < len(self.params):
-            p: Tensor = self.params[i]
-            p.zero_grad()
-            i += 1
+    def state_dict(self) -> dict:
+        d: dict = {}
+        d["lr"] = self.lr
+        d["n_params"] = len(self.params)
+        d["alpha"] = self.alpha
+        d["eps"] = self.eps
+        d["weight_decay"] = self.weight_decay
+        return d
+
+    def load_state_dict(self, d: dict) -> int:
+        self.lr = float(d["lr"])
+        self.alpha = float(d["alpha"])
+        self.eps = float(d["eps"])
+        self.weight_decay = float(d["weight_decay"])
+        return 1
 
     def step(self) -> int:
         n: int = 0
@@ -1174,6 +1321,46 @@ class CosineAnnealingLR:
         frac: float = t / tm
         cosv: float = math.cos(math.pi * frac)
         return self.eta_min + (self.base_lr - self.eta_min) * (1.0 + cosv) / 2.0
+
+
+def save_params(params: list, path: str) -> int:
+    """按参数顺序一参数一文件 <path>.0 / <path>.1 …；返回写成功的个数。
+
+    这是 model.save() 的底层：权重不能进 dict（见 Optimizer 文档字符串），
+    所以整模型落盘走「路径前缀 + 序号」。
+    """
+    n: int = 0
+    i: int = 0
+    while i < len(params):
+        p: Tensor = params[i]
+        if torchc_save(p.h, path + "." + str(i)) != 0:
+            n += 1
+        i += 1
+    return n
+
+
+def load_params(params: list, path: str) -> int:
+    """对称读回 <path>.i（形状不一致由 torchc_copy_into 逐元素校验）。"""
+    n: int = 0
+    i: int = 0
+    while i < len(params):
+        p: Tensor = params[i]
+        t: Tensor = load_tensor(path + "." + str(i))
+        if torchc_is_tensor(t.h) != 0:
+            torchc_copy_into(p.h, t.h)
+            n += 1
+        i += 1
+    return n
+
+
+def param_names(params: list, prefix: str) -> dict:
+    """名字 → 下标：torch 的 state_dict 键面（dict 无泛型，故此表只存序号）。"""
+    d: dict = {}
+    i: int = 0
+    while i < len(params):
+        d[prefix + "." + str(i)] = i
+        i += 1
+    return d
 
 
 def save_state_dict(params: list, paths: list) -> int:

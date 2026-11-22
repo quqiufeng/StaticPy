@@ -318,6 +318,43 @@ def main():
     print("lstm_hn=" + rec.final_hidden(lx).values())
     print("lstm_cn=" + rec.final_cell(lx).values())
 
+    # ================= v6：state_dict 协议 / 整模型存取 =================
+    ck: Linear = Linear(3, 2, 31)
+    ck.load({W1}, {S1}, {B1}, {SB1})
+    print("ck_nparams=" + str(len(ck.parameters())))
+    print("ck_sd_nkeys=" + str(len(ck.state_dict())))
+    ck_w: Tensor = ck.param("linear.0")
+    print("ck_sd_w=" + ck_w.values())
+    ck_b: Tensor = ck.param_at(1)
+    print("ck_pat_b=" + ck_b.values())
+    ckpath: str = "/home/quqiufeng/iso_gen/ck6/model"
+    print("ck_save=" + str(ck.save(ckpath)))
+    z6: Tensor = zeros([1, 2])
+    torchc_copy_into(ck_b.h, z6.h)
+    print("ck_after_zero=" + ck_b.values())
+    print("ck_load=" + str(ck.load_ckpt(ckpath)))
+    print("ck_after_load=" + ck_b.values())
+    # 优化器 state_dict：只装标量超参（对齐 torch param_groups 视图）
+    o6p: list = ck.parameters()
+    ad6: Adam = Adam(o6p, 0.003, 0.85, 0.995, 1e-07, 0.02)
+    ad6.t = 7
+    asd: dict = ad6.state_dict()
+    print("adam_sd_lr=" + str(asd["lr"]))
+    print("adam_sd_beta2=" + str(asd["beta2"]))
+    print("adam_sd_wd=" + str(asd["weight_decay"]))
+    print("adam_sd_t=" + str(asd["t"]))
+    ad7: Adam = Adam(o6p, 0.1)
+    ad7.load_state_dict(asd)
+    print("adam_restored_lr=" + str(ad7.lr))
+    print("adam_restored_t=" + str(ad7.t))
+    ga6: Adagrad = Adagrad(o6p, 0.02, 0.1, 0.001, 1e-09)
+    gsd: dict = ga6.state_dict()
+    print("adagrad_sd_lr_decay=" + str(gsd["lr_decay"]))
+    print("adagrad_sd_wd=" + str(gsd["weight_decay"]))
+    ga7: Adagrad = Adagrad(o6p, 0.5)
+    ga7.load_state_dict(gsd)
+    print("adagrad_restored_lr=" + str(ga7.lr))
+
     print("ok")
 
 
@@ -647,6 +684,34 @@ def main():
     ref["lstm_out"] = flat(_lout.detach())
     ref["lstm_hn"] = flat(_lhn.detach())
     ref["lstm_cn"] = flat(_lcn.detach())
+
+    # ---------------- v6：state_dict 协议 ----------------
+    _m6 = torch.nn.Linear(3, 2, dtype=torch.float64)
+    with torch.no_grad():
+        _m6.weight.copy_(w1)
+        _m6.bias.copy_(b1[0])
+    ref["ck_nparams"] = [2.0]
+    ref["ck_sd_nkeys"] = [float(len(_m6.state_dict()))]   # torch 也是 weight/bias 两个键
+    ref["ck_sd_w"] = flat(_m6.weight)
+    ref["ck_pat_b"] = flat(_m6.bias)
+    ref["ck_save"] = [2.0]
+    ref["ck_after_zero"] = [0.0, 0.0]
+    ref["ck_load"] = [2.0]
+    ref["ck_after_load"] = flat(_m6.bias)
+    _a6 = torch.optim.Adam(_m6.parameters(), lr=0.003, betas=(0.85, 0.995),
+                           eps=1e-07, weight_decay=0.02)
+    _g6 = _a6.param_groups[0]
+    ref["adam_sd_lr"] = [float(_g6["lr"])]
+    ref["adam_sd_beta2"] = [float(_g6["betas"][1])]
+    ref["adam_sd_wd"] = [float(_g6["weight_decay"])]
+    ref["adam_sd_t"] = [7.0]          # 探针里 t 置 7，等价「第 7 步」
+    ref["adam_restored_lr"] = [0.003]  # load_state_dict 覆盖构造时的 0.1
+    ref["adam_restored_t"] = [7.0]
+    _a7 = torch.optim.Adagrad(_m6.parameters(), lr=0.02, lr_decay=0.1, weight_decay=0.001, eps=1e-09)
+    _g7 = _a7.param_groups[0]
+    ref["adagrad_sd_lr_decay"] = [float(_g7["lr_decay"])]
+    ref["adagrad_sd_wd"] = [float(_g7["weight_decay"])]
+    ref["adagrad_restored_lr"] = [0.02]
 
     # ---------------- 比对 ----------------
     bad = 0

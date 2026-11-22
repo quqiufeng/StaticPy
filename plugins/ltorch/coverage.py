@@ -121,6 +121,16 @@ MAP = {
     ("nn", "L1Loss"): "s:torch-l1-loss",
     ("nn", "Embedding"): "p:Embedding",
     ("nn", "LSTM"): "p:LSTM",
+    # ---- 状态字典 / 整模型存取（照 torch 的 state_dict 协议）----
+    ("nn", "state_dict"): ["p:Linear.state_dict", "p:Conv2d.state_dict",
+                           "p:BatchNorm1d.state_dict", "p:Sequential.state_dict",
+                           "p:Optimizer.state_dict"],
+    ("nn", "load_state_dict"): "p:Optimizer.load_state_dict",
+    ("nn", "parameters"): ["p:Linear.parameters", "p:Conv2d.parameters",
+                           "p:BatchNorm1d.parameters", "p:Sequential.parameters"],
+    ("nn", "zero_grad"): ["p:Optimizer.zero_grad", "p:Linear.zero_grad"],
+    ("core", "save"): ["p:Tensor.save", "p:Linear.save", "p:Sequential.save"],
+    ("core", "load"): ["p:load_params", "p:Linear.load_ckpt"],
     # ---- optim ----
     ("optim", "SGD"): "p:SGD",
     ("optim", "Adam"): "p:Adam",

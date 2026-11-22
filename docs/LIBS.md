@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **102/102** |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **119/119** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -295,6 +295,14 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   `Adagrad`（`torchc_adagrad_step`，`lr` 必须 `double`）、`StepLR/ExponentialLR`（`step()` **返回**新 lr，
   由调用方写回 `opt.lr`——`object` 型字段的属性赋值翻译器不生成语句）；
   `nn.LSTM` 直接落 `at::lstm`（`torchc_lstm`，want=0/1/2 取 out/h_n/c_n），与 `torch.nn.LSTM` 逐位一致。
+- **v6（`state_dict` 协议 + `Optimizer` 基类）**：`nn` 侧每个模型类都提供
+  `parameters()` / `param(name)` / `param_at(i)` / `state_dict()` / `save(path)` / `load_ckpt(path)`，
+  `state_dict` 是 **名字 → 参数下标** 的 dict（对齐 torch 的键面，键数与其 `state_dict()` 相同），
+  `param*` 负责把 `list` 里取回的元素**标回 `Tensor`**（否则丢静态类型）；
+  优化器统一继承 `Optimizer`（`n_params/zero_grad/state_dict/load_state_dict`），
+  `state_dict` 只装**标量超参**（`lr/betas/eps/weight_decay/t`），Tensor 状态（`m/v`）不进 dict——
+  权重走 `save/load_ckpt`（`save_params`/`load_params` 自由函数，`len` 不符抛 `Exception`）。
+  注意 `super()` 只支持 `__init__`，子类的 `state_dict` 要自填字段而非 `super().state_dict()`。
 - **踩过的坑（写训练代码会撞到）**：默认实参不写齐会段错误（`Adam(ps, lr=…)` 必须给全默认值）；
   `CrossEntropyLoss` 收 `list` target，Tensor target 走 `forward_t`；`Sequential` 用**显式派发表**
   （静态语言无动态分派）；`__init__` 体内不建类型环境，需要局部类型标注的循环挪到普通方法。
@@ -312,8 +320,8 @@ LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/train_demo   # 线性回归 + MLP 训�
 #（脚本会把 libtorch_capi.so 拷到产物旁，产物 RUNPATH 含 $ORIGIN，不必再设 LD_LIBRARY_PATH）
 bash plugins/ltorch/build_app.sh my_train.static.py my_train && ./my_train
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
-python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：102/102（v2 30 + v3 56 + v4 13 + v5 LSTM 3）
-python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 95 条全验证、显式缺口 0（合计 5.4%）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：119/119（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17）
+python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 101 条全验证、显式缺口 0（合计 5.7%）
 python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：37/37（容差 1e-10）
 ```
 
