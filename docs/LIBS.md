@@ -302,6 +302,43 @@ python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端�
 
 ---
 
+## sqlite（libsqlite3 直连：Connection / Cursor）
+
+`cpp/sqlite/` → `libsqlitec.so`（真 `sqlite3*`，SQL 解析/事务/B树/索引/类型亲和全在库里）；
+插件 `plugins/sqlite/`。
+
+- **不重写数据库**：绑定层只做「Python 调用形态 ⇄ sqlite3 C API」翻译，所以差分只可能来自
+  调用形态（参数绑定 / 取值类型），不会来自「算错了」。
+- **句柄是 `ptr`**（`sqlite3*` / 编译好的语句 `sqlite3_stmt*`）：FFI 表里 `int` 是 32 位，
+  指针塞进去会被截断；C 侧返回 NULL 时 StaticPy 看到 0，用 `== 0` 判空。
+- **参数编码**：`i/f/s/n` 标签 + 长度前缀（`enc_params`），文本里有 `,` `:` 换行也不会串味——
+  比 CSV 更适合任意用户数据。`None` 绑定成 SQL NULL。
+- **一行是 `list`**，不是 tuple（StaticPy 的 tuple 是定长 vector，行宽运行期才知道）。
+- **C ABI**（`sqlite_capi.h`）：`version/last_error/open/close/commit/rollback/exec/changes/
+  total_changes/cursor/finalize/reset/clear_bindings/bind_{int,real,text,null}/step/
+  fetch_{int,real,text,null,row}/col_{int,real,text,name,type}/col_count/rowid/rowcount`。
+  失败一律返回 -1/0 并把消息留在 `last_error`（异常不越 ABI 边界）。
+- **对齐 CPython `sqlite3` 的部分**：`connect()/cursor()/execute()/executemany()/executescript()/
+  fetchone()/fetchmany(n)/fetchall()/description()/lastrowid()/rowcount()/commit()/rollback()/
+  close()`，类型亲和（INTEGER→int、REAL→float、TEXT→str、NULL→None）与 CPython 一致。
+- **记录在案的偏差**：
+  - 事务：C 侧 `sqlite3_open` 是**自动提交**，而 CPython 默认 `isolation_level=""`（隐式 BEGIN）；
+    要逐位对齐就在用例里显式 `BEGIN` / `commit()`。
+  - 迭代：`for row in cur.fetchall():`（`for row in cur:` 不可用——句柄不是序列）。
+  - 异常：出错返回 -1 并 `last_error()` 取消息，不抛 `sqlite3.OperationalError`。
+  - `:memory:`、文件库、多连接、`BLOB` 未封装（`bind_blob/fetch_blob` 不在 C ABI 里）。
+
+```bash
+bash cpp/sqlite/build.sh                                     # → cpp/sqlite/build/libsqlitec.so
+bash plugins/sqlite/build_app.sh plugins/sqlite/demo.static.py demo   # concat 库 + 用户程序 → ELF
+LD_LIBRARY_PATH=cpp/sqlite/build ./demo                      # sqlite 3.45.1，11 行输出
+python3 plugins/sqlite/difftest.py                           # 与 CPython sqlite3 逐行对拍 41/41
+```
+
+- 插件开关是 `plugins/sqlite/plugin.json` 的 `libs.sqlitec`；不启用插件时零依赖。
+
+---
+
 ## 能力边界（明确不做）
 
 - **训练调度**：只给**一步原语**（`sgd_step`），不做 `Optimizer` 对象 / lr scheduler / 数据加载器——

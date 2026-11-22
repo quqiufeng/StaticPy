@@ -1,0 +1,19 @@
+{
+  "name": "sqlite",
+  "version": "0.1.0",
+  "kind": "ffi",
+  "order": 160,
+  "requires": [
+    "core"
+  ],
+  "libs": {
+    "sqlitec": "libsqlitec.so"
+  },
+  "description": "SQLite 最小绑定：libsqlite3 的 C ABI（cpp/sqlite）之上封 Connection/Cursor，SQL/事务/B树全部落在 libsqlite3 里",
+  "build": {
+    "cmd": "bash cpp/sqlite/build.sh",
+    "outputs": [
+      "cpp/sqlite/build/libsqlitec.so"
+    ]
+  }
+}

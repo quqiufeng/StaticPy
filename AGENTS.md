@@ -261,6 +261,11 @@ $PY imgproc/difftest.py -v
 
 # 自持解析器验收：自举 parse_lib vs CPython ast 规范 dump 逐字节比对
 bash staticpy/check_parse.sh $(find . -name "*.py" -not -path "./.git/*")
+
+# 重型 C 库插件（照 ltorch / sqlite 的做法：C ABI 只翻译调用形态，数学/数据库落原库）
+bash cpp/torch/build.sh  && python3 plugins/ltorch/difftest.py --elf   # libTorch（ATen + autograd）
+bash cpp/sqlite/build.sh && python3 plugins/sqlite/difftest.py        # SQLite（Connection/Cursor）
+bash plugins/sqlite/build_app.sh plugins/sqlite/demo.static.py demo    # 库 + 用户程序 concat → ELF
 ```
 
 ---

@@ -25,6 +25,8 @@ TYPE_ENV = make_dict()
 STATE = make_dict()
 # 函数名 -> 返回类型串
 SIGS = make_dict()
+# 顶层函数名 -> FunctionDef 节点（调用点补默认实参用；对齐种子的 FUNC_NODES）
+FUNC_DEFS = make_dict()
 # from ... import 的裸名 -> 模块（这些名字是"别人的函数"，调用不加 static_ 前缀；
 # 对齐旧版 IMPORTED_NAMES。库拆分（pil_lib + CLI）靠它：CLI 里 img_open(...)
 # 必须发成 (img_open ...)，而不是 (static_img_open ...)）
@@ -1597,6 +1599,17 @@ def translate_call(n) -> str:
     if imported_has(nm):
         # from <lib> import fn：裸名直调（同旧版 resolve_imported_name）
         return f"({mangle_name(nm)} {a})"
+    # 用户自定义函数：默认实参在调用点补齐（同种子 _fill_defaults）
+    fd = dict_get(FUNC_DEFS, nm)
+    if fd is not None:
+        tl3 = py_list()
+        al3 = dict_get(n, "args")
+        j3: int = 0
+        while j3 < py_list_length(al3):
+            tl3 = py_list_append(tl3, translate_expr(py_list_ref(al3, j3)))
+            j3 = j3 + 1
+        # 形态与种子一致（零实参也留一个空格：f"(static_{name} {' '.join(args)})"）
+        return "(static_" + nm + " " + cls_join(fill_defaults_s(fd, tl3, 0), " ") + ")"
     return f"(static_{nm} {a})"
 
 # ========== 语句块 ==========
@@ -2975,6 +2988,7 @@ def collect_sigs(body) -> int:
         s = py_list_ref(body, i)
         if nt(s) == "FunctionDef":
             dict_set(SIGS, dict_get(s, "name"), ann_str(dict_get(s, "returns")))
+            dict_set(FUNC_DEFS, dict_get(s, "name"), s)
         i = i + 1
     return 0
 
