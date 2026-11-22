@@ -1516,7 +1516,10 @@ def translate_call(n) -> str:
                     return f"({sm} {translate_expr(rv)} {a})"
                 return f"({sm} {translate_expr(rv)})"
         # 未知对象的属性调用：content.splitlines() -> (content-splitlines)
-        # 与旧版一致：通用属性调用不展开实参
+        # 实参必须展开（与种子对齐）：以前丢实参，obj.m(1, 2) 变成 (obj-m)，
+        # 运行时变量未绑定且实参里的副作用/求值静默消失
+        if a != "":
+            return f"({translate_expr(rv)}-{at} {a})"
         return f"({translate_expr(rv)}-{at})"
     if nt(f) != "Name":
         return f"({translate_expr(f)} {a})"

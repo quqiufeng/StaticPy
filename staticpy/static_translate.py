@@ -4576,6 +4576,9 @@ def translate_expr(node):
                     return f"({fast} {value} {' '.join(args)})".replace("  ", " ")
                 return f"(py-m-{attr} {value} {' '.join(args)})".replace("  ", " ")
             # 普通属性访问（未知对象）：content.splitlines → content-splitlines
+            # 实参必须展开：以前丢实参，obj.m(1, 2) 变成 (obj-m)，运行时未绑定/静默丢参
+            if args:
+                return f"({value}-{attr} {' '.join(args)})"
             return f"({value}-{attr})"
         # 接收者是表达式（如嵌套调用/下标），非模块名 → 同样尝试张量方法
         if isinstance(func.value, ast.Attribute) or isinstance(func.value, ast.Subscript) or isinstance(func.value, ast.Call):
