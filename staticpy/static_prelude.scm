@@ -2957,8 +2957,9 @@ np 插件可覆盖成 PyArray 版"
 
 (define (ir-tag? node tag)
   (let ((t (if (string? tag) (string->symbol tag) tag)))
-    (cond
-     ((not (eq? (ir-builtin-isa? node t) 'unknown)) (ir-builtin-isa? node t))
+    (let ((bi (ir-builtin-isa? node t)))
+     (cond
+     ((not (eq? bi 'unknown)) bi)
      ((record? node) (ir-record-isa? node t))
      ((vector? node)
       (and (> (vector-length node) 0)
@@ -2969,7 +2970,7 @@ np 插件可覆盖成 PyArray 版"
                     (eq? (string->symbol actual) t))
                    (else
                     (eq? actual t))))))
-     (else #f))))
+     (else #f)))))
 
 ;; Generic IR field accessor.  Python IR classes are translated to tagged
 ;; vectors, and different node types store the same field at different
