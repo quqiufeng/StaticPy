@@ -61,13 +61,8 @@ def tcount(toks) -> int:
     return py_list_length(toks)
 
 def tget(toks, p, k: int):
-    # 快路：读位置/夹紧/取 token 合成一次运行时调用（原为 3 次跨模块调用）
-    tk = tok_at(toks, p, k)
-    if k == 0:
-        # 「当前 token」被看一眼就刷新解析位置行号（lookahead 不算）
-        # token 恒为定长 4 元 vector：直取比 py_list_ref 少一层类型分派
-        int_array_set(LINE_P, 0, vec_ref(tk, 2))
-    return tk
+    # 快路：读位置 / 夹紧 / 取 token / k==0 刷新行号，全在一次运行时调用里
+    return tok_at(toks, p, k, LINE_P)
 
 def tty(toks, p) -> str:
     return vec_ref(tget(toks, p, 0), 0)

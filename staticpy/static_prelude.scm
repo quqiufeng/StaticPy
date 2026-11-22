@@ -1320,13 +1320,16 @@
 (define (int_array_ref ptr i)
   (foreign-ref 'integer-32 ptr (* i 4)))
 
-(define (tok-at toks p k)
+(define (tok-at toks p k slot)
   "取第 pos+k 个 token（越界夹紧到边界）。一次调用替代
-int_array_ref/py_list_length/py_list_ref 三次跨模块调用（分词热路）。"
+int_array_ref/py_list_length/py_list_ref 三次跨模块调用（分词热路）。
+toks 恒为 token vector（tokenize 结尾已摊平）；k=0 时顺带刷新行号槽
+（lookahead 不算，与旧实现一致）。"
   (let* ((i (+ (foreign-ref 'integer-32 p 0) k))
-         (n (if (vector? toks) (vector-length toks) (py-list-length toks)))
-         (j (cond ((< i 0) 0) ((< i n) i) (else (- n 1)))))
-    (if (vector? toks) (vector-ref toks j) (py-list-ref toks j))))
+         (n (vector-length toks))
+         (tk (vector-ref toks (cond ((< i 0) 0) ((< i n) i) (else (- n 1))))))
+    (if (= k 0) (foreign-set! 'integer-32 slot 0 (vector-ref tk 2)))
+    tk))
 
 ;; ====== Option / Result 类型 ======
 
