@@ -111,6 +111,16 @@ def build_word_set(words: str):
 RESERVED_SET = build_word_set(RESERVED)
 PRELUDE_SET = build_word_set(PRELUDE_NAMES)
 
+# perfmap 额外探测表：这些 prelude 过程不在 PRELUDE_NAMES（那是**调用**派发表），
+# 但剖面里是热点，值得在 /tmp/perf-<pid>.map 里点名。
+# 运行期用 (top-level-value ...) + guard 探测，未绑定的名字自动跳过，拼错无害。
+PERFMAP_EXTRA = (
+    "str-find py-str-find py-truthy py-equal? py-none? dict-set! dict-set-default! "
+    "dict-get dict-get-or-empty py-glist-push! py-glist-pop! py-glist-ref py-glist-set! "
+    "py-glist-new py-glist-len py-iter->list py-list-slice py-list-append ir-tag? "
+    "int_array_set int_array_ref vec_ref str_code_at str-join str-split"
+)
+
 def is_prelude_fn(nm: str) -> bool:
     # 文件自己定义的同名函数优先（同种子：name not in FUNCTION_SIGS）
     if dict_get(SIGS, nm) is not None:
@@ -3974,15 +3984,39 @@ def emit_perfmap(names) -> str:
             pairs = pairs + " "
         pairs = pairs + '(cons "' + py_list_ref(names, i) + '" static_' + py_list_ref(names, i) + ")"
         i = i + 1
-    # 注：prelude 函数名（py-list-ref / str_code_at ...）**无法**进 map。
-    # 实测三点：① Chez 用 compile-file 编出的程序里，`(top-level-bound? (quote py-list-ref))`
-    # 对本程序所有 define 一律为 #f（程序命名空间被封闭，只有 boot 层可见）；
-    # ② 直接引用名字可以编译（load 期才解析），但**任一**不存在的名字都会让整个
-    #    程序 load 失败（`variable char-code is not bound`）；
-    # ③ 用 (guard (e (#t #f)) name) 兜不住——那是 load 期错误，不是运行期异常。
-    # 所以 map 只收顶层函数（名字确定存在）；要 prelude 级别的归因请用
-    # STATICPY_PROFILE=source + dist/sprof（行级、零地址）。
+    # prelude 函数名（py-list-ref / str_code_at ...）：构建期无法判存在性，运行期可以。
+    # 三条实测：① `(top-level-bound? (quote py-list-ref))` 在 compile-file 产物里一律 #f
+    #   （程序命名空间封闭，只有 boot 层可见）；② 直接**引用**名字能编译，但任一不存在的
+    #   名字会让整个程序 load 失败（"variable char-code is not bound"），且 load 期错误
+    #   用 guard 兜不住；③ 而 `(top-level-value 'nm)` 是**运行期**解析，未绑定抛的是普通
+    #   条件，guard 接得住 → 可安全探测。
+    # 故 prelude 条目走运行期解析，名字来源是 PRELUDE_NAMES（Python 风格）+ scheme_name()
+    # 映射，并对带下划线的名字额外试连字符拼法（py_list_ref → py-list-ref）。
+    parts = list_to_py_list(str_split(PRELUDE_NAMES + " " + PERFMAP_EXTRA, " "))
+    seen = make_dict()
+    i = 0
+    while i < py_list_length(parts):
+        w = py_list_ref(parts, i)
+        i = i + 1
+        if str_length(w) == 0:
+            continue
+        sn = scheme_name(w)
+        variants = py_list()
+        variants = py_list_append(variants, sn)
+        dn = str_replace(sn, "_", "-")
+        if dn != sn:
+            variants = py_list_append(variants, dn)
+        j = 0
+        while j < py_list_length(variants):
+            vn = py_list_ref(variants, j)
+            j = j + 1
+            if dict_get_or_empty(seen, vn) == 1:
+                continue
+            seen[vn] = 1
+            pairs = pairs + " (cons (quote " + vn + ") (static__perfmap-resolve (quote " + vn + ")))"
     head: str = "\n\n;; perfmap self-report: code entry -> /tmp/perf-<pid>.map"
+    head = head + "\n(define (static__perfmap-resolve s)"
+    head = head + "\n  (guard (e (#t #f)) (let ((p (top-level-value s))) (and (procedure? p) p))))"
     head = head + "\n(define static__perfmap-pairs"
     head = head + "\n  (list " + pairs + "))"
     head = head + "\n(define (static__perfmap-emit)"
