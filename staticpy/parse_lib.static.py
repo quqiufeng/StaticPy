@@ -70,7 +70,8 @@ def tget(toks, p, k: int):
     tk = py_list_ref(toks, i)
     if k == 0:
         # 「当前 token」被看一眼就刷新解析位置行号（lookahead 不算）
-        int_array_set(LINE_P, 0, py_list_ref(tk, 2))
+        # token 恒为定长 4 元 vector：直取比 py_list_ref 少一层类型分派
+        int_array_set(LINE_P, 0, vec_ref(tk, 2))
     return tk
 
 def tty(toks, p) -> str:

@@ -1911,13 +1911,10 @@ def block_for(s, lvl: int) -> str:
     if nt(it) == "Constant" and dict_get(it, "_k") == "str":
         return f"(let* ((__iter {translate_expr(it)}) (__n (string-length __iter))) (do ((__i 0 (+ __i 1))) ((>= __i __n)) (let (({nm} (string-ref __iter __i))) {bs})))"
     if nt(it) == "Name":
-        # 函数体顶层（lvl=1）走旧版函数体那条路径：py-iter-seq + vector-length；
-        # 嵌套块走 emit_for_stmt：py-seq-len / py-seq-ref（统一 vector/glist/tagged/str）
+        # 统一走 py-seq-len / py-seq-ref（vector / glist / tagged / str 通吃）。
+        # 曾经 lvl==1（函数体顶层）走 py-iter-seq + vector-length：那会把 py-glist
+        # 整表拷成 vector（O(n) 一次性浪费，且每层循环各拷一次）。
         iter_name: str = dict_get(it, "id")
-        if lvl == 1:
-            return (f"(let* ((__iter (py-iter-seq {iter_name})) (__n (vector-length __iter))) "
-                    f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
-                    f"(let (({nm} (vector-ref __iter __i))) {bs})))")
         return (f"(let* ((__iter {iter_name}) (__n (py-seq-len __iter))) "
                 f"(do ((__i 0 (+ __i 1))) ((>= __i __n)) "
                 f"(let (({nm} (py-seq-ref __iter __i))) {bs})))")
