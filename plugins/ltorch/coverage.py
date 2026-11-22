@@ -124,6 +124,8 @@ MAP = {
     ("tensor", "expand"): ["c:torchc_expand", "p:Tensor.expand"],
     ("tensor", "t"): ["c:torchc_t", "p:Tensor.t"],
     ("tensor", "dot"): ["c:torchc_dot", "p:Tensor.dot"],
+    # ---- v13：梯度裁剪 ----
+    ("nn", "clip_grad_norm_"): "p:clip_grad_norm",
     # ---- nn（StaticPy 侧类）----
     ("nn", "Linear"): "p:Linear",
     ("nn", "Module"): "p:Module",

@@ -534,6 +534,23 @@ def main():
     print("t12_t=" + xm11.t().values())
     v12: Tensor = tensor_from_csv({V12}, "4")
     print("t12_dot=" + str(v12.dot(v12)))
+    # ================= v13：梯度范数 / 裁剪 =================
+    w13: Tensor = tensor_from_csv({W13}, "2,3").requires_grad_(1)
+    b13: Tensor = tensor_from_csv({B13}, "1,2").requires_grad_(1)
+    x13: Tensor = tensor_from_csv({X13}, "2,3")
+    t13: Tensor = tensor_from_csv({T13}, "2,2")
+    y13: Tensor = x13.matmul(w13.transpose(0, 1)).add(b13)
+    d13: Tensor = y13.sub(t13)
+    l13: Tensor = d13.mul(d13).mean()
+    l13.backward()
+    print("g13_norm=" + str(grad_norm([w13, b13])))
+    print("g13_gw=" + w13.grad_values())
+    print("g13_gb=" + b13.grad_values())
+    print("g13_clip=" + str(clip_grad_norm([w13, b13], 0.05)))
+    print("g13_gw_after=" + w13.grad_values())
+    print("g13_gb_after=" + b13.grad_values())
+    print("g13_clip2=" + str(clip_grad_norm([w13, b13], 100.0)))
+    print("g13_gw_idem=" + w13.grad_values())
     mh11.zero_grad()
     ly11: Tensor = mh11.forward(xm11).mean()
     ly11.backward()
@@ -664,6 +681,11 @@ def main():
 
     # ---- v11 MHA：L=3, E=4, H=2（q/k/v/out 四组权重全由 torch 生成后灌入）----
     xm11_v = [0.7, -1.2, 2.3, 0.4, -0.8, 1.5, 0.2, -2.1, 1.9, 0.6, -0.5, 1.1]
+    # ---- v13：梯度范数 / 裁剪（Linear 单步 backward 后裁剪）----
+    w13_v = torch.randn(2, 3, generator=g2, dtype=torch.float64) * 0.9
+    b13_v = [0.3, -0.7]
+    x13_v = [1.0, -0.5, 2.0, 0.25, 1.5, -1.0]
+    t13_v = [0.5, -1.0, 2.5, 0.0]
     wq11 = torch.randn(4, 4, generator=g2, dtype=torch.float64) * 0.5
     wk11 = torch.randn(4, 4, generator=g2, dtype=torch.float64) * 0.5
     wv11 = torch.randn(4, 4, generator=g2, dtype=torch.float64) * 0.5
@@ -713,6 +735,8 @@ def main():
         # v11
         "XM11": csv(xm11_v), "SXM11": "3,4",
         "V12": csv([0.5, -1.5, 2.25, 3.0]),
+        "W13": csv(flat(w13_v)), "B13": csv(b13_v),
+        "X13": csv(x13_v), "T13": csv(t13_v),
         "WQ11": csv(flat(wq11)), "WK11": csv(flat(wk11)), "WV11": csv(flat(wv11)),
         "BQ11": csv(flat(bq11)), "BK11": csv(flat(bk11)), "BV11": csv(flat(bv11)),
         "WO11": csv(flat(wo11)), "BO11": csv(flat(bo11)),
@@ -1036,6 +1060,21 @@ def main():
     ref["t12_t"] = flat(_xm11.t())
     _v12 = T([0.5, -1.5, 2.25, 3.0], (4,))
     ref["t12_dot"] = [float(torch.dot(_v12, _v12))]
+    _w13 = T(flat(w13_v), (2, 3)).requires_grad_(True)
+    _b13 = T(b13_v, (1, 2)).requires_grad_(True)
+    _x13 = T(x13_v, (2, 3))
+    _t13 = T(t13_v, (2, 2))
+    _y13 = _x13 @ _w13.T + _b13
+    _l13 = ((_y13 - _t13) ** 2).mean()
+    _l13.backward()
+    ref["g13_norm"] = [float(torch.nn.utils.clip_grad_norm_([_w13, _b13], 1e9))]
+    ref["g13_gw"] = flat(_w13.grad)
+    ref["g13_gb"] = flat(_b13.grad)
+    ref["g13_clip"] = [float(torch.nn.utils.clip_grad_norm_([_w13, _b13], 0.05))]
+    ref["g13_gw_after"] = flat(_w13.grad)
+    ref["g13_gb_after"] = flat(_b13.grad)
+    ref["g13_clip2"] = [float(torch.nn.utils.clip_grad_norm_([_w13, _b13], 100.0))]
+    ref["g13_gw_idem"] = flat(_w13.grad)
     ref["n10_gelu"] = flat(torch.nn.GELU()(_x10))
     ref["n10_gelu_ap"] = flat(torch.nn.GELU(approximate="tanh")(_x10))
     ref["n10_leaky"] = flat(torch.nn.LeakyReLU(0.13)(_x10))

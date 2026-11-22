@@ -1969,6 +1969,44 @@ class CosineAnnealingLR:
         return self.eta_min + (self.base_lr - self.eta_min) * (1.0 + cosv) / 2.0
 
 
+# ---- v13：梯度范数 / 裁剪（对标 torch.nn.utils.clip_grad_norm_）----
+
+def grad_norm(params: list) -> float:
+    """所有参数梯度的全局 L2 范数（无梯度的参数跳过）。"""
+    total: float = 0.0
+    i: int = 0
+    while i < len(params):
+        p: Tensor = params[i]
+        if p.requires_grad() == 1:
+            g: Tensor = p.grad()
+            if torchc_is_tensor(g.h) == 1:
+                n: float = g.norm_p(2.0)
+                total = total + n * n
+        i += 1
+    return sqrt_float(total)
+
+
+def clip_grad_norm(params: list, max_norm: float) -> float:
+    """梯度全局裁剪：返回**裁剪前**的总范数（与 torch 一致）。
+
+    torch 的缩放系数是 `max_norm / (total_norm + 1e-6)`，同一口径照抄；
+    `1e-6` 必须在分母（写成 `total*(1+eps)` 会在小梯度处偏）。
+    """
+    total: float = grad_norm(params)
+    if total > max_norm:
+        scale: float = max_norm / (total + 1e-06)
+        i: int = 0
+        while i < len(params):
+            p: Tensor = params[i]
+            if p.requires_grad() == 1:
+                g: Tensor = p.grad()
+                if torchc_is_tensor(g.h) == 1:
+                    scaled: Tensor = g.mul_scalar(scale)
+                    torchc_copy_into(g.h, scaled.h)
+            i += 1
+    return total
+
+
 def save_params(params: list, path: str) -> int:
     """按参数顺序一参数一文件 <path>.0 / <path>.1 …；返回写成功的个数。
 
