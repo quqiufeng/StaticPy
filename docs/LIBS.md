@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **144/144** |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **150/150** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -309,6 +309,12 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   与 `torch.nn.Sequential` 的 `state_dict().keys()` **逐键一致**（无参子层不占键位、编号照登记位置）。
   为此 `BatchNorm1d` 补了 `num_batches_tracked`（训练态每前向 +1，同 torch）；
   它的 `save/load_ckpt` 现在就是 `state_list()` 一把存（5 项），不再走 `<path>.bn.*` 旁路。
+- **v9（CNN 进 `Sequential`）**：`Sequential` 现在能串 **`Conv2d` / `MaxPool2d` / `AvgPool2d`**
+  （`add_conv` / `add_maxpool` / `add_avgpool`），派发表里各占一个 kind，键面仍照 torch 的登记位置编号——
+  `Sequential(Conv2d, ReLU, MaxPool2d, Flatten, Linear)` 得到 `0.weight / 0.bias / 4.weight / 4.bias`，
+  与 `torch.nn.Sequential` 逐键一致，前向也逐值一致（v9 6 项）。
+  **坑**：`parameters()` 的次序是「Linear → Conv → BN」（历史包袱），和 `state_dict` 的键序**不同**，
+  所以按下标取参数请用 `param_by("0.weight")`，别拿 `param_at(0)` 猜（它给的是第一个 Linear）。
 - **`BatchNorm1d` 训练态**：`torchc_batch_norm_train(x, running_mean, running_var, gamma, beta,
   eps, momentum, training)` —— 落 `at::batch_norm`，训练时用 batch 统计归一化并**原地更新**
   running mean/var（`(1-m)*running + m*batch`，方差无偏），与 `F.batch_norm(..., training=True)`
@@ -321,6 +327,10 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   `opt: Optimizer` 再接 `AdamW`（报 `argument 2 ... expects 'Optimizer', got 'AdamW'`），
   要按**具体优化器类**标注；`Dropout` 有 `train()/eval()` 两态，评估前 `eval()` 才确定性。
   模板实跑：acc 0.51 → 1.0、loss 0.692 → 9.6e-4（40 步），中途 `save` → 清零 → `load_ckpt` 恢复 acc=1.0。
+- **CNN 训练模板** `plugins/ltorch/train_cnn.static.py`：`Sequential(Conv2d→ReLU→MaxPool2d→Flatten→Linear→ReLU→Linear)`，
+  数据是 8×8 单通道、**三类按「亮在哪半张」区分且样本均衡**（类别不均衡时模型会退化成猜多数类，
+  看起来 accuracy 很高其实没学到东西——模板里那个 `acc_wiped` 检查就是防这个）。
+  实跑：`acc0 0.31 → acc1 1.0`，把 `0.weight` 清零后 `acc_wiped 0.33`（= 随机猜），`load_ckpt` 后回到 1.0。
 - **踩过的坑（写训练代码会撞到）**：默认实参不写齐会段错误（`Adam(ps, lr=…)` 必须给全默认值）；
   `CrossEntropyLoss` 收 `list` target，Tensor target 走 `forward_t`；`Sequential` 用**显式派发表**
   （静态语言无动态分派）；`__init__` 体内不建类型环境，需要局部类型标注的循环挪到普通方法。
@@ -339,8 +349,10 @@ LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/train_demo   # 线性回归 + MLP 训�
 bash plugins/ltorch/build_app.sh my_train.static.py my_train && ./my_train
 # 现成模板（三层 MLP + Dropout + AdamW + StepLR + 中途 save/load 续训）：
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_template.static.py train_template && ./dist/train_template
+# 现成模板 2（CNN：Conv2d + MaxPool2d + Flatten + SGD + 均衡三类 + 存盘续训）：
+bash plugins/ltorch/build_app.sh plugins/ltorch/train_cnn.static.py train_cnn && ./dist/train_cnn
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
-python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：144/144（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：150/150（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6）
 python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 106 条全验证、显式缺口 0（合计 6.0%）
 python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：40/40（容差 1e-10）
 ```

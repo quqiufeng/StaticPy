@@ -433,6 +433,25 @@ def main():
     print("sd8b_rv=" + bnb.param("running_var").values())
     print("sd8b_ngamma=" + str(bnb.param("weight").numel()))
 
+    # ================= v9：Sequential 里的 CNN（Conv2d+MaxPool2d+Flatten） =================
+    # 键面 = torch 的嵌套编号（0.weight / 0.bias / 4.weight / 4.bias），前向与 torch 逐值比
+    sq9: Sequential = Sequential()
+    c9: Conv2d = Conv2d(1, 2, 3, 1, 1, 0)
+    c9.load({CW}, {SCW}, {CB}, {SCB})
+    sq9.add_conv(c9)
+    sq9.add_relu()
+    sq9.add_maxpool(MaxPool2d(2, 2))
+    sq9.add_flatten()
+    l9: Linear = Linear(8, 3, 0)
+    l9.load({W9}, {S9}, {B9}, {SB9})
+    sq9.add_linear(l9)
+    print("cnn9_keys=" + join8(sq9.state_names()))
+    print("cnn9_nkeys=" + str(len(sq9.state_dict())))
+    print("cnn9_nparams=" + str(len(sq9.parameters())))
+    print("cnn9_y=" + sq9.forward(tensor_from_csv({XP}, {SXP})).values())
+    print("cnn9_convw=" + str(sq9.param_by("0.weight").numel()))
+    print("cnn9_linw=" + str(sq9.param_by("4.weight").numel()))
+
     print("ok")
 
 
@@ -510,6 +529,9 @@ def main():
     g2 = torch.Generator().manual_seed(7)
     cw = torch.randn(2, 1, 3, 3, generator=g2, dtype=torch.float64) * 0.4
     cb = [0.1, -0.2]
+    _g9 = torch.Generator().manual_seed(29)
+    w9 = torch.randn(3, 8, generator=_g9, dtype=torch.float64) * 0.5
+    b9 = [0.1, -0.1, 0.05]
     xc = [float(i) for i in range(1, 10)]          # 1x1x3x3
     xp = [float(i) for i in range(1, 17)]          # 1x1x4x4
     bn_mean, bn_var = [0.2, -0.1, 0.05], [1.3, 0.7, 2.1]
@@ -566,6 +588,8 @@ def main():
         "BN7M": csv(bn7_mu), "BN7V": csv(bn7_va),
         "XBT": csv(xbt_v), "SXBT": "4,3",
         "X8": csv(xbt_v), "SX8": "4,3",
+        # v9
+        "W9": csv(flat(w9)), "S9": "3,8", "B9": csv(b9), "SB9": "1,3",
     }
     ours = run_elf(pairs, verbose)
 
@@ -842,6 +866,25 @@ def main():
     ref["sd8b_rm"] = flat(_m8b[0].running_mean)
     ref["sd8b_rv"] = flat(_m8b[0].running_var)
     ref["sd8b_ngamma"] = [float(_m8b[0].weight.numel())]
+
+    # ---------------- v9：Sequential 里的 CNN ----------------
+    _c9 = torch.nn.Conv2d(1, 2, 3, padding=1, dtype=torch.float64)
+    with torch.no_grad():
+        _c9.weight.copy_(cw.reshape(2, 1, 3, 3))
+        _c9.bias.copy_(T(cb, (2,)))
+    _l9 = torch.nn.Linear(8, 3, dtype=torch.float64)
+    with torch.no_grad():
+        _l9.weight.copy_(w9)
+        _l9.bias.copy_(T(b9, (3,)))
+    _m9 = torch.nn.Sequential(_c9, torch.nn.ReLU(), torch.nn.MaxPool2d(2),
+                              torch.nn.Flatten(), _l9)
+    _k9 = list(_m9.state_dict().keys())
+    ref["cnn9_keys"] = ",".join(_k9)
+    ref["cnn9_nkeys"] = [float(len(_k9))]
+    ref["cnn9_nparams"] = [float(len(_k9))]
+    ref["cnn9_y"] = flat(_m9(T(xp, (1, 1, 4, 4))))
+    ref["cnn9_convw"] = [float(_c9.weight.numel())]
+    ref["cnn9_linw"] = [float(_l9.weight.numel())]
 
     # ---------------- 比对 ----------------
     bad = 0

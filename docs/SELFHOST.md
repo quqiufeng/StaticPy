@@ -232,6 +232,26 @@ diff <(./dist/translator_self ~/iso_gen/t.static.py) <(./dist/translator ~/iso_g
 3. Python 侧 `py_float_repr` 在 Scheme 预置里叫 **`py-float-repr`**；`scheme_name` 的
    `RUNTIME_MAP` 漏映射就会在运行时报「variable py_float_repr is not bound」。
 
+## 7.5 未声明类型的 `dict_get(...) == "字面量"` 是构建期雷（已修）
+
+`dict-get` 缺键返回 `py-none`，但**未声明类型的局部变量**在 `== "str字面量"` 处会被推断成
+str，于是生成 `(string=? v "…")` —— 缺键那一路就拿 `py-none` 去比，构建期直接
+`Exception in string=?: \x1;py-none is not a string`。典型触发形态：
+
+```python
+rt = dict_get(SIGS, name)      # 未声明类型
+if rt == "str":                # → (string=? rt "str")；name 不在 SIGS → 崩
+```
+
+修法两条（都在 `emit_lib.static.py`，实测 `echo 链 randn(...).mul_scalar(...)` 由崩转通）：
+
+1. `nt(n)` 显式把「dict 里没有 `_t`」归一成 `""`，不让 `py-none` 漏到下游比较；
+2. 需要「查表 + 比字面量」的地方走**带 `-> str` 标注且缺键返 `""`** 的助手
+   （如 `sig_ret`），不要直接拿 `dict_get` 的结果去比字符串。
+
+排查手法：在可疑函数入口打 `print` 标签（本项目临时文件放 `~/iso_gen/`），
+重编自举器 `~1.2s`，看输出尾部的最后一个标签就是崩点。
+
 ## 8. 文件
 
 | 文件 | 作用 |

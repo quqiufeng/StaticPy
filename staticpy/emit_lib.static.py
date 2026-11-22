@@ -143,9 +143,13 @@ def nt(n) -> str:
         return ""
     if isinstance(n, str) or isinstance(n, int) or isinstance(n, float):
         return ""
-    if n is None:
+    t: str = dict_get(n, "_t")
+    if t is None:
+        # 不是 AST 节点（类信息 / 成员命中表等内部 dict 没有 "_t"）：
+        # 以前直接把 py-none 当 str 返回，下游 nt(x) == "..." 变成 (string=? py-none "…")
+        # → 构建期崩在 string=?（如 echo 链 randn(...).mul_scalar(...)，见 §SELFHOST）
         return ""
-    return dict_get(n, "_t")
+    return t
 
 def nx(n, k):
     """节点字段；缺失 -> None"""
@@ -1390,8 +1394,10 @@ def is_str_receiver(n) -> int:
     if t == "Call":
         fn = dict_get(n, "func")
         if nt(fn) == "Name":
-            rt = dict_get(SIGS, dict_get(fn, "id"))
-            if rt == "str":
+            # 不能直接 dict_get(SIGS, …) 后比 "str"：未声明类型的结果被当成 str，
+            # 生成 (string=? rt "str")，未知函数（SIGS 无此键）拿到 py-none → 崩在 string=?
+            # （echo 链 randn(...).mul_scalar(...) 就是这么炸的）。走 sig_ret：缺键 → ""
+            if sig_ret(dict_get(fn, "id")) == "str":
                 return 1
             return 0
         if nt(fn) == "Attribute":

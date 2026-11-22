@@ -920,6 +920,9 @@ class Sequential(Module):
     kinds: list
     idxs: list
     linears: list
+    convs: list
+    pools: list
+    avgs: list
     bns: list
     drops: list
     relu_m: ReLU
@@ -933,6 +936,9 @@ class Sequential(Module):
         self.kinds = []
         self.idxs = []
         self.linears = []
+        self.convs = []
+        self.pools = []
+        self.avgs = []
         self.bns = []
         self.drops = []
         self.relu_m = ReLU()
@@ -947,6 +953,18 @@ class Sequential(Module):
     def add_linear(self, m: Linear) -> None:
         self.linears.append(m)
         self.push("linear", len(self.linears) - 1)
+
+    def add_conv(self, m: Conv2d) -> None:
+        self.convs.append(m)
+        self.push("conv", len(self.convs) - 1)
+
+    def add_maxpool(self, m: MaxPool2d) -> None:
+        self.pools.append(m)
+        self.push("maxpool", len(self.pools) - 1)
+
+    def add_avgpool(self, m: AvgPool2d) -> None:
+        self.avgs.append(m)
+        self.push("avgpool", len(self.avgs) - 1)
 
     def add_bn(self, m: BatchNorm1d) -> None:
         self.bns.append(m)
@@ -989,6 +1007,9 @@ class Sequential(Module):
             if k == "linear":
                 out.append(pre + ".weight")
                 out.append(pre + ".bias")
+            if k == "conv":
+                out.append(pre + ".weight")
+                out.append(pre + ".bias")
             if k == "bn":
                 b: BatchNorm1d = self.bns[j]
                 ns: list = b.state_names()
@@ -1012,6 +1033,13 @@ class Sequential(Module):
                 q: int = 0
                 while q < len(ps):
                     out.append(ps[q])
+                    q += 1
+            if k == "conv":
+                c: Conv2d = self.convs[j]
+                cs: list = c.state_list()
+                q = 0
+                while q < len(cs):
+                    out.append(cs[q])
                     q += 1
             if k == "bn":
                 b: BatchNorm1d = self.bns[j]
@@ -1054,6 +1082,15 @@ class Sequential(Module):
             if k == "linear":
                 l: Linear = self.linears[j]
                 y = l.forward(y)
+            if k == "conv":
+                c: Conv2d = self.convs[j]
+                y = c.forward(y)
+            if k == "maxpool":
+                mp: MaxPool2d = self.pools[j]
+                y = mp.forward(y)
+            if k == "avgpool":
+                ap: AvgPool2d = self.avgs[j]
+                y = ap.forward(y)
             if k == "bn":
                 b: BatchNorm1d = self.bns[j]
                 y = b.forward(y)
@@ -1080,6 +1117,15 @@ class Sequential(Module):
             j: int = 0
             while j < len(ps):
                 out.append(ps[j])
+                j += 1
+            i += 1
+        i = 0
+        while i < len(self.convs):
+            c: Conv2d = self.convs[i]
+            cs: list = c.parameters()
+            j = 0
+            while j < len(cs):
+                out.append(cs[j])
                 j += 1
             i += 1
         i = 0
