@@ -51,7 +51,7 @@
 | S-TOPFOR | 顶层 `for`/`while`/`if` 无静态语义 → **构建期响亮失败** | toplevel_for |
 | S-COMP | 列表/字典/集合推导式与生成器表达式（`for`+`if`、多维），求值顺序同 CPython | comprehension |
 | S-DATACLASS | `@dataclass` 风格类（body 全为注解字段）→ record：字段可读写、`==`/`print` 有偏差（见 LANGUAGE） | dataclass_record |
-| S-ENUM | `Enum` 编译成顶层常量：成员值/`.name`/`.value`/相等比较；成员存进变量后 `.name` 构建期响亮失败 | enum_const, enum_var_name |
+| S-ENUM | `Enum` 编译成顶层常量：成员值/`.name`/`.value`/相等比较；成员存进变量后 `.name`/`.value` 由预扫反向查表解析（`d = c` 转手也照抄） | enum_const, enum_var_name |
 | S-MATCH | `match/case`：字面量/通配/捕获/`\|`/guard/序列（含 `*rest`）/块内 match | match_case |
 
 ## 2. 预期失败用例（`# expect:` 头）
@@ -61,7 +61,7 @@
 
 | 标记 | 判据 | 现用例 |
 |---|---|---|
-| `# expect: build-error <子串>` | 构建必须失败，且产物/报错含该子串 | toplevel_for, fstring_conv_a, enum_var_name |
+| `# expect: build-error <子串>` | 构建必须失败，且产物/报错含该子串 | toplevel_for, fstring_conv_a |
 | `# expect: runtime-error <子串>` | 构建成功、运行期必须非零退出且输出含该子串 | str_percent_bad |
 
 新写这类用例时**必须**同时登记到上表和本节（`check_spec.py` 会核对两处一致）。

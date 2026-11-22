@@ -555,7 +555,7 @@ TRANS_ERRORS = []   # 翻译期的“响亮失败”记录（stderr 报告）
 INSTANTIATED = set()  # 模块里被调用过的类名（Cls(...)）
 # 枚举类名 -> [成员名]（Color.RED -> Color_RED 常量，取代 record 字段访问）
 ENUM_MEMBERS = {}
-ENUM_VARS = {}   # 变量名 -> 枚举名（c = Color.RED 之后 c 就是该枚举的值）
+ENUM_VARS = {}   # 变量名 -> (枚举名, 成员名)（c = Color.RED 之后 c.value/.name 编译期可解析）
 
 
 # 内置模块及其函数映射（模块名 -> {函数名: Scheme 函数名})
@@ -2062,7 +2062,10 @@ def scan_enum_vars(tree):
             continue
         hit = enum_member_of(node.value) if isinstance(node.value, ast.Attribute) else None
         if hit:
-            ENUM_VARS[node_target_name(t)] = hit[0]
+            ENUM_VARS[node_target_name(t)] = hit
+        elif isinstance(node.value, ast.Name) and node.value.id in ENUM_VARS:
+            # d = c（c 已是枚举成员）也照抄一份，免得 d.name 掉进 ir-field 运行期崩
+            ENUM_VARS[node_target_name(t)] = ENUM_VARS[node.value.id]
 
 
 def node_target_name(t):
@@ -2080,15 +2083,12 @@ def enum_attr_expr(node):
     if hit:
         return f"{hit[0]}_{hit[1]}"
     if isinstance(node.value, ast.Name) and node.attr in ("name", "value"):
-        # c = Color.RED 之后：c.value 就是那个整数；c.name 需要反向查表（构建期报错而不是崩）
-        owner = ENUM_VARS.get(node.value.id)
-        if owner:
+        # c = Color.RED 之后：c.value 就是那个整数，c.name 就是成员名（编译期反向查表）
+        hit_var = ENUM_VARS.get(node.value.id)
+        if hit_var:
             if node.attr == "value":
-                return f"{mangle_name(node.value.id)}"
-            TRANS_ERRORS.append(
-                f"第 {getattr(node, 'lineno', 0)} 行: 枚举成员变量取 .name 尚未支持"
-                f"（写 {owner}.成员.name 或直接比 {owner}.成员）")
-            return f"(error 'unsupported \"enum-var-name\")"
+                return f"{hit_var[0]}_{hit_var[1]}"
+            return '"' + hit_var[1] + '"'
     if isinstance(node.value, ast.Attribute) and node.attr in ("name", "value"):
         inner = enum_member_of(node.value)
         if inner:

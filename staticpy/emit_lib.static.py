@@ -873,10 +873,13 @@ def translate_attribute(n) -> str:
             if at == "name":
                 return '"' + inner + '"'
             return dict_get(dict_get(rv, "value"), "id") + "_" + inner
-    if at == "value" and nt(rv) == "Name":
-        # c = Color.RED 之后 c.value 就是那个整数（c.name 构建期报错，不静默出错值）
-        if dict_get(ENUM_VARS, mangle_name(dict_get(rv, "id"))) is not None:
-            return mangle_name(dict_get(rv, "id"))
+    if (at == "name" or at == "value") and nt(rv) == "Name":
+        # c = Color.RED 之后 c.value 就是那个整数，c.name 就是成员名（编译期反向查表）
+        pair = dict_get(ENUM_VARS, mangle_name(dict_get(rv, "id")))
+        if pair is not None:
+            if at == "value":
+                return py_list_ref(pair, 0) + "_" + py_list_ref(pair, 1)
+            return '"' + py_list_ref(pair, 1) + '"'
     # 模块常量/函数取值：math.pi -> (pi)，time.time -> (clock)
     mv: str = module_value_name(n)
     if mv != "":
@@ -3656,8 +3659,16 @@ def scan_enum_body(body) -> int:
                 if nt(rv) == "Attribute":
                     rv2 = dict_get(rv, "value")
                     if nt(rv2) == "Name" and dict_get(ENUM_MEMBERS, dict_get(rv2, "id")) is not None:
-                        dict_set(ENUM_VARS, mangle_name(dict_get(tg, "id")),
-                                 dict_get(rv2, "id"))
+                        # 变量 -> [枚举名, 成员名]：c.value 出整数、c.name 出成员名（编译期解析）
+                        pair = py_list()
+                        pair = py_list_append(pair, dict_get(rv2, "id"))
+                        pair = py_list_append(pair, dict_get(rv, "attr"))
+                        dict_set(ENUM_VARS, mangle_name(dict_get(tg, "id")), pair)
+                elif nt(rv) == "Name":
+                    # d = c（c 已是枚举成员）也照抄一份，免得 d.name 掉进 ir-field 运行期崩
+                    pair2 = dict_get(ENUM_VARS, mangle_name(dict_get(rv, "id")))
+                    if pair2 is not None:
+                        dict_set(ENUM_VARS, mangle_name(dict_get(tg, "id")), pair2)
         i = i + 1
     return 0
 
