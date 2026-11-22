@@ -67,10 +67,11 @@ def tget(toks, p, k: int):
         i = n - 1
     if i < 0:
         i = 0
+    tk = py_list_ref(toks, i)
     if k == 0:
         # 「当前 token」被看一眼就刷新解析位置行号（lookahead 不算）
-        int_array_set(LINE_P, 0, tok_line(py_list_ref(toks, i)))
-    return py_list_ref(toks, i)
+        int_array_set(LINE_P, 0, tok_line(tk))
+    return tk
 
 def tty(toks, p) -> str:
     return tok_type(tget(toks, p, 0))

@@ -77,24 +77,20 @@ def is_space(c: str) -> bool:
 # ========== token 构造 ==========
 
 def tok(t: str, v: str, line: int, col: int):
-    d = make_dict()
-    dict_set(d, "t", t)
-    dict_set(d, "v", v)
-    dict_set(d, "line", line)
-    dict_set(d, "col", col)
-    return d
+    # token = 定长 4 元 vector (类型, 值, 行, 列)：下标取比字符串键 hashtable 便宜一个量级
+    return py_list(t, v, line, col)
 
 def tok_type(t):
-    return dict_get(t, "t")
+    return py_list_ref(t, 0)
 
 def tok_value(t):
-    return dict_get(t, "v")
+    return py_list_ref(t, 1)
 
 def tok_line(t):
-    return dict_get(t, "line")
+    return py_list_ref(t, 2)
 
 def tok_col(t):
-    return dict_get(t, "col")
+    return py_list_ref(t, 3)
 
 def tok_startswith(t, prefix: str) -> bool:
     return str_starts_with(tok_value(t), prefix)
