@@ -104,30 +104,36 @@ def perr(toks, p, msg: str) -> int:
     return 0
 
 def want_op(toks, p, s: str) -> int:
-    if tty(toks, p) == "OP" and tv(toks, p) == s:
+    tk = tget(toks, p, 0)
+    if tok_type(tk) == "OP" and tok_value(tk) == s:
         tadv(p)
         return 0
     perr(toks, p, "expected '" + s + "'")
     return 0
 
 def want_kw(toks, p, s: str) -> int:
-    if tty(toks, p) == "KEYWORD" and tv(toks, p) == s:
+    tk = tget(toks, p, 0)
+    if tok_type(tk) == "KEYWORD" and tok_value(tk) == s:
         tadv(p)
         return 0
     perr(toks, p, "expected keyword '" + s + "'")
     return 0
 
 def is_op(toks, p, s: str) -> bool:
-    return tty(toks, p) == "OP" and tv(toks, p) == s
+    tk = tget(toks, p, 0)
+    return tok_type(tk) == "OP" and tok_value(tk) == s
 
 def is_kw(toks, p, s: str) -> bool:
-    return tty(toks, p) == "KEYWORD" and tv(toks, p) == s
+    tk = tget(toks, p, 0)
+    return tok_type(tk) == "KEYWORD" and tok_value(tk) == s
 
 def is_op_at(toks, p, k: int, s: str) -> bool:
-    return tty_at(toks, p, k) == "OP" and tv_at(toks, p, k) == s
+    tk = tget(toks, p, k)
+    return tok_type(tk) == "OP" and tok_value(tk) == s
 
 def is_kw_at(toks, p, k: int, s: str) -> bool:
-    return tty_at(toks, p, k) == "KEYWORD" and tv_at(toks, p, k) == s
+    tk = tget(toks, p, k)
+    return tok_type(tk) == "KEYWORD" and tok_value(tk) == s
 
 def skip_newlines(toks, p) -> int:
     while tty(toks, p) == "NEWLINE":
@@ -350,9 +356,10 @@ def parse_binop_left(toks, p, level: int):
     # level: 0=bor '|', 1=bxor '^', 2=band '&', 3=shift, 4=arith, 5=term
     left = parse_binop_sub(toks, p, level)
     while True:
-        v = tv(toks, p)
+        tk = tget(toks, p, 0)
+        v = tok_value(tk)
         opname = ""
-        if tty(toks, p) == "OP":
+        if tok_type(tk) == "OP":
             if level == 0 and v == "|":
                 opname = "BitOr"
             elif level == 1 and v == "^":
