@@ -673,4 +673,5 @@ def tokenize(src: str):
         indents = list_drop_last(indents)
         toks = py_list_append(toks, tok("DEDENT", "", line, 0))
     toks = py_list_append(toks, tok("ENDMARKER", "", line, 0))
-    return toks
+    # 一次性把 glist 摊平为 vector：之后每个 token 的读取都走 py_list_ref 的 vector 快路
+    return py_list_slice(toks, 0, py_list_length(toks))
