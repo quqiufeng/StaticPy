@@ -25,9 +25,9 @@
       "path": "staticpy/static_translate.py",
       "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
       "state": "present",
-      "sha256": "ab624eb0c8198698400fda601ed63b0cc83b6c06c9522badb34f2de533236527",
-      "bytes": 238930,
-      "lines": 5348
+      "sha256": "40733514cd794116bc1a4592402b5b0dad548f240a028e228fbbe46d38216580",
+      "bytes": 240545,
+      "lines": 5371
     },
     {
       "role": "seed",
@@ -1015,18 +1015,18 @@
       "path": "cpp/torch/torch_capi.cpp",
       "why": "我们手写的 C/C++（可审计）",
       "state": "present",
-      "sha256": "6472406e957d39c4bf590099b3cbbe5dd271230e9ce81562f81adb75875e1d2d",
-      "bytes": 12820,
-      "lines": 479
+      "sha256": "6cf551df56af56fae14bb537e9796c9fb9435f51aae2f29b56cbfbfe760a4894",
+      "bytes": 14173,
+      "lines": 521
     },
     {
       "role": "cpp",
       "path": "cpp/torch/torch_capi.h",
       "why": "我们手写的 C/C++（可审计）",
       "state": "present",
-      "sha256": "95f0879425976f867db23e4b378f3754682b677eec768f173ace81f8bde1c94f",
-      "bytes": 3074,
-      "lines": 75
+      "sha256": "b8665f7bf7e9900d684494dfd1b6dc143ab114ba6074f7c86947ca72e709c747",
+      "bytes": 3262,
+      "lines": 77
     },
     {
       "role": "cpp",

@@ -49,7 +49,8 @@
       "backward": "ltorch-backward",
       "grad": "ltorch-grad",
       "zero_grad": "ltorch-zero-grad",
-      "free": "ltorch-free"
+      "free": "ltorch-free",
+      "sgd_step": "ltorch-sgd-step"
     }
   },
   "return_types": {
@@ -90,7 +91,8 @@
     "ltorch-backward": "int",
     "ltorch-grad": "int",
     "ltorch-zero-grad": "int",
-    "ltorch-free": "int"
+    "ltorch-free": "int",
+    "ltorch-sgd-step": "int"
   },
   "runtime": [
     "runtime.scm"

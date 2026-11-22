@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 namespace {
 
@@ -81,8 +82,14 @@ bool parse_values(const char *csv, std::vector<double> &out) {
   return true;
 }
 
+// 存活句柄登记：Scheme 侧句柄是 integer-64，与用户整数无法区分，
+// 所以用这张表回答「这个整数是张量句柄还是标量」（torchc_is_tensor）。
+static std::unordered_set<void *> g_live;
+
 torchc_tensor wrap(const at::Tensor &t) {
-  return new at::Tensor(t);
+  auto *p = new at::Tensor(t);
+  g_live.insert(p);
+  return p;
 }
 
 at::Tensor *unwrap(torchc_tensor h) {
@@ -100,6 +107,18 @@ at::Tensor *unwrap(torchc_tensor h) {
   catch (...) {                                   \
     set_error(std::string(tag) + ": unknown error"); \
     return nullptr;                               \
+  }
+
+// long 返回版（宏里 return nullptr 对 long 不合法）
+#define TORCHC_GUARD_END_LONG(tag)                \
+  }                                               \
+  catch (const std::exception &e) {               \
+    set_error(std::string(tag) + ": " + e.what());  \
+    return 0;                                     \
+  }                                               \
+  catch (...) {                                   \
+    set_error(std::string(tag) + ": unknown error"); \
+    return 0;                                     \
   }
 
 #define TORCHC_NEED(h, name)                     \
@@ -471,8 +490,31 @@ torchc_tensor torchc_zero_grad(torchc_tensor a) {
   TORCHC_GUARD_END("zero_grad")
 }
 
+long torchc_sgd_step(torchc_tensor w, torchc_tensor g, double lr) {
+  clear_error();
+  if (w == nullptr) {
+    set_error("sgd_step: 空权重句柄");
+    return 0;
+  }
+  if (g == nullptr) {
+    set_error("sgd_step: 空梯度句柄");
+    return 0;
+  }
+  TORCHC_GUARD_BEGIN
+    torch::NoGradGuard ng;
+    unwrap(w)->sub_(unwrap(g)->mul(lr));
+    return 1;
+  TORCHC_GUARD_END_LONG("sgd_step")
+}
+
+long torchc_is_tensor(torchc_tensor a) {
+  if (a == nullptr) return 0;
+  return g_live.count(a) ? 1 : 0;
+}
+
 void torchc_free(torchc_tensor a) {
   if (a == nullptr) return;
+  g_live.erase(a);
   delete unwrap(a);
 }
 

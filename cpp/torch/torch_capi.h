@@ -64,8 +64,10 @@ long torchc_requires_grad(torchc_tensor a);
 long torchc_backward(torchc_tensor a);            /* 标量反传；返回 1/0 */
 torchc_tensor torchc_grad(torchc_tensor a);       /* 梯度张量（无梯度返回 NULL） */
 torchc_tensor torchc_zero_grad(torchc_tensor a);
+long torchc_sgd_step(torchc_tensor w, torchc_tensor g, double lr); /* 原地 w -= lr*g（NoGrad） */
 
 /* ---- 生命周期 ---- */
+long torchc_is_tensor(torchc_tensor a);  /* 1=是存活句柄，0=普通整数/空 */
 void torchc_free(torchc_tensor a);
 
 #ifdef __cplusplus

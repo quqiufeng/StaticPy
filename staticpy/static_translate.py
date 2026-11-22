@@ -621,7 +621,7 @@ BUILTIN_MODULES = {
         "optimizer_step": "torch-optimizer-step",
         "optimizer_zero_grad": "torch-optimizer-zero-grad",
         "manual_seed": "torch-manual-seed",
-        "to_list": "torch-to-list",
+        "to_list": "torch-to-list", "item": "torch-item",
         "available": "torch-available",
         "conv2d": "torch-conv2d",
         "max_pool2d": "torch-max-pool2d",
@@ -3523,6 +3523,23 @@ TENSOR_MODULE_FNS = {
 
 # 当前函数作用域内已知的张量变量（translate_function 预扫描后填充）
 CURRENT_TENSOR_VARS = set()
+# 翻译后形态（torch-tensor-* / torch-<fn>）里哪些产生张量：让 `e = d * d` 这类
+# 链式赋值在扫描阶段就能认出变量是张量。标量返回的（numel/to_list/item/…）不列。
+TENSOR_RETURN_NAMES = {
+    "torch-tensor", "torch-tensor-int64", "torch-empty", "torch-zeros", "torch-ones",
+    "torch-randn", "torch-arange", "torch-full", "torch-add", "torch-sub", "torch-mul",
+    "torch-div", "torch-matmul", "torch-clone", "torch-detach", "torch-reshape",
+    "torch-transpose", "torch-relu", "torch-sigmoid", "torch-tanh", "torch-softmax",
+    "torch-linear", "torch-tensor-add", "torch-tensor-sub", "torch-tensor-mul",
+    "torch-tensor-div", "torch-tensor-matmul", "torch-tensor-relu", "torch-tensor-sigmoid",
+    "torch-tensor-tanh", "torch-tensor-softmax", "torch-tensor-clone",
+    "torch-tensor-detach", "torch-tensor-reshape", "torch-tensor-view",
+    "torch-tensor-transpose", "torch-tensor-permute", "torch-tensor-neg",
+    "torch-tensor-contiguous", "torch-tensor-float", "torch-tensor-pow",
+    "torch-tensor-slice-last", "torch-grad",
+}
+# 同名方法里返回标量/整数的（.numel()/.item()/…）不能当张量
+TENSOR_SCALAR_ATTRS = {"item", "numel", "ndim", "dim", "size", "tolist"}
 
 
 def _tensor_module_call(node):
@@ -3565,31 +3582,37 @@ def expr_is_bool(node):
     return False
 
 
-def expr_is_tensor(node):
-    """启发式：表达式是否为（或产生）张量。用于二元运算的类型路由。"""
+def expr_is_tensor(node, tvars=None):
+    """启发式：表达式是否为（或产生）张量。用于二元运算的类型路由。
+
+    tvars 可显式传入"已知张量变量集"：scan_tensor_vars 边扫边判时需要，
+    否则 `d = p - w` 里的 p 还没进 CURRENT_TENSOR_VARS，链式赋值会漏判。
+    """
+    if tvars is None:
+        tvars = CURRENT_TENSOR_VARS
     if node is None:
         return False
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Attribute):
             if node.func.attr in TENSOR_METHODS:
                 return True
+            return expr_is_tensor(node.func.value, tvars) and node.func.attr not in TENSOR_SCALAR_ATTRS
         if _tensor_module_call(node):
             return True
+        return isinstance(node.func, ast.Name) and node.func.id in TENSOR_RETURN_NAMES
     if isinstance(node, ast.Name):
-        return node.id in CURRENT_TENSOR_VARS
+        return node.id in tvars
     if isinstance(node, ast.Attribute):
-        return node.attr in ("T",) or (isinstance(node.value, ast.Name) and node.value.id in CURRENT_TENSOR_VARS)
+        return node.attr in ("T",) or (isinstance(node.value, ast.Name) and node.value.id in tvars)
     if isinstance(node, ast.Subscript):
         # 张量 Ellipsis 切片结果 / 对张量的下标 → 张量
         if isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2 and \
            isinstance(node.slice.elts[0], ast.Constant) and node.slice.elts[0].value is Ellipsis:
             return True
-        return expr_is_tensor(node.value)
+        return expr_is_tensor(node.value, tvars)
     if isinstance(node, ast.BinOp):
         # 张量二元运算结果仍是张量（任一侧是张量）
-        return expr_is_tensor(node.left) or expr_is_tensor(node.right)
-    if isinstance(node, ast.Call):
-        return expr_is_tensor(node.func) if isinstance(node.func, ast.Call) else False
+        return expr_is_tensor(node.left, tvars) or expr_is_tensor(node.right, tvars)
     return False
 
 
@@ -3600,13 +3623,13 @@ def scan_tensor_vars(stmts):
         for s in nodes:
             if isinstance(s, ast.Assign):
                 if len(s.targets) == 1 and isinstance(s.targets[0], ast.Name):
-                    if expr_is_tensor(s.value):
+                    if expr_is_tensor(s.value, out):
                         out.add(s.targets[0].id)
             elif isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name) and s.value:
-                if expr_is_tensor(s.value):
+                if expr_is_tensor(s.value, out):
                     out.add(s.target.id)
             elif isinstance(s, ast.AugAssign) and isinstance(s.target, ast.Name):
-                if expr_is_tensor(s.value):
+                if expr_is_tensor(s.value, out):
                     out.add(s.target.id)
             elif isinstance(s, ast.If):
                 rec(s.body); rec(s.orelse)
@@ -4420,7 +4443,7 @@ def translate_expr(node):
                     "sqrt": "torch-sqrt", "softmax": "torch-softmax",
                     "index_select": "torch-tensor-index-select",
                     "clone": "torch-clone", "reshape": "torch-reshape",
-                    "to_list": "torch-to-list",
+                    "to_list": "torch-to-list", "item": "torch-item",
                     "available": "torch-available",
                     "rsqrt": "torch-rsqrt",
                     "sqrt": "torch-sqrt",

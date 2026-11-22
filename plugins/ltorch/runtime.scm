@@ -48,6 +48,8 @@
 (define lt-to-csv-p #f)   (define lt-item-p #f)
 (define lt-set-rg-p #f)   (define lt-rg-p #f)
 (define lt-backward-p #f) (define lt-grad-p #f)    (define lt-zero-grad-p #f)
+(define lt-sgd-step-p #f)
+(define lt-is-tensor-p #f)
 (define lt-free-p #f)
 
 (when *ltorch-available*
@@ -87,6 +89,8 @@
   (set! lt-backward-p (foreign-procedure "torchc_backward" (integer-64) integer-64))
   (set! lt-grad-p   (foreign-procedure "torchc_grad" (integer-64) integer-64))
   (set! lt-zero-grad-p (foreign-procedure "torchc_zero_grad" (integer-64) integer-64))
+  (set! lt-sgd-step-p (foreign-procedure "torchc_sgd_step" (integer-64 integer-64 double) integer-64))
+  (set! lt-is-tensor-p (foreign-procedure "torchc_is_tensor" (integer-64) integer-64))
   (set! lt-free-p   (foreign-procedure "torchc_free" (integer-64) void)))
 
 ;; ---- 小工具 ----
@@ -219,9 +223,141 @@
 (define (ltorch-backward a) (ltorch-ensure!) (ltorch-check 'backward (lt-backward-p a)))
 (define (ltorch-grad a) (ltorch-ensure!) (ltorch-check 'grad (lt-grad-p a)))
 (define (ltorch-zero-grad a) (ltorch-ensure!) (lt-zero-grad-p a) a)
+(define (ltorch-sgd-step w g lr)
+  "SGD：原地 w -= lr*g（torch.no_grad() 语义）"
+  (ltorch-ensure!) (ltorch-check 'sgd_step (lt-sgd-step-p w g (exact->inexact lr))))
 
 ;; ---- 杂项 ----
-(define (ltorch-free a) (when *ltorch-available* (lt-free-p a)) #t)
+(define (ltorch-free a) (when (and *ltorch-available* (integer? a)) (lt-free-p a)) #t)
+(define (ltorch-is-tensor a) (if (and *ltorch-available* (integer? a)) (lt-is-tensor-p a) 0))
 (define (ltorch-version) (if *ltorch-available* (lt-ver-p) ""))
 (define (ltorch-available) *ltorch-available*)
 (define (ltorch-last-error) (if *ltorch-available* (lt-err-p) ""))
+
+;; =====================================================================
+;; PyTorch 兼容层：让同一段 `torch.*` 代码在 ltorch 上跑
+;;
+;; 翻译器已把 torch.tensor / torch.matmul / torch.mse_loss / torch.backward /
+;; torch.sgd 等名字硬映射成 `torch-<name>`（emit_lib 的 torch 表）。这里把这些
+;; 名字实现成 ltorch 原语的薄包装，于是「PyTorch 写法」直接可用：
+;;   torch.matmul(x, w) / torch.mse_loss(pred, y) / torch.backward(loss)
+;;   torch.sgd(w, g, lr)
+;; 语义差异只在 API 表面（张量句柄是 integer-64，不是 Python 对象）。
+;; =====================================================================
+
+;; ---- 从 Python 字面量推断形状（torch.tensor 只给数据的 PyTorch 写法）----
+(define (torch-nested->list x)
+  "py-glist / vector / list → 嵌套 list（保留层级）"
+  (cond ((py-glist? x) (map torch-nested->list (vector->list (py-glist->vector x))))
+        ((vector? x) (map torch-nested->list (vector->list x)))
+        ((list? x) (map torch-nested->list x))
+        (else x)))
+
+(define (torch-infer-shape x)
+  "嵌套 list → 形状；标量 → ()"
+  (cond ((null? x) '(0))
+        ((pair? x) (cons (length x) (torch-infer-shape (car x))))
+        (else '())))
+
+(define (torch-flat-nums x acc)
+  "按行主序展平（尾部累积，避免 append 的 O(n^2)）；() 不能当元素"
+  (cond ((null? x) acc)
+        ((pair? x) (torch-flat-nums (cdr x) (torch-flat-nums (car x) acc)))
+        (else (cons x acc))))
+
+(define (torch-flat x) (reverse (torch-flat-nums x '())))
+
+;; ---- 构造 ----
+(define (torch-tensor data . shape)
+  "torch.tensor([1,2,3,4]) / torch.tensor([[1,2],[3,4]])：形状自动推断"
+  (let* ((nested (torch-nested->list data))
+         (sh (cond ((null? shape) (torch-infer-shape nested))
+                   ((null? (car shape)) (torch-infer-shape nested))
+                   (else (car shape)))))
+    (ltorch-tensor (torch-flat nested) sh)))
+
+(define (torch-zeros shape) (ltorch-zeros shape))
+(define (torch-ones shape) (ltorch-ones shape))
+(define (torch-empty shape) (ltorch-zeros shape))
+(define (torch-full shape v) (ltorch-full shape v))
+(define (torch-randn shape . seed) (ltorch-randn shape (if (null? seed) 0 (car seed))))
+(define (torch-arange start end . step)
+  (ltorch-arange start end (if (null? step) 1 (car step))))
+
+;; ---- 算术：张量×张量 或 张量×标量都接受（PyTorch 的广播子集）----
+;; 句柄是 integer-64，光靠 number? 分不出「标量 3」与「句柄 3」，
+;; 所以判型一律走 lt-tensor?（C 侧存活句柄表 torchc_is_tensor）。
+(define (lt-tensor? v) (and (integer? v) (not (zero? (lt-is-tensor-p v)))))
+(define (torch-add a b)
+  (cond ((lt-tensor? b) (ltorch-add a b))
+        ((lt-tensor? a) (ltorch-add-scalar a b))
+        (else (error 'torch-add "参数里没有张量" a b))))
+(define (torch-sub a b)
+  (cond ((lt-tensor? a) (if (lt-tensor? b) (ltorch-sub a b) (ltorch-add-scalar a (- b))))
+        ((lt-tensor? b) (ltorch-add-scalar (ltorch-mul-scalar b -1.0) a))
+        (else (error 'torch-sub "参数里没有张量" a b))))
+(define (torch-mul a b)
+  (cond ((and (lt-tensor? a) (lt-tensor? b)) (ltorch-mul a b))
+        ((lt-tensor? a) (ltorch-mul-scalar a b))
+        ((lt-tensor? b) (ltorch-mul-scalar b a))
+        (else (error 'torch-mul "参数里没有张量" a b))))
+(define (torch-div a b)
+  (cond ((lt-tensor? b) (ltorch-div a b))
+        ((lt-tensor? a) (ltorch-mul-scalar a (/ 1.0 b)))
+        (else (error 'torch-div "参数里没有张量" a b))))
+(define (torch-matmul a b) (ltorch-matmul a b))
+(define (torch-neg a) (ltorch-mul-scalar a -1.0))
+(define (torch-pow a p)
+  "只支持整数幂（C ABI 无 pow）；>=1 用连乘，p=0 返回 ones"
+  (cond ((not (number? p)) (error 'torch-pow "幂必须是整数常量" p))
+        ((= p 0) (ltorch-ones (ltorch-shape a)))
+        ((< p 0) (error 'torch-pow "负幂未支持（无倒数算子）" p))
+        (else (let loop ((i 1) (acc a))
+                (if (>= i p) acc (loop (+ i 1) (ltorch-mul acc a)))))))
+
+;; ---- 激活 ----
+(define (torch-relu a) (ltorch-relu a))
+(define (torch-sigmoid a) (ltorch-sigmoid a))
+(define (torch-tanh a) (ltorch-tanh a))
+(define (torch-softmax a . dim) (ltorch-softmax a (if (null? dim) 1 (car dim))))
+
+;; ---- 归约 ----
+(define (torch-sum a . dim)
+  (if (null? dim) (ltorch-sum a) (ltorch-sum-dim a (car dim))))
+(define (torch-mean a . dim)
+  "带 dim 的 mean 需要先知道该轴长度：用 torch.sum(a, dim) 后自己乘 1/n"
+  (if (null? dim)
+      (ltorch-mean a)
+      (error 'torch-mean "dim 版未支持：用 (torch.sum a dim) 再乘 1/n" dim)))
+(define (torch-numel a) (ltorch-numel a))
+
+;; ---- 形状 ----
+(define (torch-reshape a shape) (ltorch-reshape a shape))
+(define (torch-transpose a d0 d1) (ltorch-transpose a d0 d1))
+(define (torch-clone a) (ltorch-clone a))
+(define (torch-detach a) (ltorch-detach a))
+(define (torch-to-list a) (ltorch-to-list a))
+(define (torch-tolist a) (ltorch-to-list a))
+(define (torch-item a) (ltorch-item a))
+
+;; ---- 全连接层 / 损失（PyTorch 语义：linear = x@W + b）----
+(define (torch-linear x w b) (torch-add (torch-matmul x w) b))
+(define (torch-mse-loss pred target)
+  (let ((d (torch-sub pred target)))
+    (torch-mean (torch-mul d d))))
+(define (torch-l1-loss pred target)
+  "L1 = mean(|d|)，用 relu(d)+relu(-d) 代替 abs"
+  (let ((d (torch-sub pred target)))
+    (torch-mean (torch-add (torch-relu d) (torch-relu (torch-neg d))))))
+
+;; ---- autograd / 优化器 ----
+(define (torch-set-requires-grad a flag) (ltorch-set-requires-grad a flag))
+(define (torch-backward loss) (ltorch-backward loss))
+(define (torch-grad a) (ltorch-grad a))
+(define (torch-has-grad a) (ltorch-requires-grad a))
+(define (torch-zero-grad a) (ltorch-zero-grad a))
+(define (torch-sgd w g lr) (ltorch-sgd-step w g lr))
+(define (torch-optimizer-step w g lr) (ltorch-sgd-step w g lr))
+(define (torch-optimizer-zero-grad a) (ltorch-zero-grad a))
+(define (torch-manual-seed seed) seed)
+(define (torch-free a) (ltorch-free a))

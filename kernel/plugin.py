@@ -318,10 +318,18 @@ class Kernel:
 
     def merge_into(self, T):
         """把插件表合并进翻译器模块的全局表（保持旧函数引用可用）。"""
+        # 模块映射：先留翻译器内置表，再让插件表覆盖。
+        # 直接 clear 会让「只解析了部分插件」时其余模块名失效——`--plugins core`
+        # 下 `torch.randn(...)` 会退化成裸名 `(randn ...)`（运行时 unbound），
+        # 而不是内置表里的 `torch-randn`。插件表仍是覆盖优先级更高的一方。
+        _base_mods = dict(T.BUILTIN_MODULES)
+        _base_mods.update(self.modules)
         T.BUILTIN_MODULES.clear()
-        T.BUILTIN_MODULES.update(self.modules)
+        T.BUILTIN_MODULES.update(_base_mods)
+        _base_nested = dict(T.NESTED_MODULES)
+        _base_nested.update(self.nested_modules)
         T.NESTED_MODULES.clear()
-        T.NESTED_MODULES.update(self.nested_modules)
+        T.NESTED_MODULES.update(_base_nested)
         T.MODULE_FN_RETURN_TYPES.clear()
         T.MODULE_FN_RETURN_TYPES.update(self.return_types)
         # PRELUDE_FUNCTIONS 含 MATH_FUNCTIONS（数学函数不是 C FFI）

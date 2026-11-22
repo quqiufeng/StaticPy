@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd | 差分 **18/18** + ELF |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / SGD | 差分 **24/24** + ELF 25/25 |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -274,7 +274,15 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
 - **C ABI**（`torch_capi.h`）：`from_csv/to_csv/shape_csv/numel/ndim`、`zeros/ones/full/randn/arange`、
   `add/sub/mul/div/matmul`、`add_scalar/mul_scalar`、`relu/sigmoid/tanh/softmax(dim)`、
   `sum/mean/sum_dim`、`reshape/transpose/clone/detach`、`set_requires_grad/requires_grad/backward/grad/zero_grad`、
-  `item/version/last_error/free`。失败一律置 `last_error` 并返回 `0`（不抛异常越 ABI 边界）。
+  `item/version/last_error/free`、`is_tensor`（句柄判型）、`sgd_step`（NoGrad 原地 `p -= lr*g`）。
+  失败一律置 `last_error` 并返回 `0`（不抛异常越 ABI 边界）。
+- **训练回路（PyTorch 风格）**：`runtime.scm` 只做薄封装，语义与 `torch.nn.functional` 对齐——
+  `torch.linear(x,w,b)` = `matmul + add`（广播）、`torch.mse_loss/l1_loss`、
+  `torch.backward/zero_grad/grad`、`torch.sgd_step(w,g,lr)`（= `with no_grad: w -= lr*g`）。
+  没有 `Optimizer` 对象：优化器就是「一步原语」，训练循环写在 StaticPy 里（编译成机器码）。
+- **张量类型推断**：`static_translate.py` 的 `TENSOR_RETURN_NAMES` 让 `e = d * d` 这类链式赋值
+  在扫描阶段就认得出是张量（`.backward()`/`.grad` 才能派发），标量返回者（`item/numel/size/tolist`）
+  在 `TENSOR_SCALAR_ATTRS` 里排除。
 - **版本**：本机 `/opt/libtorch` = **2.1.2**；Python 的 `torch` 可能是别的版本，
   差分只比**确定性算子**，`randn` 只比形状（随机流跨版本不保证一致）。
 
@@ -282,7 +290,9 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
 bash cpp/torch/build.sh                          # → cpp/torch/build/libtorch_capi.so（带 rpath）
 STATICPY_PLUGINS=core,ltorch bash staticpy/static_build.sh plugins/ltorch/demo.static.py ltdemo
 LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/ltdemo   # 不打 rpath 的实现需要这句；本仓 .so 已内嵌 rpath
-python3 plugins/ltorch/difftest.py --elf          # 差分 19/19（含 ELF 端到端）
+STATICPY_PLUGINS=core,ltorch bash staticpy/static_build.sh plugins/ltorch/train_demo.static.py train_demo
+LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/train_demo   # 线性回归 + MLP 训练收敛（约 100 步到 1e-10）
+python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
 ```
 
 - **两侧必须分进程**：pip 的 torch 与 `/opt/libtorch` 的 `c10` 符号互不兼容，
@@ -294,6 +304,7 @@ python3 plugins/ltorch/difftest.py --elf          # 差分 19/19（含 ELF 端�
 
 ## 能力边界（明确不做）
 
-- **训练调度**：不做（`ltorch` 只提供 `at::Tensor` 与 autograd 求导，优化器/训练循环留给用户程序；这层不管推理与算法之外的东西）。
+- **训练调度**：只给**一步原语**（`sgd_step`），不做 `Optimizer` 对象 / lr scheduler / 数据加载器——
+  训练循环是用户程序的一部分（StaticPy 编译成机器码，循环开销在方案里而不在框架里）。
 - **重型扩散/视频生成**：走 `sd.cpp` + `comfycli`（`/opt/static_comfyui/anim.sh`，零 torch），不塞进本仓。
 - **Python 运行时**：产物不依赖；Python/Pillow/numpy 只用于测量与导模型。

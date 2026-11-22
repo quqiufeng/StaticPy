@@ -38,6 +38,7 @@
       "optimizer_zero_grad": "torch-optimizer-zero-grad",
       "manual_seed": "torch-manual-seed",
       "to_list": "torch-to-list",
+      "item": "torch-item",
       "available": "torch-available",
       "conv2d": "torch-conv2d",
       "max_pool2d": "torch-max-pool2d",

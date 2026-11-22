@@ -85,6 +85,11 @@ def side_ours():
         ("torchc_set_requires_grad", [P, C.c_long], C.c_long),
         ("torchc_backward", [P], C.c_long),
         ("torchc_grad", [P], P),
+        ("torchc_add", [P, P], P),
+        ("torchc_add_scalar", [P, C.c_double], P),
+        ("torchc_zero_grad", [P], P),
+        ("torchc_sgd_step", [P, P, C.c_double], C.c_long),
+        ("torchc_is_tensor", [P], C.c_long),
         ("torchc_free", [P], None),
     ]
     for name, args, ret in SIGS:
@@ -135,6 +140,34 @@ def side_ours():
     out.append(["loss", [lib.torchc_item(loss)], ""])
     out.append(["dloss/dx", vals(lib.torchc_grad(x)), "1,3"])
 
+    # 判型：句柄 vs 普通整数（Scheme 侧靠这张表区分标量与张量）
+    a_probe = lib.torchc_from_csv(b"1.0", b"1,1")
+    out.append(["is_tensor(句柄)", [float(lib.torchc_is_tensor(a_probe))], ""])
+    out.append(["is_tensor(整数3)", [float(lib.torchc_is_tensor(3))], ""])
+    lib.torchc_free(a_probe)
+    out.append(["is_tensor(已释放)", [float(lib.torchc_is_tensor(a_probe))], ""])
+
+    # 训练回路：linear + MSE + 200 步 SGD（与 PyTorch 同初值、同更新顺序）
+    xt = mk([-2.0, -1.0, 0.0, 1.0, 2.0], [5, 1])
+    yt = mk([-3.0, -1.0, 1.0, 3.0, 5.0], [5, 1])
+    w = mk([0.0], [1, 1])
+    bb = mk([0.0], [1, 1])
+    lib.torchc_set_requires_grad(w, 1)
+    lib.torchc_set_requires_grad(bb, 1)
+    tloss = None
+    for _ in range(200):
+        lib.torchc_zero_grad(w)
+        lib.torchc_zero_grad(bb)
+        pred = lib.torchc_add(lib.torchc_matmul(xt, w), bb)
+        d = lib.torchc_sub(pred, yt)
+        tloss = lib.torchc_mean(lib.torchc_mul(d, d))
+        lib.torchc_backward(tloss)
+        lib.torchc_sgd_step(w, lib.torchc_grad(w), 0.1)
+        lib.torchc_sgd_step(bb, lib.torchc_grad(bb), 0.1)
+    out.append(["train200 w", vals(w), "1,1"])
+    out.append(["train200 b", vals(bb), "1,1"])
+    out.append(["train200 loss", [lib.torchc_item(tloss)], ""])
+
     # 错误路径：shape 与元素数不符必须报错（而不是静默算错）
     bad = lib.torchc_from_csv(b"1,2,3", b"2,2")
     msg = lib.torchc_last_error().decode()
@@ -183,6 +216,30 @@ def side_ref():
     loss.backward()
     out.append(["loss", [loss.item()], ""])
     out.append(["dloss/dx", x.grad.flatten().tolist(), "1,3"])
+    a_probe = T([1.0], dtype=torch.float64)
+    out.append(["is_tensor(句柄)", [1.0], ""])
+    out.append(["is_tensor(整数3)", [0.0], ""])
+    out.append(["is_tensor(已释放)", [0.0], ""])
+
+    # 训练回路（与 C ABI 侧同初值、同更新顺序）
+    xt = ref([-2.0, -1.0, 0.0, 1.0, 2.0], [5, 1])
+    yt = ref([-3.0, -1.0, 1.0, 3.0, 5.0], [5, 1])
+    w = ref([0.0], [1, 1]).requires_grad_(True)
+    bb = ref([0.0], [1, 1]).requires_grad_(True)
+    tloss = None
+    for _ in range(200):
+        w.grad = None
+        bb.grad = None
+        pred = xt @ w + bb
+        tloss = ((pred - yt) ** 2).mean()
+        tloss.backward()
+        with torch.no_grad():
+            w -= 0.1 * w.grad
+            bb -= 0.1 * bb.grad
+    out.append(["train200 w", w.flatten().tolist(), "1,1"])
+    out.append(["train200 b", bb.flatten().tolist(), "1,1"])
+    out.append(["train200 loss", [tloss.item()], ""])
+
     out.append(["坏 shape 报错", [1.0], ""])
     return {"version": torch.__version__, "cases": out}
 
