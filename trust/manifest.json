@@ -25,9 +25,9 @@
       "path": "staticpy/static_translate.py",
       "why": "种子：CPython+ast 翻译器，仅在起爆时用一次",
       "state": "present",
-      "sha256": "40733514cd794116bc1a4592402b5b0dad548f240a028e228fbbe46d38216580",
-      "bytes": 240545,
-      "lines": 5371
+      "sha256": "a393b46f28b72076fe02e1d0c7b5d7612ad9e1cc382f2a88b4553663b66c7ca0",
+      "bytes": 241848,
+      "lines": 5400
     },
     {
       "role": "seed",
@@ -97,9 +97,9 @@
       "path": "staticpy/emit_lib.static.py",
       "why": "环2 实现：类型系统+代码生成",
       "state": "present",
-      "sha256": "fed6d0d9c8f9e07a00251b4abb7e8f757ad14e0f481932f9c37746a291c00095",
-      "bytes": 164172,
-      "lines": 4210
+      "sha256": "c4d15de982e11df6e9a13c591ec183a89d1155c28ea83f4bb49b4d6104d43937",
+      "bytes": 166461,
+      "lines": 4257
     },
     {
       "role": "impl",
@@ -940,6 +940,24 @@
     },
     {
       "role": "cpp",
+      "path": "cpp/sqlite/sqlite_capi.cpp",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "d68a47d3f92b521b886b09994b32f856b1ff78b61923cbb98791065112922c3d",
+      "bytes": 8363,
+      "lines": 299
+    },
+    {
+      "role": "cpp",
+      "path": "cpp/sqlite/sqlite_capi.h",
+      "why": "我们手写的 C/C++（可审计）",
+      "state": "present",
+      "sha256": "f40e2192b2ee4a59c13968f53a4d1eb1fd428c19876d025c978ae8c1efecf278",
+      "bytes": 3508,
+      "lines": 68
+    },
+    {
+      "role": "cpp",
       "path": "cpp/sr/sr.cpp",
       "why": "我们手写的 C/C++（可审计）",
       "state": "present",
@@ -1015,18 +1033,18 @@
       "path": "cpp/torch/torch_capi.cpp",
       "why": "我们手写的 C/C++（可审计）",
       "state": "present",
-      "sha256": "6cf551df56af56fae14bb537e9796c9fb9435f51aae2f29b56cbfbfe760a4894",
-      "bytes": 14173,
-      "lines": 521
+      "sha256": "3d0b22ba4e1b2d4593ff73f12836c7555d0520f87124385d6da959ca81387a6d",
+      "bytes": 14884,
+      "lines": 552
     },
     {
       "role": "cpp",
       "path": "cpp/torch/torch_capi.h",
       "why": "我们手写的 C/C++（可审计）",
       "state": "present",
-      "sha256": "b8665f7bf7e9900d684494dfd1b6dc143ab114ba6074f7c86947ca72e709c747",
-      "bytes": 3262,
-      "lines": 77
+      "sha256": "9077775c997f35f0c6925a971b0613201a5769b21a4a6096dc15ac71f36d3bcb",
+      "bytes": 3533,
+      "lines": 81
     },
     {
       "role": "cpp",
