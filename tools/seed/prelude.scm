@@ -3006,6 +3006,16 @@ np 插件可覆盖成 PyArray 版"
     (let ((bi (ir-builtin-isa? node t)))
      (cond
      ((not (eq? bi 'unknown)) bi)
+     ;; IR 节点：an() 造的是 dict（类名存 "_t"），isinstance 必须与 nt() 同判据。
+     ;; 早先这里只有 record?/vector? 两路，dict 节点一律 #f——静默走错分支。
+     ((hashtable? node)
+      (let ((actual (dict-get node "_t")))
+        (cond ((py-none? actual) #f)
+              ((string? actual)
+               (if (string? tag)
+                   (string=? actual tag)
+                   (eq? (string->symbol actual) t)))
+              (else (eq? actual t)))))
      ((record? node) (ir-record-isa? node t))
      ((vector? node)
       (and (> (vector-length node) 0)
