@@ -132,7 +132,7 @@ fi
 # ---- 6 FFI 往返 -----------------------------------------------------------
 FFI_NS=0
 FFI_N=2000000
-env STATICPY_CACHE="$STATICPY_CACHE" STATICPY_OUTDIR="$STATICPY_OUTDIR" STATICPY_LIB_M=libm.so.6 \
+env STATICPY_CACHE="$STATICPY_CACHE" STATICPY_OUTDIR="$STATICPY_OUTDIR" \
   bash staticpy/static_build.sh tests/bench/ffi_roundtrip.static.py bench_ffi >/dev/null 2>&1
 if [ -x "$STATICPY_OUTDIR/bench_ffi" ]; then
   FFI_MS=$(time_ms $((REPS * 3)) "$STATICPY_OUTDIR/bench_ffi")
