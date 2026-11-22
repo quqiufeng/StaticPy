@@ -306,30 +306,32 @@ def number_value(text: str, isfloat: bool):
 
 def scan_number(src: str, i: int, n: int) -> int:
     """返回数字字面量结束位置。"""
-    if i + 1 < n and ch(src, i) == "0":
-        p = str_lower(ch(src, i + 1))
-        if p == "x" or p == "o" or p == "b":
+    if i + 1 < n and str_code_at(src, i) == 48:
+        p: int = str_code_at(src, i + 1)
+        if p >= 65 and p <= 90:
+            p = p + 32
+        if p == 120 or p == 111 or p == 98:
             j = i + 2
-            while j < n and (is_alnum(ch(src, j)) or ch(src, j) == "_"):
+            while j < n and (is_alnum_code(str_code_at(src, j)) or str_code_at(src, j) == 95):
                 j = j + 1
             return j
     j = i
-    while j < n and (is_digit(ch(src, j)) or ch(src, j) == "_"):
+    while j < n and (is_digit_code(str_code_at(src, j)) or str_code_at(src, j) == 95):
         j = j + 1
-    if j < n and ch(src, j) == ".":
-        if j + 1 < n and is_digit(ch(src, j + 1)):
+    if j < n and str_code_at(src, j) == 46:
+        if j + 1 < n and is_digit_code(str_code_at(src, j + 1)):
             j = j + 1
-            while j < n and (is_digit(ch(src, j)) or ch(src, j) == "_"):
+            while j < n and (is_digit_code(str_code_at(src, j)) or str_code_at(src, j) == 95):
                 j = j + 1
-        elif j + 1 >= n or not is_alpha(ch(src, j + 1)):
+        elif j + 1 >= n or not is_alpha_code(str_code_at(src, j + 1)):
             j = j + 1
-    if j < n and (ch(src, j) == "e" or ch(src, j) == "E"):
+    if j < n and (str_code_at(src, j) == 101 or str_code_at(src, j) == 69):
         k = j + 1
-        if k < n and (ch(src, k) == "+" or ch(src, k) == "-"):
+        if k < n and (str_code_at(src, k) == 43 or str_code_at(src, k) == 45):
             k = k + 1
-        if k < n and is_digit(ch(src, k)):
+        if k < n and is_digit_code(str_code_at(src, k)):
             j = k
-            while j < n and (is_digit(ch(src, j)) or ch(src, j) == "_"):
+            while j < n and (is_digit_code(str_code_at(src, j)) or str_code_at(src, j) == 95):
                 j = j + 1
     return j
 
@@ -345,46 +347,46 @@ def number_is_float(text: str) -> bool:
 
 def scan_string(src: str, i: int, n: int) -> int:
     """i 指向开引号；返回闭引号之后的位置（容错到行尾/文件尾）。"""
-    q = ch(src, i)
+    q: int = str_code_at(src, i)
     triple = False
-    if i + 2 < n and ch(src, i + 1) == q and ch(src, i + 2) == q:
+    if i + 2 < n and str_code_at(src, i + 1) == q and str_code_at(src, i + 2) == q:
         triple = True
         j = i + 3
     else:
         j = i + 1
     while j < n:
-        c = ch(src, j)
-        if c == "\\":
+        c: int = str_code_at(src, j)
+        if c == 92:
             j = j + 2
         else:
             if triple == True:
-                if c == q and j + 2 < n and ch(src, j + 1) == q and ch(src, j + 2) == q:
+                if c == q and j + 2 < n and str_code_at(src, j + 1) == q and str_code_at(src, j + 2) == q:
                     return j + 3
                 j = j + 1
             else:
                 if c == q:
                     return j + 1
-                if c == "\n":
+                if c == 10:
                     return j
                 j = j + 1
     return n
 
 def string_body(src: str, i: int, j: int) -> str:
     """取 [i,j) 之间的引号内正文。"""
-    q = ch(src, i)
+    q: int = str_code_at(src, i)
     triple = False
-    if i + 2 < j and ch(src, i + 1) == q and ch(src, i + 2) == q:
+    if i + 2 < j and str_code_at(src, i + 1) == q and str_code_at(src, i + 2) == q:
         triple = True
         start = i + 3
     else:
         start = i + 1
     if triple == True:
-        if str_length(src) >= j and j >= 3 and ch(src, j - 1) == q and ch(src, j - 2) == q and ch(src, j - 3) == q:
+        if str_length(src) >= j and j >= 3 and str_code_at(src, j - 1) == q and str_code_at(src, j - 2) == q and str_code_at(src, j - 3) == q:
             end = j - 3
         else:
             end = j
     else:
-        if j > start and ch(src, j - 1) == q:
+        if j > start and str_code_at(src, j - 1) == q:
             end = j - 1
         else:
             end = j
@@ -485,8 +487,7 @@ def indent_width(src: str, start: int, stop: int) -> int:
     w: int = 0
     i: int = start
     while i < stop:
-        c = ch(src, i)
-        if c == "\t":
+        if str_code_at(src, i) == 9:
             w = w - (w % 8) + 8
         else:
             w = w + 1
@@ -498,7 +499,7 @@ def count_newlines(s: str) -> int:
     i: int = 0
     n: int = str_length(s)
     while i < n:
-        if ch(s, i) == "\n":
+        if str_code_at(s, i) == 10:
             cnt = cnt + 1
         i = i + 1
     return cnt
@@ -507,7 +508,7 @@ def index_after_last_newline(src: str, start: int, stop: int) -> int:
     last: int = -1
     i: int = start
     while i < stop:
-        if ch(src, i) == "\n":
+        if str_code_at(src, i) == 10:
             last = i
         i = i + 1
     if last < 0:
