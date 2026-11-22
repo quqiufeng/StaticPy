@@ -145,10 +145,21 @@ print(f(p))          # → 6     （CPython 里 p.twice 会绑定，p.twice(p) �
 print(apply1(P.twice, p))    # 形参 fn 是函数值，调用 fn(p) 不加 static_ 前缀
 ```
 
-**不支持**（也不要绕）：`try`/`except`/`raise`、生成器/`yield`、
-自由变量闭包、`eval`/`exec`、动态 `getattr`/`setattr`。
+**明确不做**（**非目标**，见 [VISION.md](../VISION.md) §4.5——不列待办、不按缺口跟踪）：
+`try`/`except`/`raise`、生成器/`yield`、自由变量闭包、`eval`/`exec`、
+动态 `getattr`/`setattr`、`isinstance`、运算符重载。
 
-> 能力缺口按三条路径补：挂 C 库 / 写 C++ helper / 改自举翻译器或加语法插件（见 [PLUGINS.md](./PLUGINS.md)、[SELFHOST.md](./SELFHOST.md)）。
+> 理由只有一条：这些特性都要求"万物皆 `PyObject`"的统一表示 + 运行期查找，
+> 与 AOT 直调、`int` = fixnum、`float` = 32 位不可兼得。替代写法是固定的：
+> 错误码/tuple 返值、状态机或回调、显式传参、显式分派表、编译期静态绑定。
+> **补这些样板是 agent 的活**，判据是类型检查 + `semantics_diff.py`——人类侧无净损失。
+>
+> **真正补不了的**是"别人的协议"：第三方库内部的 duck typing、跨 FFI 边界的异常展开、
+> 迭代协议。所以"兼容 Python"指**语义兼容**（算得对、结果一致），**不承诺协议兼容**。
+>
+> 若确实缺的是**语言机制**（需要新的控制流/新的 IR 形状），才走三条路径：
+> 挂 C 库 / 写 C++ helper / 改自举翻译器或加语法插件
+> （见 [PLUGINS.md](./PLUGINS.md)、[SELFHOST.md](./SELFHOST.md)）。
 
 ## 2. 类型系统
 
