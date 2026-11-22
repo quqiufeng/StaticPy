@@ -1,7 +1,5 @@
-# parse: seed-only  —— 跨文件类分派：Tensor/Linear 定义在 tensor_lib.static.py，
-# 单文件翻译时自举链路看不见那些方法（成 `(a-matmul)` 这种丢实参的兜底）；
-# 真实用法是 build_app.sh 先 concat 再编，那条链路两个翻译器都正确（见 lib_difftest.py --elf）。
-# lib_demo.static.py — plugins/ltorch/tensor_lib.static.py（Tensor 类 + nn/optim）的功能演示
+# 注：跨文件类分派（Tensor/Linear 定义在 tensor_lib.static.py）靠 build_app.sh concat 链路；
+# 单文件翻译时方法派发与种子链路逐字节一致（check_translate 覆盖）。
 #
 # 与 PyTorch 的对应关系（差分见 plugins/ltorch/lib_difftest.py）：
 #   t = torch.tensor([...], dtype=torch.float64) → tensor([...], [shape])
@@ -57,9 +55,9 @@ def main():
     i: int = 0
     while i < 200:
         pred: Tensor = l2.forward(relu.forward(l1.forward(xs)))
-        ml: Tensor = mse.forward(pred, ys)
+        loss: Tensor = mse.forward(pred, ys)
         opt2.zero_grad()
-        ml.backward()
+        loss.backward()
         opt2.step()
         i += 1
     final: Tensor = mse.forward(l2.forward(relu.forward(l1.forward(xs))), ys)

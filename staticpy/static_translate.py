@@ -3736,6 +3736,10 @@ def translate_tensor_method(receiver, attr, node):
                 merged.append("#f")
             merged[idx] = kwargs[idx]
         pos = merged
+    # 无实参时不留尾随空格：`(torch-tensor-sum a )` 与环 2 的 `(torch-tensor-sum a)`
+    # 不是逐字节相等的 IR（check_translate 判 DIFF）
+    if not pos:
+        return f"(torch-tensor-{attr} {receiver})"
     return f"(torch-tensor-{attr} {receiver} {' '.join(pos)})"
 
 

@@ -2783,6 +2783,8 @@ def mod_attr(mod: str, attr: str) -> str:
         return "torch-index-select"
     if mod == "torch" and attr == "is_cuda":
         return "torch-is-cuda"
+    if mod == "torch" and attr == "item":
+        return "torch-item"
     if mod == "torch" and attr == "jit_delete":
         return "torch-jit-delete"
     if mod == "torch" and attr == "jit_forward":

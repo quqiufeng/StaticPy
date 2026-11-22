@@ -1,7 +1,5 @@
-# parse: seed-only  —— 跨文件类分派：Tensor/Linear 定义在 tensor_lib.static.py，
-# 单文件翻译时自举链路看不见那些方法（成 `(a-matmul)` 这种丢实参的兜底）；
-# 真实用法是 build_app.sh 先 concat 再编，那条链路两个翻译器都正确（见 lib_difftest.py --elf）。
-# PyTorch 风格的训练回路，原样跑在 ltorch 上：
+# 注：跨文件类分派（Tensor/Linear 定义在 tensor_lib.static.py）靠 build_app.sh concat 链路；
+# 单文件翻译时方法派发与种子链路逐字节一致（check_translate 覆盖）。
 #   torch.tensor / torch.matmul / torch.mse_loss / torch.backward / torch.sgd
 # 这些名字翻译器映射成 torch-<name>，由 plugins/ltorch/runtime.scm 的兼容层实现，
 # 底层仍是 libtorch 的 ATen 内核 + autograd（算子不重写）。
