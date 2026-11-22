@@ -28,6 +28,7 @@
     "py_list_length",
     "py_list_ref",
     "py_list_slice",
+    "str_code_at",
     "str_contains",
     "str_ends_with",
     "str_join",

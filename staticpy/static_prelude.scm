@@ -1381,20 +1381,29 @@ append/insert 首次触发升级为可增长 py-glist）"
 
 (define (py-list-ref lst i)
   "读取通用列表第 i 个元素（负下标按 Python 规则折算，越界 → None）"
-  (cond ((py-array? lst) (py-array-get-h lst i))
-        ((py-glist? lst) (py-glist-ref lst i))
-        ;; Scheme 原生 list（如 (argv) 的返回值）也要能按 Python 下标取
-        ((list? lst) (let ((j (py-idx (length lst) i)))
-                       (if j (list-ref lst j) py-none)))
-        (else (let ((j (py-idx (vector-length lst) i)))
-                (if j (vector-ref lst j) py-none)))))
+  ;; 热路优先：py-list / 原生 vector 上的 fixnum 正下标不必走逻辑分派
+  (if (vector? lst)
+      (let ((n (vector-length lst)))
+        (if (and (fixnum? i) (fx>= i 0) (fx< i n))
+            (vector-ref lst i)
+            (let ((j (py-idx n i)))
+              (if j (vector-ref lst j) py-none))))
+      (cond ((py-array? lst) (py-array-get-h lst i))
+            ((py-glist? lst) (py-glist-ref lst i))
+            ;; Scheme 原生 list（如 (argv) 的返回值）也要能按 Python 下标取
+            ((list? lst) (let ((j (py-idx (length lst) i)))
+                           (if j (list-ref lst j) py-none)))
+            (else (let ((j (py-idx (vector-length lst) i)))
+                    (if j (vector-ref lst j) py-none))))))
 
 (define (py-list-length lst)
   "通用列表长度"
-  (cond ((py-array? lst) (py-array-len-h lst))
-        ((py-glist? lst) (py-glist-n lst))
-        ((list? lst) (length lst))
-        (else (vector-length lst))))
+  (if (vector? lst)
+      (vector-length lst)
+      (cond ((py-array? lst) (py-array-len-h lst))
+            ((py-glist? lst) (py-glist-n lst))
+            ((list? lst) (length lst))
+            (else (vector-length lst)))))
 
 (define (list->py-list lst)
   "把 Scheme list 转为通用列表"
