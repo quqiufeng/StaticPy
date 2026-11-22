@@ -335,3 +335,4 @@ imgproc/preview_*.png
 
 # 构建产物旁的元数据（后端版本/配置快照），每次构建都会重新生成
 *.build-info.json
+prof.json
