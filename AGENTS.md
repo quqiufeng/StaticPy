@@ -227,6 +227,8 @@ bash staticpy/static_build_comfycli.sh --clean   # 清缓存
 # 编译优化级别：默认 optimize-level 3（STATICPY_OPT_LEVEL=0/1/2 可回退）
 # 自举翻译器实测 1.79s → 1.49s（-17%），IR 与 opt2 逐字节一致；
 # 再设 STATICPY_DEBUG_LEVEL=0（去掉源码信息）可再快 ~5%（prof 构建别设）。
+# 产物堆调优：默认 (collect-maximum-generation 1)（短命堆型 CLI 少复制 3 代；
+# n5 1.47s → 1.23s）。STATICPY_MAXGEN=default 回退 Chez 默认(4)，=2/3 取中。
 
 # 迁移库的构建 / 运行
 bash imgproc/build.sh
