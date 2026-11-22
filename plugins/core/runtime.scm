@@ -1315,6 +1315,14 @@
 (define (int_array_ref ptr i)
   (foreign-ref 'integer-32 ptr (* i 4)))
 
+(define (tok-at toks p k)
+  "取第 pos+k 个 token（越界夹紧到边界）。一次调用替代
+int_array_ref/py_list_length/py_list_ref 三次跨模块调用（分词热路）。"
+  (let* ((i (+ (foreign-ref 'integer-32 p 0) k))
+         (n (if (vector? toks) (vector-length toks) (py-list-length toks)))
+         (j (cond ((< i 0) 0) ((< i n) i) (else (- n 1)))))
+    (if (vector? toks) (vector-ref toks j) (py-list-ref toks j))))
+
 ;; ====== Option / Result 类型 ======
 
 (define (Ok v) (vector 'ok v))

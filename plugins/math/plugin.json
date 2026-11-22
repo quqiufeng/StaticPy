@@ -93,6 +93,7 @@
     "sqrt",
     "tan",
     "tanh",
+    "tok_at",
     "tuple_ref"
   ],
   "runtime": [
