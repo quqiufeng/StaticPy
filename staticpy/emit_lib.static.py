@@ -3974,15 +3974,17 @@ def emit_perfmap(names) -> str:
             pairs = pairs + " "
         pairs = pairs + '(cons "' + py_list_ref(names, i) + '" static_' + py_list_ref(names, i) + ")"
         i = i + 1
-    # prelude 函数是热点大头（py_list_*/py-get/str_* 等），名字不带 static_ 前缀
-    pl = list_to_py_list(str_split(PRELUDE_NAMES, " "))
-    j: int = 0
-    while j < py_list_length(pl):
-        pn = py_list_ref(pl, j)
-        if str_length(pn) > 0:
-            pairs = pairs + " " + '(cons "' + pn + '" (if (top-level-bound? (quote ' + pn + ')) (top-level-value (quote ' + pn + ')) #f))' 
-        j = j + 1
+    # 注：prelude 函数名（py-list-ref / str_code_at ...）**无法**进 map。
+    # 实测三点：① Chez 用 compile-file 编出的程序里，`(top-level-bound? (quote py-list-ref))`
+    # 对本程序所有 define 一律为 #f（程序命名空间被封闭，只有 boot 层可见）；
+    # ② 直接引用名字可以编译（load 期才解析），但**任一**不存在的名字都会让整个
+    #    程序 load 失败（`variable char-code is not bound`）；
+    # ③ 用 (guard (e (#t #f)) name) 兜不住——那是 load 期错误，不是运行期异常。
+    # 所以 map 只收顶层函数（名字确定存在）；要 prelude 级别的归因请用
+    # STATICPY_PROFILE=source + dist/sprof（行级、零地址）。
     head: str = "\n\n;; perfmap self-report: code entry -> /tmp/perf-<pid>.map"
+    head = head + "\n(define static__perfmap-pairs"
+    head = head + "\n  (list " + pairs + "))"
     head = head + "\n(define (static__perfmap-emit)"
     head = head + "\n  (define (ref p) (bitwise-and (object->reference-address p) (bitwise-not 7)))"
     head = head + "\n  (define (w0 p) (foreign-ref 'uptr (ref p) 0))"
@@ -3990,16 +3992,18 @@ def emit_perfmap(names) -> str:
     head = head + " (number->string (get-process-id)) \".map\") 'replace))"
     head = head + "\n  (define (dump get tag)"
     head = head + "\n    (let loop ((l (sort (lambda (a b) (< (get (cdr a)) (get (cdr b))))"
-    head = head + "\n                        (filter (lambda (e) (procedure? (cdr e)))"
-    head = head + "\n                                (list " + pairs + ")))))"
+    head = head + "\n                        (filter (lambda (e) (procedure? (cdr e))) static__perfmap-pairs)))"
+    head = head + "\n               (last -1))"
     head = head + "\n      (unless (null? l)"
     head = head + "\n        (let* ((cur (car l)) (rest (cdr l))"
     head = head + "\n               (start (get (cdr cur)))"
     head = head + "\n               (nxt (if (null? rest) (+ start #x800) (get (cdr (car rest)))))"
     head = head + "\n               (gap (- nxt start))"
     head = head + "\n               (size (if (or (< gap #x20) (> gap #x2000)) #x100 gap)))"
-    head = head + "\n          (fprintf port \"~x ~x ~a~a~n\" start size (car cur) tag))"
-    head = head + "\n        (loop (cdr l)))))"
+    head = head + "\n          ;; 相邻项间距 = 该函数代码长度（夹在 0x20..0x2000 之间）"
+    head = head + "\n          (unless (= start last)"
+    head = head + "\n            (fprintf port \"~x ~x ~a~a~n\" start size (car cur) tag))"
+    head = head + "\n          (loop rest start)))))"
     head = head + "\n  (dump w0 \"\")"
     head = head + "\n  (close-port port))"
     head = head + "\n(static__perfmap-emit)"
