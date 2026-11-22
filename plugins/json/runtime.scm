@@ -27,9 +27,11 @@
   (let ((s (json-scheme->string obj)))
     (when s
       (let ((fp (libc-fopen path "w")))
-        (when fp
-          (file-write fp s)
-          (libc-fclose fp))))))
+        (if (zero? fp)
+            #f
+            (begin
+              (file-write fp s)
+              (libc-fclose fp)))))))
 
 (define (parse-json s)
   "解析 JSON 字符串（简化实现，支持基本类型和嵌套 dict/list）"

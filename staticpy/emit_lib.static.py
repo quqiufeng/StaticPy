@@ -59,7 +59,7 @@ PRELUDE_NAMES = (
     "os_rmdir os_shell parse_json pi pow py_iter_to_list py_list py_list_append "
     "py_list_concat py_list_length py_list_ref py_list_slice py_unpack random_choice random_float random_int "
     "random_range random_seed random_uniform re_match re_search round sin sinh "
-    "sleep sqrt str_code_at str_contains str_ends_with str_join str_length str_lower str_replace "
+    "read_text_file sleep sqrt str_code_at str_contains str_ends_with str_join str_length str_lower str_replace "
     "str_slice str_split str_starts_with str_trim str_upper string_of_int string_to_float string_to_int "
     "py_float_repr tan tanh tuple_ref vec_ref "
 )

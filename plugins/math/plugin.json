@@ -86,6 +86,7 @@
     "py_float_repr",
     "py_iter_to_list",
     "py_unpack",
+    "read_text_file",
     "round",
     "sin",
     "sinh",

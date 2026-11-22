@@ -209,16 +209,17 @@ def tok(t: str, v: str, line: int, col: int):
     return py_list(t, v, line, col)
 
 def tok_type(t):
-    return py_list_ref(t, 0)
+    # token 恒为定长 4 元 vector：直取比 py_list_ref 少一层类型分派
+    return vec_ref(t, 0)
 
 def tok_value(t):
-    return py_list_ref(t, 1)
+    return vec_ref(t, 1)
 
 def tok_line(t):
-    return py_list_ref(t, 2)
+    return vec_ref(t, 2)
 
 def tok_col(t):
-    return py_list_ref(t, 3)
+    return vec_ref(t, 3)
 
 def tok_startswith(t, prefix: str) -> bool:
     return str_starts_with(tok_value(t), prefix)

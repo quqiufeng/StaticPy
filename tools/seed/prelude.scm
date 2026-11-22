@@ -695,11 +695,31 @@
             (loop2 (cdr cs) (- pos n)))))
       (utf8->string all))))
 
+(define (read-text-file path)
+  "整文件读成字符串：走 Chez 二进制端口，读取与拼接都在 C 里（无逐字节 foreign-ref）"
+  (if (not (file-exists? path))
+      ""
+      (let ((port (open-file-input-port path)))
+        (let loop ((chunks '()) (total 0))
+          (let ((bv (get-bytevector-n port 65536)))
+            (if (eof-object? bv)
+                (begin
+                  (close-input-port port)
+                  (let ((all (make-bytevector total 0)))
+                    (let loop2 ((cs chunks) (pos total))
+                      (if (null? cs)
+                          (utf8->string all)
+                          (let* ((c (car cs)) (n (bytevector-length c)) (st (- pos n)))
+                            (bytevector-copy! c 0 all st n)
+                            (loop2 (cdr cs) st))))))
+                (loop (cons bv chunks) (+ total (bytevector-length bv)))))))))
+
 (define (file-exists? path)
-  "检查文件是否存在"
+  "检查文件是否存在（NULL = 0 在 Scheme 里是真值，必须显式比 0）"
   (let ((fp (libc-fopen path "r")))
-    (when fp (libc-fclose fp))
-    (not (not fp))))
+    (if (zero? fp)
+        #f
+        (begin (libc-fclose fp) #t))))
 
 ;; ====== HTTP 客户端（基于 libcurl） ======
 
@@ -780,6 +800,7 @@
 (define file_open (lambda (path mode) (file-open path mode)))
 (define file_close (lambda (fp) (file-close fp)))
 (define file_read_all (lambda (fp) (file-read-all fp)))
+(define read_text_file (lambda (path) (read-text-file path)))
 (define file_write (lambda (fp s) (file-write fp s)))
 (define file_exists (lambda (path) (file-exists? path)))
 (define http_get_simple (lambda (url) (http-get-simple url)))
@@ -846,9 +867,11 @@
   (let ((s (json-scheme->string obj)))
     (when s
       (let ((fp (libc-fopen path "w")))
-        (when fp
-          (file-write fp s)
-          (libc-fclose fp))))))
+        (if (zero? fp)
+            #f
+            (begin
+              (file-write fp s)
+              (libc-fclose fp)))))))
 
 (define (parse-json s)
   "解析 JSON 字符串（简化实现，支持基本类型和嵌套 dict/list）"

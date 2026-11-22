@@ -77,6 +77,7 @@
 (define file_open (lambda (path mode) (file-open path mode)))
 (define file_close (lambda (fp) (file-close fp)))
 (define file_read_all (lambda (fp) (file-read-all fp)))
+(define read_text_file (lambda (path) (read-text-file path)))
 (define file_write (lambda (fp s) (file-write fp s)))
 (define file_exists (lambda (path) (file-exists? path)))
 (define http_get_simple (lambda (url) (http-get-simple url)))

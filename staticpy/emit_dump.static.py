@@ -6,9 +6,7 @@
 #       对应 static_translate.py --lib。
 
 def emit_file(path: str, lib_mode: int) -> int:
-    fp = file_open(path, "r")
-    src: str = file_read_all(fp)
-    file_close(fp)
+    src: str = read_text_file(path)
     toks = tokenize(src)
     tree = parse_module(toks)
     print(emit_module(tree, path, lib_mode))
