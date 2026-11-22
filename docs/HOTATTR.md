@@ -90,3 +90,30 @@ bytes → 49 83 6e 68 01 0f 84 …     （dec/je：fixnum 递减与分支）
 bash staticpy/static_build_comfycli.sh tools/hotattr.static.py hotattr
 ./dist/hotattr                     # 打 usage
 ```
+
+## 更省事的路径：产物自己报名字（perfmap 自报）
+
+`hotattr` 是**外部**贴标签（按 4K/64B 切块，名字是坐标）。若你愿意重编一次产物，
+可以让产物**运行期**把自己的每个顶层过程的 code entry 写进同一张表，名字就是函数名：
+
+```bash
+STATICPY_PERFMAP=1 ./dist/translator app.static.py > ~/iso_gen/app.code.scm
+bash staticpy/static_build_comfycli.sh ~/iso_gen/app.code.scm app   # 构建期门禁
+```
+
+原理只有一条：Chez 的 `(environment-symbols (interaction-environment))` 在 AOT 产物里
+**能枚举到全部顶层命名空间**（程序自己的 + 内联的 prelude），`top-level-value` 对未绑定名
+抛普通条件（`guard` 兜得住），`(object->reference-address p)` 掩掉低 3 位就是 code entry。
+于是**不需要任何名字表**：构建期不猜存在性，运行期枚举即可（translator 实测 399 → 2283 条）。
+
+写给别的项目的同一段代码不在 StaticPy 里，而是 lite 的通用件
+`lib/chez-perfmap.scm`（66 行，只依赖 Chez 自带过程）：
+
+```scheme
+(load "chez-perfmap.scm")
+...  (main) ...
+(chez-perfmap-publish!)     ; 必须放在最后：函数跑过一轮，首字才指向代码段
+```
+
+固有上限：只有**顶层过程**有名，lambda/内联展开的代码仍是 `[anon]`（translator 实测
+`[jit]` 25.3% / `[anon]` 45.8%）；行级归因仍走 `STATICPY_PROFILE=source` + `dist/sprof`。

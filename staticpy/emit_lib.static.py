@@ -111,16 +111,6 @@ def build_word_set(words: str):
 RESERVED_SET = build_word_set(RESERVED)
 PRELUDE_SET = build_word_set(PRELUDE_NAMES)
 
-# perfmap 额外探测表：这些 prelude 过程不在 PRELUDE_NAMES（那是**调用**派发表），
-# 但剖面里是热点，值得在 /tmp/perf-<pid>.map 里点名。
-# 运行期用 (top-level-value ...) + guard 探测，未绑定的名字自动跳过，拼错无害。
-PERFMAP_EXTRA = (
-    "str-find py-str-find py-truthy py-equal? py-none? dict-set! dict-set-default! "
-    "dict-get dict-get-or-empty py-glist-push! py-glist-pop! py-glist-ref py-glist-set! "
-    "py-glist-new py-glist-len py-iter->list py-list-slice py-list-append ir-tag? "
-    "int_array_set int_array_ref vec_ref str_code_at str-join str-split"
-)
-
 def is_prelude_fn(nm: str) -> bool:
     # 文件自己定义的同名函数优先（同种子：name not in FUNCTION_SIGS）
     if dict_get(SIGS, nm) is not None:
@@ -3977,69 +3967,43 @@ def top_level_reject(s, why) -> str:
 # 这里把每个顶层函数的 code entry 写进 /tmp/perf-<pid>.map，采样就能归因到函数名。
 # 默认不产出（保持 IR 逐字节不变），只有构建期设了 STATICPY_PERFMAP=1 才加。
 def emit_perfmap(names) -> str:
-    pairs: str = ""
-    i: int = 0
-    while i < py_list_length(names):
-        if i > 0:
-            pairs = pairs + " "
-        pairs = pairs + '(cons "' + py_list_ref(names, i) + '" static_' + py_list_ref(names, i) + ")"
-        i = i + 1
-    # prelude 函数名（py-list-ref / str_code_at ...）：构建期无法判存在性，运行期可以。
-    # 三条实测：① `(top-level-bound? (quote py-list-ref))` 在 compile-file 产物里一律 #f
-    #   （程序命名空间封闭，只有 boot 层可见）；② 直接**引用**名字能编译，但任一不存在的
-    #   名字会让整个程序 load 失败（"variable char-code is not bound"），且 load 期错误
-    #   用 guard 兜不住；③ 而 `(top-level-value 'nm)` 是**运行期**解析，未绑定抛的是普通
-    #   条件，guard 接得住 → 可安全探测。
-    # 故 prelude 条目走运行期解析，名字来源是 PRELUDE_NAMES（Python 风格）+ scheme_name()
-    # 映射，并对带下划线的名字额外试连字符拼法（py_list_ref → py-list-ref）。
-    parts = list_to_py_list(str_split(PRELUDE_NAMES + " " + PERFMAP_EXTRA, " "))
-    seen = make_dict()
-    i = 0
-    while i < py_list_length(parts):
-        w = py_list_ref(parts, i)
-        i = i + 1
-        if str_length(w) == 0:
-            continue
-        sn = scheme_name(w)
-        variants = py_list()
-        variants = py_list_append(variants, sn)
-        dn = str_replace(sn, "_", "-")
-        if dn != sn:
-            variants = py_list_append(variants, dn)
-        j = 0
-        while j < py_list_length(variants):
-            vn = py_list_ref(variants, j)
-            j = j + 1
-            if dict_get_or_empty(seen, vn) == 1:
-                continue
-            seen[vn] = 1
-            pairs = pairs + " (cons (quote " + vn + ") (static__perfmap-resolve (quote " + vn + ")))"
+    # 通用做法：**不维护名单**，运行期枚举顶层环境再逐个探测。
+    # 实测（compile-file 产物）：
+    #   ① `(environment-symbols (interaction-environment))` 能枚举到全部顶层符号
+    #      —— 程序自己的定义 + prelude 的都可见（命名空间封闭只影响 top-level-bound?）；
+    #   ② 未绑定/模块类符号调 `top-level-value` 抛的是普通条件，`guard` 接得住，可安全探测；
+    #   ③ procedure? 过滤后约 1970 个过程，覆盖远超构建期名单（此前 470 条）。
+    # 故构建期不需要任何名字表：任何 Chez AOT 程序用同一段代码即可自报
+    # （通用版见 lite 仓库 lib/chez-perfmap.scm）。
     head: str = "\n\n;; perfmap self-report: code entry -> /tmp/perf-<pid>.map"
-    head = head + "\n(define (static__perfmap-resolve s)"
-    head = head + "\n  (guard (e (#t #f)) (let ((p (top-level-value s))) (and (procedure? p) p))))"
-    head = head + "\n(define static__perfmap-pairs"
-    head = head + "\n  (list " + pairs + "))"
     head = head + "\n(define (static__perfmap-emit)"
-    head = head + "\n  (define (ref p) (bitwise-and (object->reference-address p) (bitwise-not 7)))"
-    head = head + "\n  (define (w0 p) (foreign-ref 'uptr (ref p) 0))"
-    head = head + "\n  (define port (open-output-file (string-append \"/tmp/perf-\""
-    head = head + " (number->string (get-process-id)) \".map\") 'replace))"
-    head = head + "\n  (define (dump get tag)"
-    head = head + "\n    (let loop ((l (sort (lambda (a b) (< (get (cdr a)) (get (cdr b))))"
-    head = head + "\n                        (filter (lambda (e) (procedure? (cdr e))) static__perfmap-pairs)))"
-    head = head + "\n               (last -1))"
-    head = head + "\n      (unless (null? l)"
-    head = head + "\n        (let* ((cur (car l)) (rest (cdr l))"
-    head = head + "\n               (start (get (cdr cur)))"
-    head = head + "\n               (nxt (if (null? rest) (+ start #x800) (get (cdr (car rest)))))"
-    head = head + "\n               (gap (- nxt start))"
-    head = head + "\n               (size (if (or (< gap #x20) (> gap #x2000)) #x100 gap)))"
-    head = head + "\n          ;; 相邻项间距 = 该函数代码长度（夹在 0x20..0x2000 之间）"
-    head = head + "\n          (unless (= start last)"
-    head = head + "\n            (fprintf port \"~x ~x ~a~a~n\" start size (car cur) tag))"
-    head = head + "\n          (loop rest start)))))"
-    head = head + "\n  (dump w0 \"\")"
-    head = head + "\n  (close-port port))"
+    head = head + "\n  (define (entry p)"
+    head = head + "\n    (foreign-ref 'uptr (bitwise-and (object->reference-address p) (bitwise-not 7)) 0))"
+    head = head + "\n  (define (safe-value s) (guard (e (#t #f)) (top-level-value s)))"
+    head = head + "\n  (let* ((syms (environment-symbols (interaction-environment)))"
+    head = head + "\n         (rows (let loop ((s syms) (acc '()))"
+    head = head + "\n                 (if (null? s) acc"
+    head = head + "\n                     (let ((p (safe-value (car s))))"
+    head = head + "\n                       (loop (cdr s)"
+    head = head + "\n                             (if (procedure? p)"
+    head = head + "\n                                 (cons (cons (entry p) (symbol->string (car s))) acc)"
+    head = head + "\n                                 acc))))))"
+    head = head + "\n         (sorted (sort (lambda (a b) (< (car a) (car b))) rows))"
+    head = head + "\n         (port (open-output-file (string-append \"/tmp/perf-\""
+    head = head + "\n                                              (number->string (get-process-id)) \".map\")"
+    head = head + "\n                                'replace)))"
+    head = head + "\n    (let loop ((l sorted) (last -1))"
+    head = head + "\n      (cond"
+    head = head + "\n        ((null? l) (void))"
+    head = head + "\n        ((= (car (car l)) last) (loop (cdr l) last))"
+    head = head + "\n        (else (let* ((cur (car l)) (rest (cdr l)) (start (car cur))"
+    head = head + "\n                     (nxt (if (null? rest) (+ start #x800) (car (car rest))))"
+    head = head + "\n                     (gap (- nxt start))"
+    head = head + "\n                     (size (if (or (< gap #x20) (> gap #x2000)) #x100 gap)))"
+    head = head + "\n                ;; 相邻项间距 = 该函数代码长度（夹在 0x20..0x2000 之间）"
+    head = head + "\n                (fprintf port \"~x ~x ~a~n\" start size (cdr cur))"
+    head = head + "\n                (loop rest start)))))"
+    head = head + "\n    (close-port port)))"
     head = head + "\n(static__perfmap-emit)"
     return head
 
