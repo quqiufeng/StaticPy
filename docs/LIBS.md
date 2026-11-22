@@ -303,6 +303,10 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   `state_dict` 只装**标量超参**（`lr/betas/eps/weight_decay/t`），Tensor 状态（`m/v`）不进 dict——
   权重走 `save/load_ckpt`（`save_params`/`load_params` 自由函数，`len` 不符抛 `Exception`）。
   注意 `super()` 只支持 `__init__`，子类的 `state_dict` 要自填字段而非 `super().state_dict()`。
+- **训练模板** `plugins/ltorch/train_template.static.py`：**没有向上转型**——训练函数不能标
+  `opt: Optimizer` 再接 `AdamW`（报 `argument 2 ... expects 'Optimizer', got 'AdamW'`），
+  要按**具体优化器类**标注；`Dropout` 有 `train()/eval()` 两态，评估前 `eval()` 才确定性。
+  模板实跑：acc 0.51 → 1.0、loss 0.692 → 9.6e-4（40 步），中途 `save` → 清零 → `load_ckpt` 恢复 acc=1.0。
 - **踩过的坑（写训练代码会撞到）**：默认实参不写齐会段错误（`Adam(ps, lr=…)` 必须给全默认值）；
   `CrossEntropyLoss` 收 `list` target，Tensor target 走 `forward_t`；`Sequential` 用**显式派发表**
   （静态语言无动态分派）；`__init__` 体内不建类型环境，需要局部类型标注的循环挪到普通方法。
@@ -319,6 +323,8 @@ LD_LIBRARY_PATH=/opt/libtorch/lib ./dist/train_demo   # 线性回归 + MLP 训�
 # 写自己的训练程序：库（Tensor/nn/optim）+ 你的程序 concat 成一个 ELF，跑时裸 ./xxx 即可
 #（脚本会把 libtorch_capi.so 拷到产物旁，产物 RUNPATH 含 $ORIGIN，不必再设 LD_LIBRARY_PATH）
 bash plugins/ltorch/build_app.sh my_train.static.py my_train && ./my_train
+# 现成模板（三层 MLP + Dropout + AdamW + StepLR + 中途 save/load 续训）：
+bash plugins/ltorch/build_app.sh plugins/ltorch/train_template.static.py train_template && ./dist/train_template
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
 python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：119/119（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17）
 python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 101 条全验证、显式缺口 0（合计 5.7%）
