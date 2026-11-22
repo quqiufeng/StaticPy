@@ -1655,6 +1655,12 @@
       (char->integer (string-ref c 0))
       -1))
 
+;; 取字符串第 i 个字符的码点（越界返回 -1）：免掉每字符 1-char 字符串分配
+(define (str_code_at s i)
+  (if (and (string? s) (>= i 0) (< i (string-length s)))
+      (char->integer (string-ref s i))
+      -1))
+
 ;; formats a float to fixed decimal places
 (define (format_float f digits)
   (format "~,vf" digits (inexact f)))

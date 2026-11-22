@@ -74,6 +74,134 @@ def is_alnum(c: str) -> bool:
 def is_space(c: str) -> bool:
     return c == " " or c == "\t" or c == "\r" or c == "\f" or c == "\v"
 
+# ---- 码点版判定：词法器按码点走，免掉每字符 1-char 字符串分配 ----
+
+def is_digit_code(n: int) -> bool:
+    return n >= 48 and n <= 57
+
+def is_alpha_code(n: int) -> bool:
+    if n >= 97 and n <= 122:
+        return True
+    if n >= 65 and n <= 90:
+        return True
+    return n == 95
+
+def is_alnum_code(n: int) -> bool:
+    if n >= 97 and n <= 122:
+        return True
+    if n >= 65 and n <= 90:
+        return True
+    if n >= 48 and n <= 57:
+        return True
+    return n == 95
+
+def is_space_code(n: int) -> bool:
+    return n == 32 or n == 9 or n == 13 or n == 12 or n == 11
+
+def match_op(src: str, i: int) -> str:
+    """码点驱动的运算符匹配：整数比较分派，命中才返回常量串（零分配）。
+
+    与「切 3 字 / 2 字 + 逐条字符串比较 + OPS1 子串搜索」逐输入等价
+    （见 ~/iso_gen/probe/opcheck.py 穷举 857k 组合）。
+    """
+    c0: int = str_code_at(src, i)
+    c1: int = str_code_at(src, i + 1)
+    if c0 == c1 and str_code_at(src, i + 2) == 61:
+        if c0 == 42:
+            return "**="
+        if c0 == 47:
+            return "//="
+        if c0 == 62:
+            return ">>="
+        if c0 == 60:
+            return "<<="
+    if c0 == 46 and c1 == 46 and str_code_at(src, i + 2) == 46:
+        return "..."
+    if c1 == 61:
+        if c0 == 61:
+            return "=="
+        if c0 == 33:
+            return "!="
+        if c0 == 60:
+            return "<="
+        if c0 == 62:
+            return ">="
+        if c0 == 43:
+            return "+="
+        if c0 == 45:
+            return "-="
+        if c0 == 42:
+            return "*="
+        if c0 == 47:
+            return "/="
+        if c0 == 37:
+            return "%="
+        if c0 == 38:
+            return "&="
+        if c0 == 124:
+            return "|="
+        if c0 == 94:
+            return "^="
+        if c0 == 58:
+            return ":="
+    if c0 == 42 and c1 == 42:
+        return "**"
+    if c0 == 47 and c1 == 47:
+        return "//"
+    if c0 == 60 and c1 == 60:
+        return "<<"
+    if c0 == 62 and c1 == 62:
+        return ">>"
+    if c0 == 45 and c1 == 62:
+        return "->"
+    if c0 == 40:
+        return "("
+    if c0 == 41:
+        return ")"
+    if c0 == 123:
+        return "{"
+    if c0 == 125:
+        return "}"
+    if c0 == 91:
+        return "["
+    if c0 == 93:
+        return "]"
+    if c0 == 44:
+        return ","
+    if c0 == 58:
+        return ":"
+    if c0 == 46:
+        return "."
+    if c0 == 59:
+        return ";"
+    if c0 == 64:
+        return "@"
+    if c0 == 126:
+        return "~"
+    if c0 == 60:
+        return "<"
+    if c0 == 62:
+        return ">"
+    if c0 == 61:
+        return "="
+    if c0 == 43:
+        return "+"
+    if c0 == 45:
+        return "-"
+    if c0 == 42:
+        return "*"
+    if c0 == 47:
+        return "/"
+    if c0 == 37:
+        return "%"
+    if c0 == 38:
+        return "&"
+    if c0 == 124:
+        return "|"
+    if c0 == 94:
+        return "^"
+    return ""
+
 # ========== token 构造 ==========
 
 def tok(t: str, v: str, line: int, col: int):
@@ -409,9 +537,9 @@ def tokenize(src: str):
     indents = py_list_append(indents, 0)
 
     while i < n:
-        c = ch(src, i)
+        cc: int = str_code_at(src, i)
 
-        if c == "\n":
+        if cc == 10:
             if depth == 0:
                 pending_newline = True
             i = i + 1
@@ -419,16 +547,16 @@ def tokenize(src: str):
             line_start = i
             continue
 
-        if is_space(c):
+        if is_space_code(cc):
             i = i + 1
             continue
 
-        if c == "#":
-            while i < n and ch(src, i) != "\n":
+        if cc == 35:
+            while i < n and str_code_at(src, i) != 10:
                 i = i + 1
             continue
 
-        if c == "\\" and i + 1 < n and ch(src, i + 1) == "\n":
+        if cc == 92 and i + 1 < n and str_code_at(src, i + 1) == 10:
             i = i + 2
             line = line + 1
             line_start = i
@@ -459,12 +587,12 @@ def tokenize(src: str):
         col: int = i - line_start
 
         # ---- 标识符 / 关键字 / 带前缀的字符串 ----
-        if is_alpha(c):
+        if is_alpha_code(cc):
             j = i
-            while j < n and is_alnum(ch(src, j)):
+            while j < n and is_alnum_code(str_code_at(src, j)):
                 j = j + 1
             word = sl(src, i, j)
-            if j < n and (ch(src, j) == "\"" or ch(src, j) == "'") and is_string_prefix(word):
+            if j < n and (str_code_at(src, j) == 34 or str_code_at(src, j) == 39) and is_string_prefix(word):
                 k = scan_string(src, j, n)
                 body = string_body(src, j, k)
                 val = body
@@ -493,12 +621,12 @@ def tokenize(src: str):
             continue
 
         # ---- 数字 ----
-        if is_digit(c) or (c == "." and i + 1 < n and is_digit(ch(src, i + 1))):
+        if is_digit_code(cc) or (cc == 46 and i + 1 < n and is_digit_code(str_code_at(src, i + 1))):
             j = scan_number(src, i, n)
             text = sl(src, i, j)
-            if j < n and is_alpha(ch(src, j)):
+            if j < n and is_alpha_code(str_code_at(src, j)):
                 # 数字后紧跟字母：吞掉（如 1j、0x1f 已处理）
-                while j < n and is_alnum(ch(src, j)):
+                while j < n and is_alnum_code(str_code_at(src, j)):
                     j = j + 1
                 text = sl(src, i, j)
             toks = py_list_append(toks, tok("NUMBER", text, line, col))
@@ -506,7 +634,7 @@ def tokenize(src: str):
             continue
 
         # ---- 字符串字面量（无前缀） ----
-        if c == "\"" or c == "'":
+        if cc == 34 or cc == 39:
             k = scan_string(src, i, n)
             body = string_body(src, i, k)
             toks = py_list_append(toks, tok("STRING", decode_escapes(body), line, col))
@@ -521,20 +649,7 @@ def tokenize(src: str):
             continue
 
         # ---- 运算符 / 定界符 ----
-        matched = ""
-        three = sl(src, i, i + 3)
-        for op3 in OPS3:
-            if three == op3:
-                matched = op3
-        if matched == "":
-            two = sl(src, i, i + 2)
-            for op2 in OPS2:
-                if two == op2:
-                    matched = op2
-        if matched == "":
-            one = ch(src, i)
-            if str_contains(OPS1, one):
-                matched = one
+        matched = match_op(src, i)
         if matched == "":
             # 未知字符（如 \f、BOM）：跳过
             i = i + 1

@@ -813,7 +813,7 @@ PRELUDE_FUNCTIONS = {
     "csv_parse", "csv_encode",
     "str_split", "str_join", "str_trim", "str_lower", "str_upper",
     "str_replace", "str_contains", "str_starts_with", "str_ends_with",
-    "str_length", "str_slice",
+    "str_length", "str_slice", "str_code_at",
     "os_list_dir", "os_getenv", "os_getcwd", "os_file_size",
     "os_file_exists", "os_move_file", "os_delete_file",
     "os_mkdir", "os_rmdir", "os_shell", "os_cwd",
