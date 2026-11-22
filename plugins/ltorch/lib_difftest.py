@@ -509,6 +509,26 @@ def main():
     print("sq10_y=" + sq10.forward(x10).values())
     print("sq10_lnw=" + str(sq10.param_by("1.weight").numel()))
 
+    # ================= v11：MultiheadAttention（L=3, E=4, H=2 自注意力）=================
+    xm11: Tensor = tensor_from_csv({XM11}, {SXM11})
+    mh11: MultiheadAttention = MultiheadAttention(4, 2, 0)
+    mh11.load_qkv({WQ11}, {WK11}, {WV11}, "4,4", {BQ11}, {BK11}, {BV11}, "1,4")
+    mh11.load_out({WO11}, "4,4", {BO11}, "1,4")
+    print("m11_attn=" + mh11.attn_weights(xm11).values())
+    print("m11_y=" + mh11.forward(xm11).values())
+    # torch 把 q/k/v 打包成 in_proj_weight(3E,E) 一个张量；我们拆成 wq/wk/wv 三块，
+    # 所以「张量个数」是 8 vs 4，「状态键面」才是可比的口径（都是 4 项）。
+    print("m11_nparams=" + str(len(mh11.parameters())))
+    print("m11_nsplit=" + str(len(mh11.parameters())))
+    print("m11_nstate=" + str(len(mh11.state_dict())))
+    print("m11_keys=" + join8(mh11.state_names()))
+    print("m11_wqnumel=" + str(mh11.param("in_proj_weight.q").numel()))
+    mh11.zero_grad()
+    ly11: Tensor = mh11.forward(xm11).mean()
+    ly11.backward()
+    print("m11_gwq=" + mh11.wq.grad_values())
+    print("m11_gwo=" + mh11.wo.grad_values())
+
     print("ok")
 
 
@@ -631,6 +651,17 @@ def main():
     ln10_wb = [1.1, 0.9, 1.3]
     ln10_bb = [0.0, 0.1, -0.05]
 
+    # ---- v11 MHA：L=3, E=4, H=2（q/k/v/out 四组权重全由 torch 生成后灌入）----
+    xm11_v = [0.7, -1.2, 2.3, 0.4, -0.8, 1.5, 0.2, -2.1, 1.9, 0.6, -0.5, 1.1]
+    wq11 = torch.randn(4, 4, generator=g2, dtype=torch.float64) * 0.5
+    wk11 = torch.randn(4, 4, generator=g2, dtype=torch.float64) * 0.5
+    wv11 = torch.randn(4, 4, generator=g2, dtype=torch.float64) * 0.5
+    wo11 = torch.randn(4, 4, generator=g2, dtype=torch.float64) * 0.5
+    bq11 = torch.randn(4, generator=g2, dtype=torch.float64) * 0.1
+    bk11 = torch.randn(4, generator=g2, dtype=torch.float64) * 0.1
+    bv11 = torch.randn(4, generator=g2, dtype=torch.float64) * 0.1
+    bo11 = torch.randn(4, generator=g2, dtype=torch.float64) * 0.1
+
     spath = os.path.join(WORK, "saved_param.bin")
     if os.path.exists(spath):
         os.remove(spath)
@@ -668,6 +699,11 @@ def main():
         "W10A": csv(flat(w10a)), "S10A": "3,4", "B10A": csv(b10a), "SB10A": "1,3",
         "W10B": csv(flat(w10b)), "S10B": "2,3", "B10B": csv(b10b), "SB10B": "1,2",
         "LN10WB": csv(ln10_wb), "LN10BB": csv(ln10_bb),
+        # v11
+        "XM11": csv(xm11_v), "SXM11": "3,4",
+        "WQ11": csv(flat(wq11)), "WK11": csv(flat(wk11)), "WV11": csv(flat(wv11)),
+        "BQ11": csv(flat(bq11)), "BK11": csv(flat(bk11)), "BV11": csv(flat(bv11)),
+        "WO11": csv(flat(wo11)), "BO11": csv(flat(bo11)),
     }
     ours = run_elf(pairs, verbose)
 
@@ -1013,6 +1049,40 @@ def main():
     ref["sq10_nparams"] = [float(len(_k10))]
     ref["sq10_y"] = flat(_sq10(_x10))
     ref["sq10_lnw"] = [float(_ln10b.weight.numel())]
+
+    # v11 MHA：torch 的 in_proj 是 q/k/v 竖排的 (3E,E)，正好用 cat 拼出同一组权重
+    _mha11 = torch.nn.MultiheadAttention(4, 2, dtype=torch.float64)
+    with torch.no_grad():
+        _mha11.in_proj_weight.copy_(torch.cat([wq11, wk11, wv11], dim=0))
+        _mha11.in_proj_bias.copy_(torch.cat([bq11, bk11, bv11], dim=0))
+        _mha11.out_proj.weight.copy_(wo11)
+        _mha11.out_proj.bias.copy_(bo11)
+    _xm11 = T(xm11_v, (3, 4))
+    _o11, _w11 = _mha11(_xm11, _xm11, _xm11, need_weights=True,
+                        average_attn_weights=False)
+    ref["m11_attn"] = flat(_w11.detach())
+    ref["m11_y"] = flat(_o11.detach())
+    # torch 打包：in_proj_weight (3E,E) + in_proj_bias (3E) + out_proj.weight + out_proj.bias；
+    # 我们拆成 3+3+1+1 = 8 个张量（键面 = torch 的 4 个键，in_proj_* 再分 .q/.k/.v）。
+    _e11 = int(_mha11.embed_dim)
+    _nsplit11 = (_mha11.in_proj_weight.shape[0] // _e11
+                 + _mha11.in_proj_bias.shape[0] // _e11 + 2)
+    ref["m11_nparams"] = [float(_nsplit11)]
+    ref["m11_nsplit"] = [float(_nsplit11)]
+    ref["m11_nstate"] = [float(_nsplit11)]
+    _k11 = []
+    for _k in _mha11.state_dict().keys():
+        if _k.startswith("in_proj_"):
+            for _p in ["q", "k", "v"]:
+                _k11.append(_k + "." + _p)
+        else:
+            _k11.append(_k)
+    ref["m11_keys"] = ",".join(_k11)
+    ref["m11_wqnumel"] = [float(_mha11.in_proj_weight[:4].numel())]
+    _mha11.zero_grad()
+    _o11.mean().backward()
+    ref["m11_gwq"] = flat(_mha11.in_proj_weight.grad[:4])
+    ref["m11_gwo"] = flat(_mha11.out_proj.weight.grad)
 
     # ---------------- 比对 ----------------
     bad = 0

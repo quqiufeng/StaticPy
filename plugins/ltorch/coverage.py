@@ -143,6 +143,8 @@ MAP = {
     ("nn", "AvgPool2d"): "p:AvgPool2d",
     ("nn", "NLLLoss"): "p:NLLLoss",
     ("nn", "BCEWithLogitsLoss"): "p:BCEWithLogitsLoss",
+    # ---- nn（v11：自注意力）----
+    ("nn", "MultiheadAttention"): "p:MultiheadAttention",
     # ---- 状态字典 / 整模型存取（照 torch 的 state_dict 协议）----
     ("nn", "state_dict"): ["p:Linear.state_dict", "p:Conv2d.state_dict",
                            "p:BatchNorm1d.state_dict", "p:Sequential.state_dict",

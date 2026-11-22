@@ -1108,6 +1108,143 @@ class Embedding(Module):
         return out
 
 
+class MultiheadAttention(Module):
+    """对标 nn.MultiheadAttention(embed_dim, num_heads)：自注意力前向（batch=1 也按 (L,E) 直算）。
+
+    torch 把 q/k/v 的投影拼成 in_proj_weight (3E, E) + in_proj_bias (3E)；
+    这里拆成 wq/wk/wv/bq/bk/bv 三块存，load_qkv() 三块分开灌入，
+    数值路径 = 三次投影 → 拆头 → scaled dot-product → softmax → 拼头 → out_proj，
+    与 F.multi_head_attention_forward 一致（1/sqrt(head_dim) 缩放）。
+    """
+
+    embed: int
+    heads: int
+    dim: int
+    wq: Tensor
+    wk: Tensor
+    wv: Tensor
+    bq: Tensor
+    bk: Tensor
+    bv: Tensor
+    wo: Tensor
+    bo: Tensor
+
+    def __init__(self, embed: int, heads: int, seed: int):
+        super().__init__()
+        self.tag = "mha"
+        self.embed = embed
+        self.heads = heads
+        self.dim = embed // heads
+        # torch 的 xavier_uniform_ 给 in_proj/out_proj；这里用 randn 缩放近似，只为「能训起来」。
+        scale: float = 1.0 / sqrt_float(embed)
+        self.wq = randn([embed, embed], seed).mul_scalar(scale).requires_grad_(1)
+        self.wk = randn([embed, embed], seed + 1).mul_scalar(scale).requires_grad_(1)
+        self.wv = randn([embed, embed], seed + 2).mul_scalar(scale).requires_grad_(1)
+        self.bq = zeros([1, embed]).requires_grad_(1)
+        self.bk = zeros([1, embed]).requires_grad_(1)
+        self.bv = zeros([1, embed]).requires_grad_(1)
+        self.wo = randn([embed, embed], seed + 3).mul_scalar(scale).requires_grad_(1)
+        self.bo = zeros([1, embed]).requires_grad_(1)
+
+    def load_qkv(self, wq_csv: str, wk_csv: str, wv_csv: str, w_shape: str,
+                 bq_csv: str, bk_csv: str, bv_csv: str, b_shape: str) -> None:
+        """三块分开灌（形状都是 (E,E) / (1,E)）。"""
+        self.wq = tensor_from_csv(wq_csv, w_shape).requires_grad_(1)
+        self.wk = tensor_from_csv(wk_csv, w_shape).requires_grad_(1)
+        self.wv = tensor_from_csv(wv_csv, w_shape).requires_grad_(1)
+        self.bq = tensor_from_csv(bq_csv, b_shape).requires_grad_(1)
+        self.bk = tensor_from_csv(bk_csv, b_shape).requires_grad_(1)
+        self.bv = tensor_from_csv(bv_csv, b_shape).requires_grad_(1)
+
+    def load_out(self, wo_csv: str, wo_shape: str, bo_csv: str, bo_shape: str) -> None:
+        """灌 out_proj.weight (E,E) / out_proj.bias (1,E)。"""
+        self.wo = tensor_from_csv(wo_csv, wo_shape).requires_grad_(1)
+        self.bo = tensor_from_csv(bo_csv, bo_shape).requires_grad_(1)
+
+    def _heads_of(self, x: Tensor, w: Tensor, b: Tensor) -> Tensor:
+        """(L,E) -> 投影 -> (heads, L, dim)。"""
+        l: int = x.numel() // self.embed
+        p: Tensor = x.matmul(w.transpose(0, 1)).add(b)
+        return p.reshape([l, self.heads, self.dim]).transpose(0, 1)
+
+    def attn_weights(self, x: Tensor) -> Tensor:
+        """softmax(QK^T/sqrt(dim))，形状 (heads, L, L)：对齐 torch 的返回权重。"""
+        q: Tensor = self._heads_of(x, self.wq, self.bq)
+        k: Tensor = self._heads_of(x, self.wk, self.bk)
+        scores: Tensor = q.matmul(k.transpose(1, 2))
+        sc: Tensor = scores.mul_scalar(1.0 / sqrt_float(self.dim))
+        return sc.softmax(2)
+
+    def forward(self, x: Tensor) -> Tensor:
+        l: int = x.numel() // self.embed
+        p: Tensor = self.attn_weights(x)
+        v: Tensor = self._heads_of(x, self.wv, self.bv)
+        ctx: Tensor = p.matmul(v)
+        merged: Tensor = ctx.transpose(0, 1).reshape([l, self.embed])
+        return merged.matmul(self.wo.transpose(0, 1)).add(self.bo)
+
+    def parameters(self) -> list:
+        out: list = []
+        out.append(self.wq)
+        out.append(self.wk)
+        out.append(self.wv)
+        out.append(self.bq)
+        out.append(self.bk)
+        out.append(self.bv)
+        out.append(self.wo)
+        out.append(self.bo)
+        return out
+
+    def zero_grad(self) -> None:
+        ps: list = self.parameters()
+        i: int = 0
+        while i < len(ps):
+            p: Tensor = ps[i]
+            p.zero_grad()
+            i += 1
+
+    def state_names(self) -> list:
+        """torch 的键面 4 项，`in_proj_*` 按我们拆开的 q/k/v 再分三段（`.q/.k/.v`）。"""
+        out: list = []
+        out.append("in_proj_weight.q")
+        out.append("in_proj_weight.k")
+        out.append("in_proj_weight.v")
+        out.append("in_proj_bias.q")
+        out.append("in_proj_bias.k")
+        out.append("in_proj_bias.v")
+        out.append("out_proj.weight")
+        out.append("out_proj.bias")
+        return out
+
+    def state_list(self) -> list:
+        return self.parameters()
+
+    def param(self, name: str) -> Tensor:
+        ps: list = self.state_list()
+        d: dict = self.state_dict()
+        idx: int = int(d[name])
+        return ps[idx]
+
+    def state_dict(self) -> dict:
+        return names_index(self.state_names())
+
+    def save(self, path: str) -> int:
+        return save_params(self.state_list(), path)
+
+    def load_ckpt(self, path: str) -> int:
+        return load_params(self.state_list(), path)
+
+    def grad_at(self, i: int) -> str:
+        """第 i 个参数的梯度 CSV（无梯度返回空串，对齐 torch 的 None）。"""
+        p: Tensor = self.param_at(i)
+        return p.grad_values()
+
+    def param_at(self, i: int) -> Tensor:
+        ps: list = self.parameters()
+        return ps[i]
+
+
+
 class L1Loss:
     """对标 nn.L1Loss()：mean(|pred - target|)。"""
 

@@ -19,7 +19,7 @@
 | [`anim`](#anim) | 游戏素材流水线（骨架/切图/打包/GIF） | 端到端出图 |
 | [`tools/`](#tools-推理工具) | ONNX 推理：人脸/抠图/OCR/放大/骨骼/深度… | 样例图实测 |
 | [`luajit/`](#luajit-同一份-c-abi) | 同一 C ABI 的 LuaJIT 绑定 + 单文件 ELF 嵌入 | — |
-| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **175/175** |
+| [`ltorch`](#ltorch直吊-libtorchaten--autograd) | 直吊 libTorch：张量 / 矩阵 / 激活 / 归约 / autograd / `nn` / 优化器 | 差分 **24/24** + ELF **184/184** |
 
 约定：所有库都是「纯函数库（无 `main`）+ 薄 CLI」，因此可被 `concat` 拼进任意用户程序。
 
@@ -324,6 +324,21 @@ bash luajit/embed-build.sh     # 把 LuaJIT + 运行时静态编进单文件 ELF
   `LayerNorm` 的 `w/b` 按 torch 口径初始化（ones/zeros）+ `state_names()` 给 `weight/bias`。
   **坑**：`F.gelu`/`F.leaky_relu` 在 torch 里是函数、不是 Tensor 方法，`capi_difftest` 侧照抄函数形态；
   `norm_p` 是 `at::norm(p)` 的 p-范数（不是 `linalg.vector_norm`），p=1/2/3 都对得上。
+- **v11（自注意力 `nn.MultiheadAttention`）**：`MultiheadAttention(embed, nhead, seed)` +
+  `load_qkv / load_out`（灌 q/k/v 与 out 投影权重）+ `attn_weights(x)` + `forward(x)`，
+  前向照 torch 的路径写：`qkv = x @ w.T + b` → `reshape(T, H, d).transpose(0,1)` →
+  `scores = h @ hᵀ * (1/sqrt(d))`（因果掩码 `causal=1` 时上三角 `-inf`）→ `softmax(dim=2)` →
+  `ctx = p @ h` → `transpose(0,1).reshape(T, E)` → `@ wo.T + bo`。全部落 ATen
+  （`matmul / transpose / reshape / softmax / add`），**反向走 autograd**，与
+  `torch.nn.functional.multi_head_attention_forward` 逐值对拍 9 项（前向 scores/输出 + 反向 wq/wo 梯度）。
+  **口径差异（故意）**：torch 把 q/k/v 打包成 `in_proj_weight (3E,E)` 一个张量，我们拆成
+  `wq/wk/wv` 三块 → `parameters()` / `state_list()` 是 **8 个** vs torch 的 **4 个**；
+  键面对齐口径 = torch 的 4 个键 + `in_proj_*` 各分 `.q/.k/.v`（`state_list()` 8 项与
+  `state_names()` 8 名一一对应，`param("in_proj_weight.q")` 可直取）。
+  探针里 `m11_nparams/m11_nsplit/m11_nstate` 三个数都是 8（torch 侧按
+  `in_proj_weight.shape[0]//E + in_proj_bias.shape[0]//E + 2` 算，不是硬编码常量）。
+  `zero_grad()` 里必须 `p: Tensor = ps[i]` 再调（`ps[i].zero_grad()` 丢静态类型 → 段错误，
+  同 `ps[0].h` 的老坑）；取梯度用 `grad_at(i)`（`Module` 上的配套自由方法，底层 `grad_values()`）。
 - **`BatchNorm1d` 训练态**：`torchc_batch_norm_train(x, running_mean, running_var, gamma, beta,
   eps, momentum, training)` —— 落 `at::batch_norm`，训练时用 batch 统计归一化并**原地更新**
   running mean/var（`(1-m)*running + m*batch`，方差无偏），与 `F.batch_norm(..., training=True)`
@@ -373,8 +388,8 @@ bash plugins/ltorch/build_app.sh plugins/ltorch/train_cnn.static.py train_cnn &&
 # 现成模板 3（Transformer：Embedding + LayerNorm + 因果自注意力 + GELU FFN + AdamW + 存盘续训）：
 bash plugins/ltorch/build_app.sh plugins/ltorch/train_attn.static.py train_attn && ./dist/train_attn
 python3 plugins/ltorch/difftest.py --elf          # 差分 24/24（含 ELF 端到端，25/25）
-python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：175/175（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6 + v10 Transformer/分类 25）
-python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 124 条全验证、显式缺口 0（合计 7.0%）
+python3 plugins/ltorch/lib_difftest.py            # 库层 ELF 对拍 pip torch：184/184（v2 30 + v3 56 + v4 13 + v5 LSTM 3 + v6 state_dict 17 + v7 BN 训练 15 + v8 键面/BN buffer 10 + v9 CNN 6 + v10 Transformer/分类 25 + v11 自注意力 9）
+python3 plugins/ltorch/coverage.py                # 覆盖面记账：MAP 125 条全验证、显式缺口 0（合计 7.1%）
 python3 plugins/ltorch/capi_difftest.py -v        # C ABI 单点对拍：51/51（容差 1e-10）
 ```
 
